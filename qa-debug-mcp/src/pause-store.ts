@@ -26,6 +26,7 @@ export {
   type ResponseFormat,
   toFailureContextView,
 } from '@qa-debug/pause-store-types';
+export { QaToolError, type QaErrorCode } from './errors.js';
 
 /** S3 in-memory stub; S4 swaps for `MementoPauseStore` in the extension. */
 export class InMemoryPauseStore implements PauseStore {
