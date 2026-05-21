@@ -28,6 +28,105 @@ const MAX_MISSED_HEARTBEATS = 3;
 let conn: JsonRpcConnection | undefined;
 let connDisabledReason: string | undefined;
 
+// ---------- v5.2 Mode A: wdio.remote() monkey-patch + CDP discovery ----------
+// Per ARCHITECTURE-CR-v5.2 §2.2: at --require time, probe for webdriverio
+// cheaply via require.resolve (no module execution per nodejs.org/api/modules.html).
+// If found, require() the package and install an Object.defineProperty getter
+// on `remote` that wraps the original and captures the returned browser in a
+// module-scope singleton. afterEach then discovers the CDP WS URL via
+// browser.getPuppeteer().wsEndpoint(), wrapped in try/catch because getPuppeteer
+// has a four-branch capability dispatch and throws when none match (cloud grids,
+// non-Chromium, etc.) per webdriverio/v8.40.6/.../getPuppeteer.ts.
+//
+// Known Phase 1 limitations (per CR §2.5 + §3.4.1):
+//  - Destructured `import { remote } from 'webdriverio'` at module top-level
+//    captures the pre-patch value. Mode B silently engages with audit-log line.
+//  - Native-ESM (no transpiler) bypasses CJS require.cache; Mode B engages.
+//  - Cloud grids / non-Chromium hit the getPuppeteer throw; Mode B engages.
+
+interface WdioBrowserLike {
+  getPuppeteer?: () => Promise<{ wsEndpoint?: () => string }>;
+}
+
+let currentBrowser: WdioBrowserLike | undefined;
+
+(function installWdioPatch(): void {
+  // B3 cheap probe — resolves filename without executing the module.
+  let wdioPath: string | undefined;
+  try {
+    wdioPath = require.resolve('webdriverio');
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== 'MODULE_NOT_FOUND') throw err;
+    return; // wdio not installed — Mode B fallback engages later
+  }
+
+  // Eager load is acceptable here: cheap probe confirmed wdio is a real dep,
+  // so the 50–150ms cold-start tax is paid by users who actually want Mode A.
+  let wdio: { remote?: unknown } & Record<string, unknown>;
+  try {
+    wdio = require(wdioPath) as { remote?: unknown } & Record<string, unknown>;
+  } catch (err) {
+    process.stderr.write(`[qa-hooks] wdio probe loaded but require() threw: ${(err as Error).message}\n`);
+    return;
+  }
+
+  const originalRemote = wdio.remote;
+  if (typeof originalRemote !== 'function') {
+    process.stderr.write(`[qa-hooks] wdio.remote is not a function (got ${typeof originalRemote}); Mode A skipped\n`);
+    return;
+  }
+
+  const patchedRemote = async function patchedRemote(this: unknown, ...args: unknown[]): Promise<unknown> {
+    const browser = await (originalRemote as Function).apply(this, args);
+    currentBrowser = browser as WdioBrowserLike;
+    return browser;
+  };
+
+  // B5 defensive: Object.defineProperty with getter keeps the binding live
+  // through esbuild/tsc-generated CJS export descriptors. Strict-mode naked
+  // assignment on a read-only data property throws; sloppy-mode silently
+  // no-ops. The post-write equality check catches the sloppy-mode silent-
+  // failure path and falls back to Mode B with an audit log line.
+  try {
+    Object.defineProperty(wdio, 'remote', {
+      configurable: true,
+      get: () => patchedRemote,
+    });
+  } catch {
+    try {
+      (wdio as { remote: unknown }).remote = patchedRemote;
+    } catch (err) {
+      process.stderr.write(`[qa-hooks] could not patch wdio.remote: ${(err as Error).message}; Mode B fallback engages\n`);
+      return;
+    }
+  }
+  // Sloppy-mode silent-failure equality re-check per CR §5.
+  if ((wdio as { remote: unknown }).remote !== patchedRemote) {
+    process.stderr.write(
+      `[qa-hooks] wdio.remote patch silently failed (sloppy-mode no-op); Mode B fallback engages\n`,
+    );
+  }
+})();
+
+async function discoverCdpWsUrl(): Promise<string> {
+  if (currentBrowser?.getPuppeteer) {
+    try {
+      const pup = await currentBrowser.getPuppeteer();
+      if (pup?.wsEndpoint) {
+        return pup.wsEndpoint();
+      }
+    } catch (err) {
+      // B1: getPuppeteer throws when no capability branch matches.
+      // Fall through to env fallback per CR §3.4.1 Mode B path.
+      process.stderr.write(
+        `[qa-hooks] wdio getPuppeteer() failed: ${(err as Error).message}; falling back to QA_DEBUG_CDP_WS_URL\n`,
+      );
+    }
+  }
+  return process.env.QA_DEBUG_CDP_WS_URL ?? 'ws://localhost:9222';
+}
+
 function getConnection(): JsonRpcConnection | undefined {
   if (conn) return conn;
   if (connDisabledReason) return undefined;
@@ -129,7 +228,8 @@ export const mochaHooks = {
       file: test.file ?? null,
       line: fileLineFromStack(test.err?.stack),
       error: serializeError(test.err),
-      cdp_ws_url: process.env.QA_DEBUG_CDP_WS_URL ?? 'ws://localhost:9222',
+      // v5.2 §3.1: discover via wdio singleton (Mode A) or fall back to env (Mode B).
+      cdp_ws_url: await discoverCdpWsUrl(),
       started_at: Date.now(),
       retry_count: currentRetryOf(test),
     };
