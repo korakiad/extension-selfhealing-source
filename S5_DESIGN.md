@@ -100,8 +100,8 @@ The body opens with a four-step checklist (per agent-skills/best-practices "Use 
 
 - [ ] Step 1: Ground via qa-debug:qa_get_failure_context (concise)
 - [ ] Step 2: Investigate via playwright-mcp:browser_* against the held browser
-- [ ] Step 3: Classify failure (one of: code-bug / test-bug / env-flake / structural)
-- [ ] Step 4: Commit decision per Step-3 classification (see decision tree)
+- [ ] Step 3: Classify failure (one of: code-bug / test-bug / env-flake / structural / **ambiguous-or-out-of-scope**)
+- [ ] Step 4: Commit decision per Step-3 classification (see decision tree §2.4.1–§2.4.5)
 - [ ] Step 5: Report decision and rationale in chat (one-line conclusion)
 ```
 
@@ -119,7 +119,7 @@ The Step 2 paragraph also notes the Mode A vs Mode B distinction:
 
 ### 2.3 Step 3 — failure classification (the decision spine)
 
-Four mutually-exclusive classes the agent picks from based on Step 2 investigation:
+Five mutually-exclusive classes the agent picks from based on Step 2 investigation. The fifth ("ambiguous-or-out-of-scope") is a first-class branch, not "neither of the above" — per the iter#2 NB1/NB5 review, an explicit *"I cannot classify"* is better than a forced four-way bucket (see [agent-skills/best-practices §"Set appropriate degrees of freedom"](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices)):
 
 | Class | Signal pattern | Examples |
 |---|---|---|
@@ -127,12 +127,41 @@ Four mutually-exclusive classes the agent picks from based on Step 2 investigati
 | **test-bug** | The assertion logic is wrong; the asserted value is correct (test is stale w.r.t. product spec change) | Selector outdated after intentional rename per product spec; magic constant in test (`assert.equal(total, 80)`) hasn't been updated for new pricing; brittle timing-based wait now flakes against intentionally-slowed loader animation |
 | **env-flake** | A *specific*, *named*, *transient* environmental signal explains the failure; product code paths are NOT involved | Upstream auth-service returned 503 at the assertion moment per `browser_network_requests`; staging seed data missing one row per `qa_get_failure_context.failing_assertion` cross-checked against the seed manifest; renderer crash mid-assertion per `browser_console_messages` containing "Renderer process gone" |
 | **structural** | The failure is a cross-test signal (every test in the suite will hit the same blocker) | First-test fixture seed fails with `pg_connection_refused`; license-server unreachable so every test's beforeAll(login) fails; wrong staging URL produces 404 on every navigation |
+| **ambiguous-or-out-of-scope** | Investigation completed but the failure does not disambiguate into one of the four above, OR the fix is outside the QA's repository / authority | Race-condition flake with NO upstream signal (clean network, empty console) and `retry_count > 0` — could be a real timing bug or env noise, single pause cannot disambiguate; runtime-environment skew (locale, browser version, viewport) where product code is correct *in production environment* but test runner ships a different setting; cross-repo dependency (backend microservice change needed); spec ambiguity needing PM decision |
 
-The classification is *the* hinge. The body emphasizes that the agent MUST NOT skip to commit verbs without first articulating which class the failure falls in (poka-yoke: the wrong-class commit is the dominant failure mode of an under-guided agent).
+The classification is *the* hinge. The body emphasizes that the agent MUST NOT skip to commit verbs without first articulating which class the failure falls in (poka-yoke: the wrong-class commit is the dominant failure mode of an under-guided agent). The fifth class is the explicit escape hatch — `qa_request_give_up` with an *ambiguity-naming* rationale (see §2.4.5) is the correct exit, NOT a forced classification into code-bug/test-bug.
 
-### 2.4 Step 4 — commit decision per class (the four decision arms)
+### 2.4 Step 4 — commit decision per class (the five decision arms)
 
-Each arm specifies (a) the verb to call, (b) the rationale shape, (c) the prerequisite action (if any), and (d) the named-error paths.
+Each arm specifies (a) the verb to call, (b) the rationale shape, (c) the prerequisite action (if any), and (d) the named-error paths. The shared **Stop-and-report contract** (§2.4.0) governs the agent's turn-end behavior across ALL arms; the per-arm sections cite it rather than repeating the prose.
+
+#### 2.4.0 Stop-and-report contract (shared across all five arms)
+
+Once a `qa_request_*` or `qa_propose_*` verb has been called, the agent's turn ENDS. The verb call IS the checkpoint per [Anthropic research §"Agents"](https://www.anthropic.com/research/building-effective-agents): *"Agents can then pause for human feedback at checkpoints or when encountering blockers."*
+
+Behavior contract:
+- After the verb call, emit ONE concluding chat line summarizing the decision + rationale. No further tool calls in this turn.
+- The next turn begins when the human's response (commit / reject / new question) reaches you via a new chat message OR via fresh data on the next user-initiated invocation. The human commit is **event-driven, not clock-driven**.
+- If the human REJECTS the proposal (the new turn contains a reject or pushback), treat the rejection as new ground truth: re-classify per §2.3 — do NOT re-litigate by re-calling the same verb. Rejection often points at a class the agent missed.
+
+**Anti-example (do NOT do this):**
+
+```
+turn N:   qa_propose_mark_passed(...)
+turn N:   qa_get_failure_context(...) ← WRONG: polling for the commit on the same turn
+turn N:   <check last_proposal_status>
+turn N:   qa_get_failure_context(...) ← tight-poll
+```
+
+The correct shape:
+
+```
+turn N:   qa_propose_mark_passed(...)
+turn N:   <chat: "Proposed mark-passed; rationale: ... Click Approve or Reject.">
+turn N+1: <new human turn arrives; investigate that turn>
+```
+
+This contract applies to all five arms below: `qa_request_retry`, `qa_request_give_up`, `qa_propose_mark_passed`, `qa_propose_close_browser`, `qa_propose_abort_suite`. The propose verbs are the irreversibility gate per [Anthropic research §"measuring-agent-autonomy"](https://www.anthropic.com/research/measuring-agent-autonomy); the request verbs are reversible-equivalent (retry re-runs, give_up can be re-run after a fresh QA decision) but still end the agent's turn for clarity.
 
 #### 2.4.1 code-bug arm → `qa-debug:qa_request_retry` after source edit
 
@@ -141,6 +170,8 @@ Each arm specifies (a) the verb to call, (b) the rationale shape, (c) the prereq
 > **Prerequisite:** Edit the production source file fixing the defect. The retry runs against the freshly-edited code. Do NOT call retry without an actual diff; "let's try again" is not a code-bug signal.
 >
 > **Rationale shape:** What was changed, by file and what behavior is now correct. Example: *"Fixed `src/auth/login.ts` so the JWT decoder accepts the new RS256 signing alg (was hard-coded to HS256 in the matching branch); test should now pass because the assertion checks for `decoded.sub` which the decoder now produces."*
+>
+> **Turn-end:** Per §2.4.0 — after the `qa_request_retry` call, end the turn. The retry runs in a fresh mocha child; the next pause (or pass) will arrive as a new chat turn.
 >
 > **Named-error paths:**
 >  - If `qa_request_retry` returns `NO_ACTIVE_PAUSE`, the pause was already resolved (likely by the human via Test Explorer Give Up). STOP — do not re-call. Report to the QA: *"Pause was already resolved; my code-bug analysis stands, please review the source edit at <file>:<line>."*
@@ -153,6 +184,8 @@ Each arm specifies (a) the verb to call, (b) the rationale shape, (c) the prereq
 > **Prerequisite:** Edit the test spec file fixing the stale assertion / selector / constant. Same "no diff, no retry" rule.
 >
 > **Rationale shape:** What in the test was wrong vs the product spec, by line. Example: *"Updated `fixture-tests/specs/checkout.spec.js:42` selector from `.submit-btn` to `.primary-submit` per the product-side rename in commit 1a2b3c4; the assertion logic is unchanged."*
+>
+> **Turn-end:** Per §2.4.0.
 >
 > **Named-error paths:** Same as code-bug arm.
 
@@ -169,7 +202,7 @@ Each arm specifies (a) the verb to call, (b) the rationale shape, (c) the prereq
 >  - *"The failure is intermittent"* — `qa_get_failure_context.retry_count` is the right place to check intermittency; "intermittent" alone is not a falsifiable signal.
 >  - Any rationale where the asserted value is derived from production code paths under test. That is a code-bug, not a flake.
 >
-> **Stop-and-report contract:** After calling `qa_propose_mark_passed`, STOP issuing tool calls. Report in chat: *"Proposed mark-passed pending your review; rationale: <text>. Click Approve or Reject in Test Explorer."* The verdict surfaces via `qa-debug:qa_get_failure_context.last_proposal_status` when next called. Do NOT poll it in a tight loop; the human commit is event-driven, not a clock.
+> **Turn-end:** Per §2.4.0 — emit one concluding chat line *"Proposed mark-passed pending your review; rationale: <text>."* and end the turn. Do NOT poll `last_proposal_status` in-turn.
 >
 > **Named-error paths:** Same NO_ACTIVE_PAUSE / SESSION_NOT_FOUND handling as code-bug arm.
 
@@ -184,32 +217,44 @@ Each arm specifies (a) the verb to call, (b) the rationale shape, (c) the prereq
 >  - "The codebase is broken" — too vague; cite the specific shared dependency.
 >  - "Tests are slow" — orthogonal to suite-abort.
 >
-> **Stop-and-report contract:** Same as env-flake — STOP after the call, report rationale in chat, await human commit.
+> **Turn-end:** Per §2.4.0 — emit one concluding chat line *"Proposed abort-suite pending your review; rationale: <text>."* and end the turn.
 >
 > **Named-error paths:** Same NO_ACTIVE_PAUSE / SESSION_NOT_FOUND.
 
-#### 2.4.5 Cannot-classify / cannot-fix → `qa-debug:qa_request_give_up`
+#### 2.4.5 ambiguous-or-out-of-scope arm → `qa-debug:qa_request_give_up`
 
 > **Verb:** `qa-debug:qa_request_give_up`
 >
-> **When to use:**
->  - Investigation completed and the agent's confident the failure is real (one of code-bug / test-bug) but the agent cannot make the source edit (e.g., the fix requires a backend change outside the QA's repository; the spec needs a product manager's decision; the failing test asserts ambiguous behavior).
->  - The browser session is in an unrecoverable state (renderer crashed AND another tab also crashed) AND the failure is not classifiable as env-flake.
->  - Repeated retry would not help (e.g., retry_count from `qa_get_failure_context` ≥ 2 and same failure shape) AND env-flake doesn't fit.
+> **When to use** (the §2.3 fifth-class branch + the historical "cannot-fix" cases — merged into one arm because the verb is identical and the rationale shape is the same: *name the limit*):
+>  - **Ambiguous:** Investigation completed but the failure does not disambiguate into code-bug/test-bug/env-flake/structural from a single pause (e.g., suspected race condition with NO upstream signal; runtime-environment skew where production locale differs from runner locale; spec ambiguity).
+>  - **Out-of-scope:** The agent is confident in the diagnosis but cannot make the fix (cross-repo dependency, PM-decision-needed, backend microservice change, file in a different repo).
+>  - **Unrecoverable session:** Browser session in an unrecoverable state (renderer crashed AND another tab also crashed) AND not classifiable as env-flake.
+>  - **Retry-exit:** `qa_get_failure_context.retry_count ≥ 2` AND failure is same-shape per §2.5 AND no fundamentally different diagnosis emerged.
 >
-> **Rationale shape:** State the root cause concretely. Examples:
->  - *"Selector `.checkout-cta` doesn't exist in DOM (snapshot confirmed); the recent product spec calls for `.proceed-to-checkout` rename but the new branch is not yet merged. Test will pass once the rename lands in main."*
->  - *"The asserted value `Promise-pending` indicates the production code returns an unresolved promise; the fix requires an `await` in `src/cart/total.ts:42`. Cannot edit (file is in a different repo); reporting for the backend engineer."*
+> **Rationale shape:** State the limit concretely — *what is the agent's evidence and where does it stop being decisive*. Examples:
+>  - **Ambiguous (race-flake):** *"Race condition suspected: `retry_count=1`, same failure shape as prior pause, no upstream 5xx in `browser_network_requests`, empty `browser_console_messages`. Product code path under test is `EventBus.subscribe` which has documented timing semantics; cannot disambiguate code-bug from env-flake from a single browser snapshot. Suggest re-run with verbose timing log or a fresh pair of eyes."*
+>  - **Out-of-scope (cross-repo):** *"Asserted value `Promise-pending` indicates production code returns an unresolved promise; fix requires `await` in `src/cart/total.ts:42`. That file lives in a different repo (`api-server`) and cannot be edited from this workspace. Reporting for the backend engineer."*
+>  - **Out-of-scope (spec):** *"Selector `.checkout-cta` doesn't exist in DOM (snapshot confirmed); product spec calls for `.proceed-to-checkout` rename but the new branch is not yet merged. Test will pass once rename lands in main; spec change is upstream of this repo."*
 >
-> **NOT for "I don't know":** if the agent genuinely cannot diagnose, the rationale must say so concretely: *"Investigation inconclusive — `browser_snapshot` shows expected DOM, `browser_console_messages` empty, `browser_network_requests` all 200s; the assertion `expected X but got Y` does not match anything visible from the held browser. Suggest re-running with verbose logging or a fresh QA pair of eyes."*
+> **NOT for "I don't know":** the rationale must name the limit, not shrug. *"Investigation inconclusive"* alone is insufficient; the rationale must list *which* signals were consulted and *which* dimensions remained ambiguous (per [writing-tools-for-agents §"Returning meaningful context"](https://www.anthropic.com/engineering/writing-tools-for-agents): *"prioritize contextual relevance"*).
+>
+> **Turn-end:** Per §2.4.0.
 >
 > **Named-error paths:** Same NO_ACTIVE_PAUSE / SESSION_NOT_FOUND.
 
 ### 2.5 Retry exit conditions
 
-> *"`qa_get_failure_context.retry_count` is the number of retries Mocha has already performed for this test. If `retry_count >= 2` AND the failure shape (`failing_assertion` + top stack frame file:line) is identical to the prior pause, the agent SHOULD NOT propose a third retry without a fundamentally different diagnosis. Either: (a) re-classify (the failure may be env-flake or structural that masqueraded as code-bug on first investigation), or (b) call `qa_request_give_up` with rationale citing the recurrence pattern."*
+> *"`qa_get_failure_context.retry_count` is the number of retries the extension has already performed for this test (per `--grep` respawn flow, ARCH v5.1 §3.1). If `retry_count >= 2` AND the failure shape is **same-shape** as the prior pause (see definition below), the agent SHOULD NOT propose a third retry without a fundamentally different diagnosis. Either: (a) re-classify (the failure may be env-flake / structural / ambiguous that masqueraded as code-bug on first investigation), or (b) call `qa_request_give_up` with rationale citing the recurrence pattern (per §2.4.5 retry-exit clause)."*
 
-The retry-count check is mechanical and easy to verify in the eval — see §5 test scenario.
+**Same-shape definition** (per iter#2 NB3 — the strict-identical comparator under-fires when the agent edited the source between retries because line numbers shift, which is the expected code-bug flow):
+
+A pause is **same-shape** as the prior pause iff BOTH:
+1. The `failing_assertion` matches at *template* level — compare after masking numeric spans (`\d+(\.\d+)?`) and quoted-value spans (`"…"` / `'…'`) to placeholders. Example: `expected $80 but got $90` and `expected $80 but got $91` are same-shape; `expected $80 but got $90` and `Timeout: page.waitForSelector(".welcome") exceeded 5000ms` are NOT.
+2. The **first user-code stack frame** (i.e., first frame whose file path does NOT contain `node_modules` and is NOT an internal Node/V8 frame) matches; line number may drift ±5 (an edit between retries typically moves the assertion line by a few). If the line drift exceeds 5, treat as different shape (the agent likely refactored, not just patched). Per iter#3 NB2: the top stack frame in a chai/wdio/jest-assert failure is the assertion library's file (e.g., `node_modules/chai/lib/assertion.js`), not the spec line that triggered it — comparing on the library file would over-fire same-shape across unrelated failures, prematurely routing distinct failures into the §2.4.5 retry-exit clause. Skip past library frames to the first frame in the QA's repo (typically the spec file).
+
+Per [writing-tools-for-agents §"Returning meaningful context from your tools"](https://www.anthropic.com/engineering/writing-tools-for-agents) — *"prioritize contextual relevance over flexibility"* — the same-shape comparator looks at the **canonical signal** (assertion template + file), not the raw strings the agent shouldn't be diff-matching anyway.
+
+The retry-count + same-shape check is mechanical and easy to verify in the eval — see §5 retry-exit scenarios.
 
 ### 2.6 Escalation paths
 
@@ -242,7 +287,7 @@ Codified per the best-practices "Avoid offering too many options" guidance:
 
 ## 3. Failure-mode classification — worked examples
 
-The S5 SKILL body includes 4 concrete worked examples (one per class) inline so the agent has anchors. These examples reuse the fixture-tests existing failures so the eval can re-use them:
+The S5 SKILL body includes 5 concrete worked examples (one per class) inline so the agent has anchors. These examples reuse the fixture-tests existing failures so the eval can re-use them:
 
 | Class | Fixture | Failure shape | Decision tree path |
 |---|---|---|---|
@@ -250,25 +295,26 @@ The S5 SKILL body includes 4 concrete worked examples (one per class) inline so 
 | test-bug | `fixture-tests/specs/selector.spec.js` | `locator(".submit-btn") resolved to 0 elements` (when product spec rename to .primary-submit is intentional) | Edit selector in spec; call `qa_request_retry` with spec-citing rationale. |
 | env-flake | `fixture-tests/specs/timeout.spec.js` with synthetic upstream 503 in `browser_network_requests` | `TimeoutError: page.waitForSelector(".welcome") exceeded 5000ms` AND network 503 from `/auth/login` at the assertion moment | Call `qa_propose_mark_passed` with falsifiable rationale citing the 503 timestamp + healthz 200 a second later. |
 | structural | (new fixture for S5) `fixture-tests/specs/_seed-failure.spec.js` — first test fails on `pg_connection_refused` in beforeAll | Same `pg_connection_refused` would fire on every test in the suite | Call `qa_propose_abort_suite` with rationale citing the shared seed dependency. |
+| ambiguous-or-out-of-scope | (synthetic for eval; no permanent fixture) race-condition flake on `EventBus.subscribe` timing | `expected event "ready" but timed out 5000ms` AND `browser_network_requests` all 200s AND `browser_console_messages` empty AND `retry_count = 1` with same-shape prior pause | Call `qa_request_give_up` with rationale naming the dimensions checked: *"Race condition suspected: no upstream 5xx, no console errors, same-shape recurrence. Product timing semantics on EventBus.subscribe documented but unverifiable from single browser snapshot. Suggest verbose timing log re-run."* |
 
 The worked examples are NOT prescriptive scripts (degrees-of-freedom: medium). They show the *shape* of the decision-tree → verb mapping; the eval (§5) verifies the agent generalizes.
 
 ## 4. Token budget + structure
 
-Target body size: **~250 lines** (well under the 500-line cap per best-practices). Structure:
+Target body size: **~280 lines** (well under the 500-line cap per best-practices). Structure (post-iter#2 polish — §2.4.0 added, 5th class row added, same-shape definition added):
 
 - Header (1 line): `# QA Debug Companion — debugging a paused failure`
 - Workflow checklist (10 lines)
 - Step 1 + Step 2 (20 lines; preserved from S4 stub, tightened)
-- Step 3 — failure classification (40 lines; the 4-class table + signals)
-- Step 4 — decision tree (110 lines; 5 sub-arms with verb / rationale / named-errors)
-- Retry exit conditions (15 lines)
+- Step 3 — failure classification (45 lines; the 5-class table + signals)
+- Step 4 — §2.4.0 Stop-and-report contract (20 lines; shared across arms) + 5 sub-arms (105 lines)
+- Retry exit conditions + same-shape definition (25 lines)
 - Escalation paths (10 lines)
 - Mode A vs Mode B sidebar (10 lines)
-- Worked examples (4 × 8 lines = 32 lines)
+- Worked examples (5 × 8 lines = 40 lines)
 - Anti-patterns (table; 10 lines)
 
-Total budget ~258 lines. Under 500-line cap; comfortable for context budget.
+Total budget ~296 lines. Under 500-line cap; comfortable for context budget.
 
 No bundled separate files (no `REFERENCE.md`, `EXAMPLES.md`) — the body is self-contained per the "Avoid deeply nested references" best-practices guidance for Phase 1 Skills of this scope.
 
@@ -286,29 +332,38 @@ Reuses [[reference-subscription-eval-pattern]] (`claude -p` subprocess + stub MC
 
 ### 5.2 Scenario set — 20 scenarios
 
-Distribution per class, with positive + negative + named-error trials:
+Distribution per class, with positive + negative + named-error trials. The fifth class (§2.3 "ambiguous-or-out-of-scope") merged with the historical "cannot-fix" bucket since both terminate in `qa_request_give_up`:
 
-| Bucket | Count | Description |
-|---|---|---|
-| code-bug → expect retry | 4 | One per "first-pause", "second-pause-same-shape", "edge-case-stack-trace", "Mode-A-cdp" |
-| test-bug → expect retry | 3 | Selector-rename, magic-constant-stale, timing-brittle |
-| env-flake → expect propose_mark_passed | 4 | Upstream 503, renderer-crash, staging-seed-row-missing, transient-network-blip |
-| structural → expect propose_abort_suite | 2 | pg_connection_refused on beforeAll, license-server-unreachable cross-test |
-| cannot-fix → expect request_give_up | 2 | Cross-repo dependency, ambiguous-spec |
-| Retry exit (retry_count=2, same shape) → expect give_up NOT retry | 2 | Code-bug-shape, test-bug-shape |
-| Named-error robustness | 3 | qa_get_failure_context returns NO_ACTIVE_PAUSE → expect graceful-stop-no-verb; SESSION_NOT_FOUND → expect re-ground-then-classify; Mode-A-close_browser-decline → expect no-retry-of-close_browser |
+| Bucket | Count | Verb category | Description |
+|---|---|---|---|
+| code-bug → expect retry | 4 | request | One per "first-pause", "second-pause-same-shape", "edge-case-stack-trace", "Mode-A-cdp" |
+| test-bug → expect retry | 3 | request | Selector-rename, magic-constant-stale, timing-brittle |
+| env-flake → expect propose_mark_passed | 4 | propose | Upstream 503, renderer-crash, staging-seed-row-missing, transient-network-blip |
+| structural → expect propose_abort_suite | 2 | propose | pg_connection_refused on beforeAll, license-server-unreachable cross-test |
+| ambiguous-or-out-of-scope → expect request_give_up | 2 | request | Race-flake-no-signal, cross-repo dependency |
+| Retry exit (retry_count=2, same-shape per §2.5) → expect give_up NOT retry | 2 | request | Code-bug-shape, test-bug-shape |
+| Named-error robustness | 3 | (error path) | qa_get_failure_context returns NO_ACTIVE_PAUSE → expect graceful-stop-no-verb; SESSION_NOT_FOUND → expect re-ground-then-classify; Mode-A-close_browser-decline → expect no-retry-of-close_browser |
 
-Total: 20. Pass threshold: ≥18/20 (90%) per the handoff's `≥90%` target.
+Total: 20.
+
+**Pass thresholds — split by reversibility per iter#2 NB4** ([measuring-agent-autonomy](https://www.anthropic.com/research/measuring-agent-autonomy): *"only 0.8% of actions appear to be irreversible"* + *"effective oversight doesn't require approving every action but being in a position to intervene when it matters"*):
+
+- **Propose-verb arms (env-flake + structural = 6 scenarios, 30 trials):** ≥85% pass — i.e., ≥26/30 trials hit the expected propose verb. More permissive because a wrong propose is human-gated (the QA can reject in Test Explorer; no production write happens). Per the source: requiring 95% propose accuracy would be the *"friction without necessarily producing safety benefits"* anti-pattern.
+- **Request-verb arms (code-bug + test-bug + ambiguous + retry-exit = 11 scenarios, 55 trials):** ≥95% pass — i.e., ≥52/55 trials hit the expected request verb. Stricter because `qa_request_give_up` closes the MCP gate (per `qa-debug-mcp/src/tools.ts:146` *"Reversible only by re-running the suite"*) and `qa_request_retry` triggers an expensive child-process respawn; agent errors here have higher cost than a propose mis-classification.
+- **Named-error scenarios (3 scenarios, 15 trials):** ≥95% pass — i.e., ≥14/15 trials handle the error path correctly. Error paths must not regress.
+- **Derived aggregate:** ≥90% (≥18/20 scenarios). This is the headline number the handoff targets; the split above is the meaningful bar to optimize against.
+
+**Honest framing of the calibration (iter#3 NB3):** The specific numeric bars (85% / 95% / 90%) are *project judgment* derived from the reversibility principle in [measuring-agent-autonomy](https://www.anthropic.com/research/measuring-agent-autonomy). The source establishes the **direction** of the asymmetry (lower bar acceptable for human-gated propose; higher bar warranted for auto-applied request) but does NOT quantify accuracy thresholds. If S5 evals miss reveal a different calibration is needed (e.g., propose-bar of 80% is sufficient because the QA's reject-rate-on-reject is high; or request-bar of 90% is enough because retry is cheap), iterate per §5.3 — adjusting bars to reflect observed signal is fine; adjusting bars to *fit* a result is the anti-pattern.
 
 Per-scenario `passThreshold` per the S3 convention:
-- Decision-arm scenarios: ≥4/5 trials hit the expected verb (1 retry-allowed for stochasticity).
-- Named-error scenarios: 5/5 trials handle the error path correctly (stricter — error paths must not regress).
+- Decision-arm scenarios: ≥4/5 trials hit the expected verb for propose; ≥5/5 for request-verb arms (matches the stricter split).
+- Named-error scenarios: 5/5 trials handle the error path correctly.
 
 ### 5.3 Iteration loop
 
-If eval misses the 90% bar:
-1. Inspect failing scenarios; identify the pattern (e.g., agent confused env-flake with code-bug when network signal was ambiguous).
-2. Refine the SKILL body section that addresses that pattern (e.g., strengthen the "anti-rationale" list in §2.4.3).
+If eval misses ANY of the split bars (propose <85%, request <95%, named-error <95%, or aggregate <90%):
+1. Inspect failing scenarios; identify the pattern (e.g., agent confused env-flake with code-bug when network signal was ambiguous; agent skipped same-shape check; agent tight-polled `last_proposal_status`).
+2. Refine the SKILL body section that addresses that pattern (e.g., strengthen the "anti-rationale" list in §2.4.3; sharpen the §2.4.0 anti-example for tight-poll regressions; expand the §2.3 fifth-class signals).
 3. Re-run eval. Cap at 3 iterations per [[feedback-ralph-loop]] convention.
 4. If still failing after 3 iterations: raise as blocker; do not lower the bar (per the S3 precedent — adjusting passThreshold to fit the result reverses the value of the eval).
 
@@ -324,9 +379,9 @@ If eval misses the 90% bar:
 
 2. **Should the env-flake arm list specific upstream services (auth-service, staging, etc.) or abstract to "external dependency"?** Recommendation: abstract (the SKILL body is project-agnostic in spirit; the fixture-tests already provide concrete examples). Counter-argument: agents pattern-match on specific service names. Resolution: abstract in the prose, concrete in the worked example (§3).
 
-3. **Should the body include a "what if the agent is wrong" recovery section?** I.e., if the agent calls `qa_propose_mark_passed` and the human rejects via Test Explorer, what should the agent do next? Recommendation: yes, brief. *"Rejection means the human disagrees with the env-flake classification. Re-classify as code-bug or test-bug and follow §2.4.1 / §2.4.2."* Counter-argument: adds 3–5 lines; the chat-participant or follow-up turn typically supplies the human's pushback text directly. Resolution: include as a 3-line sub-paragraph in §2.4.3.
+3. **Should the body include a "what if the agent is wrong" recovery section?** I.e., if the agent calls `qa_propose_mark_passed` and the human rejects via Test Explorer, what should the agent do next? **Iter#2 resolution (NB2 + Q3):** YES, brief — folded into §2.4.0 as a single line shared across all arms: *"If the human REJECTS, treat rejection as new ground truth: re-classify per §2.3."* No per-arm duplication.
 
-4. **Should the cap-the-conversation behavior be specified?** I.e., should the SKILL body tell the agent "stop after the verb call" explicitly, or rely on the agent's natural turn-end behavior? Recommendation: explicit. The "Stop-and-report contract" sub-paragraph in §2.4.3 + §2.4.4 already specifies this; extend to all 5 arms.
+4. **Should the cap-the-conversation behavior be specified?** I.e., should the SKILL body tell the agent "stop after the verb call" explicitly, or rely on the agent's natural turn-end behavior? **Iter#2 resolution (NB2 + Q4):** EXPLICIT, hoisted into §2.4.0 as the shared Stop-and-report contract — all five arms reference it; the tight-poll anti-example is the falsifiable test of compliance.
 
 5. **Should retry_count > 5 be a hard ceiling triggering automatic give_up?** Recommendation: NO. Retry count is a *signal* for the agent's judgment, not a mechanical cap. A code-bug arm with retry_count=5 might be the agent's 5th fix attempt against a stubborn-but-real bug; mechanical cap would lose the audit trail. Phase 2 may add telemetry to surface "abnormal retry density" without enforcing.
 
@@ -336,19 +391,38 @@ If eval misses the 90% bar:
 
 ## 7. Recommendation
 
-Apply S5_DESIGN as drafted. Cap=3 per CR-v5.4 precedent. Iter#2 reviewer should focus on:
-- Whether the four-class taxonomy is exhaustive (are there real-world failure shapes that don't fit?).
-- Whether the "stop-and-report contract" prose is strong enough to prevent the agent from polling `last_proposal_status` in a tight loop (a real failure mode in S3-era unsupervised loops).
-- Whether the retry-exit-condition predicate (retry_count ≥ 2 + identical failure shape) is the right granularity (vs purely retry_count, vs purely identical-shape regardless of count).
-- Whether the eval's 90% bar is the right target (vs 95% — given the propose verbs are human-committed, an agent error is recoverable).
+Apply S5_DESIGN as drafted (post-iter#2 polish). Cap=3 per CR-v5.4 precedent. Iter#3 reviewer should focus on:
+- Whether the new fifth class "ambiguous-or-out-of-scope" is signalled clearly enough that the agent doesn't conflate it with env-flake on the first pause.
+- Whether the §2.4.0 Stop-and-report block is structurally enforceable as written (does the anti-example carry enough weight to prevent tight-poll regressions, or does it need a stricter shape?).
+- Whether the §2.5 same-shape definition (assertion-template mask + file match + line ±5) handles edge cases like multi-frame stack traces where the actual assertion site is several frames up the stack.
+- Whether §5.2's split bars (propose ≥85%, request ≥95%, named-error ≥95%, derived ≥90%) are calibrated correctly given the asymmetric reversibility cost.
 
-Per [[feedback-ralph-loop]] NB11: reviewer should NOT have to WebFetch the §0 sources; they were verified at iter#1 file write. Reviewer may WebFetch additional Anthropic URLs if a new agentic-design claim is in scope, but the iter#1 author already did the homework for the cited rules.
+Per [[feedback-ralph-loop]] NB11: reviewer should NOT have to WebFetch §0 sources; they were verified at iter#1 file write and iter#2 NBs cited additional Anthropic URLs (writing-tools-for-agents, agent-skills/best-practices, measuring-agent-autonomy, building-effective-agents — all already in §0 source list).
 
 ## 8. Status
 
-- **Iteration #1 (this file)** — 2026-05-21 file write. All §0 platform-owned URLs WebFetched + verbatim quotes inlined per CR-v5.4 NB11 process discipline. Q1–Q7 open for iter#2.
-- **Iteration #2** — pending. Spawn `general-purpose` Agent with persona prompt per [[feedback-ralph-loop]] step 2; hand the URL list from [[reference-anthropic-agentic-docs]] + this file.
-- **Iteration #3** — if iter#2 returns APPROVE-with-polish ≤5 NBs, apply inline and converge; else continue per cap=3.
+- **Iteration #1** — 2026-05-21 file write. All §0 platform-owned URLs WebFetched + verbatim quotes inlined per CR-v5.4 NB11 process discipline. Q1–Q7 open for iter#2.
+- **Iteration #2** — 2026-05-21 reviewer pass complete. Verdict: **APPROVE-with-polish**. 0 blockers; 5 NBs, all applied inline before iter#3:
+  - **NB1+NB5 applied:** Added fifth class **ambiguous-or-out-of-scope** to §2.3 table + §2.1 workflow checklist; §2.4.5 expanded to absorb the new class alongside historical cannot-fix cases. Decision tree is now 1:1 with the checklist enumeration.
+  - **NB2 applied:** Hoisted Stop-and-report contract into shared §2.4.0 block citing [building-effective-agents §"Agents"](https://www.anthropic.com/research/building-effective-agents) (*"Agents can then pause for human feedback at checkpoints"*). Removed duplicated prose from §2.4.3 / §2.4.4. Added explicit tight-poll anti-example (the S3-era failure mode). Single-line rejection-recovery rule embedded (Q3 resolved here).
+  - **NB3 applied:** §2.5 strict "identical" replaced with **same-shape** definition — assertion-template mask (numeric/quoted spans → placeholders) AND top-stack file match with line drift ±5. Citation to [writing-tools-for-agents §"Returning meaningful context"](https://www.anthropic.com/engineering/writing-tools-for-agents) for the canonical-signal principle.
+  - **NB4 applied:** §5.2 eval bar split — propose-verb arms ≥85% (human-gated, recoverable) / request-verb + named-error arms ≥95% / derived aggregate ≥90%. Cites [measuring-agent-autonomy](https://www.anthropic.com/research/measuring-agent-autonomy) for the asymmetry rationale (irreversibility-cost determines bar).
+  - Q3 + Q4 resolutions updated in §6 (folded into §2.4.0 per iter#2 NB2).
+  - §4 token budget bumped from ~258 → ~288 lines for the additions.
+- **Iteration #3** — 2026-05-21 reviewer pass complete. Verdict: **APPROVE-with-polish**. 0 blockers; 3 trivial NBs, all applied inline. Cap=3 closure achieved per CR-v5.4 precedent. Loop CLOSED.
+  - **NB1 applied:** §3 worked examples gained the missing 5th row (ambiguous-or-out-of-scope: race-flake-no-signal → `qa_request_give_up`); §4 token budget bumped 32→40 lines for worked examples, total ~288→~296 lines (under 500-line cap). Closes the iter#2-polish drift.
+  - **NB2 applied:** §2.5 same-shape definition — "top stack-frame file" replaced with "first user-code stack frame" (skip past `node_modules` library frames). Rationale: chai/wdio/jest-assert failures put the assertion library at the top; comparing on library files would over-fire same-shape across unrelated failures and prematurely route them into the §2.4.5 retry-exit clause.
+  - **NB3 applied:** §5.2 split-bar honest framing — explicit note that specific bars (85/95/90) are project judgment, with [measuring-agent-autonomy](https://www.anthropic.com/research/measuring-agent-autonomy) establishing direction-of-asymmetry only, not magnitudes. Iterate per §5.3 if eval signals different calibration.
+  - **Sub-notes from reviewer (informational, not applied):** (a) first-pause ambiguous-vs-env-flake disambiguator lives in §2.4.3 anti-rationale not in §2.3 table — flagged for monitoring if eval surfaces confusion; (b) §2.4.0 enforceability is adequate — the §5.1 eval harness SIGTERMs at first qa-verb call so tight-poll regressions surface as scenario failures.
+
+## 8.1 Convergence summary
+
+Three Ralph-loop iterations:
+- iter#1 (author file write, 4 sources WebFetched + verbatim quotes inlined per CR-v5.4 NB11)
+- iter#2 (APPROVE-with-polish, 5 NBs applied inline: 5th class added, §2.4.0 Stop-and-report contract created, §2.5 same-shape predicate replaced, §5.2 split-bar calibration)
+- iter#3 (APPROVE-with-polish, 3 trivial NBs applied inline: §3 5th worked example, §2.5 user-code-frame, §5.2 honest calibration framing)
+
+Total: 0 blocking issues across both reviewer passes. Cap=3 reached cleanly; no iter#4 needed. S5_DESIGN.md is ready to commit and Task #22.3 (SKILL.md body write) can begin.
 
 ## 9. Next steps after APPROVE
 
