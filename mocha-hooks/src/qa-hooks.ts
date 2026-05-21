@@ -248,6 +248,16 @@ export const mochaHooks = {
       return;
     }
 
+    // Disable Mocha's runnable timeout for this hook. pause.publish + decision.await
+    // is a blocking, human-paced flow (engineer inspects browser via CDP, decides
+    // mark_passed / retry / give_up). User .mocharc timeouts of 10-15s are designed
+    // for test-body assertions, not for a debugging session — leaving the timeout
+    // enabled kills the hook mid-debug, tearing down the wdio session and closing
+    // the browser. The real liveness watchdog is the heartbeat protocol below
+    // (parent emits every HEARTBEAT_MS; hook gives up after MAX_MISSED_HEARTBEATS).
+    // See Mocha docs: https://mochajs.org/#timeouts ("To disable timeouts ... pass 0").
+    this.timeout(0);
+
     // v5.2 §3.1: discover via wdio singleton (Mode A) or fall back to env (Mode B).
     // Mode is determined by whether currentBrowser AND getPuppeteer succeeded.
     let cdpWsUrl: string;
