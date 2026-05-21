@@ -28,11 +28,33 @@ export interface JsonSchemaProp {
   description?: string;
 }
 
+/**
+ * MCP tool annotations per the canonical schema at
+ * github.com/modelcontextprotocol/modelcontextprotocol/blob/main/schema/2025-06-18/schema.json
+ * (definitions.ToolAnnotations) and SDK ToolAnnotationsSchema at types.d.ts:2361.
+ *
+ * Per the spec, `destructiveHint` and `idempotentHint` are "meaningful only
+ * when readOnlyHint == false". A read-only tool should therefore OMIT them
+ * rather than emit them as defaults (see CR-v5.4 §2.3 + iter#2 NB1).
+ */
+export interface QaToolAnnotations {
+  readOnlyHint?: boolean;
+  destructiveHint?: boolean;
+  idempotentHint?: boolean;
+  openWorldHint?: boolean;
+}
+
 export interface QaToolDef<I = unknown> {
   name: string;
   description: string;
   inputSchemaJson: QaToolJsonSchema;
   inputSchemaZod: z.ZodType<I>;
+  /**
+   * v5.4 §3.4.3 — VS Code 1.120 consumes ONLY `title` + `readOnlyHint` from
+   * MCP annotations; the remaining hints are forward-compat for future MCP
+   * clients. Empty/undefined = unannotated tool (the default in MCP).
+   */
+  annotations?: QaToolAnnotations;
 }
 
 const sessionIdProp: JsonSchemaProp = {
@@ -73,6 +95,11 @@ export const qa_get_failure_context: QaToolDef<{
     session_id: z.string().optional(),
     response_format: z.enum(['concise', 'detailed']).optional(),
   }),
+  // v5.4 §2.3 — read-only over MementoPauseStore. destructiveHint /
+  // idempotentHint OMITTED per MCP spec "meaningful only when
+  // readOnlyHint == false". openWorldHint=false: the tool's domain of
+  // interaction is closed (pause store only).
+  annotations: { readOnlyHint: true, openWorldHint: false },
 };
 
 export const qa_request_retry: QaToolDef<{ session_id: string; reason: string }> = {
@@ -102,6 +129,15 @@ export const qa_request_retry: QaToolDef<{ session_id: string; reason: string }>
     session_id: z.string(),
     reason: z.string(),
   }),
+  // v5.4 §2.3 — propose verb: creates a proposal, commit happens via UI button.
+  // destructiveHint=false because the proposal itself is additive (DecisionRouter
+  // enforces single-shot semantics — no overwriting prior proposals).
+  annotations: {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: false,
+    openWorldHint: false,
+  },
 };
 
 export const qa_request_give_up: QaToolDef<{ session_id: string; reason: string }> = {
@@ -130,6 +166,13 @@ export const qa_request_give_up: QaToolDef<{ session_id: string; reason: string 
     session_id: z.string(),
     reason: z.string(),
   }),
+  // v5.4 §2.3 — propose verb (see qa_request_retry rationale).
+  annotations: {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: false,
+    openWorldHint: false,
+  },
 };
 
 export const qa_propose_mark_passed: QaToolDef<{ session_id: string; rationale: string }> = {
@@ -160,6 +203,13 @@ export const qa_propose_mark_passed: QaToolDef<{ session_id: string; rationale: 
     session_id: z.string(),
     rationale: z.string(),
   }),
+  // v5.4 §2.3 — propose verb (see qa_request_retry rationale).
+  annotations: {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: false,
+    openWorldHint: false,
+  },
 };
 
 export const qa_propose_close_browser: QaToolDef<{ session_id: string; rationale: string }> = {
@@ -194,6 +244,13 @@ export const qa_propose_close_browser: QaToolDef<{ session_id: string; rationale
     session_id: z.string(),
     rationale: z.string(),
   }),
+  // v5.4 §2.3 — propose verb (see qa_request_retry rationale).
+  annotations: {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: false,
+    openWorldHint: false,
+  },
 };
 
 export const qa_propose_abort_suite: QaToolDef<{ session_id: string; rationale: string }> = {
@@ -224,6 +281,13 @@ export const qa_propose_abort_suite: QaToolDef<{ session_id: string; rationale: 
     session_id: z.string(),
     rationale: z.string(),
   }),
+  // v5.4 §2.3 — propose verb (see qa_request_retry rationale).
+  annotations: {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: false,
+    openWorldHint: false,
+  },
 };
 
 export const qaTools = [

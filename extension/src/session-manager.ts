@@ -45,6 +45,7 @@ import type { ChromeProcess } from './chrome.js';
 import type { DecisionRouter } from './decision-router.js';
 import type { QaDebugMcpProvider } from './mcp-provider.js';
 import { appendInfo } from './output-channel.js';
+import type { PauseStatusBar } from './pause-status-bar.js';
 import type { MementoPauseStore } from './pause-store.js';
 import type { TestControllerWrapper, TestRunHandle } from './test-controller.js';
 
@@ -80,12 +81,14 @@ export interface SessionManagerDeps {
   /** Workspace root used to resolve mocha bin + fallback CWD. */
   workspaceRoot: string;
   /**
-   * v5.3 §2.3: probed at activation; controls which "Ask Copilot" fallback the
-   * pause-publish notification handler takes. Both are internal commands so
-   * presence is per-VS-Code-build runtime detection per [R#3-NB2].
+   * Retained from v5.3 deps shape per ARCHITECTURE-CR-v5.4 §2.1; no longer
+   * read by the notification handler (v5.4 dropped the "Ask Copilot" button).
+   * Probed at activation for future re-use by other engagement paths.
    */
   chatOpenAvailable: boolean;
   chatOpenFallbackAvailable: boolean;
+  /** v5.4 §2.2 — ambient pause indicator; show on pause-publish, hide on decision commit. */
+  pauseStatusBar: PauseStatusBar;
 }
 
 interface ActiveRun {
@@ -148,6 +151,9 @@ export class SessionManager {
     appendInfo(this.deps.channel, `[session-manager] stale-resume detected session=${stale.session_id}`);
     await vscode.commands.executeCommand('setContext', 'qa-debug.paused', true);
     await vscode.commands.executeCommand('setContext', 'qa-debug.staleResume', true);
+    // v5.4 §3.7 — show the ambient indicator BEFORE the stale-resume toast so
+    // the entry is already visible when the user dismisses the notification.
+    this.deps.pauseStatusBar.show(stale.session_id);
     this.deps.mcpProvider.setPaused(stale.cdp_ws_url.replace(/^ws:/, 'http:'));
     this.deps.decisionRouter.enroll(stale.session_id, async (decision) => {
       appendInfo(
@@ -158,6 +164,7 @@ export class SessionManager {
       await vscode.commands.executeCommand('setContext', 'qa-debug.paused', false);
       await vscode.commands.executeCommand('setContext', 'qa-debug.staleResume', false);
       this.deps.mcpProvider.setIdle();
+      this.deps.pauseStatusBar.hide(stale.session_id);
     });
     void vscode.window.showInformationMessage(
       `QA Debug: last suite was interrupted while a pause was active (test: "${stale.test_title}"). ` +
@@ -260,42 +267,19 @@ export class SessionManager {
       await vscode.commands.executeCommand('setContext', 'qa-debug.paused', true);
       this.deps.mcpProvider.setPaused(this.deps.chrome.cdpHttpEndpoint);
       run.testHandle.recordPause(stored);
+      // v5.4 §2.2 — ambient status-bar entry augments the notification toast.
+      this.deps.pauseStatusBar.show(sessionId);
 
-      // v5.3 §2.3 — "Ask Copilot" button bridges pause→chat in one click.
-      // Minimal query per [R#2-NB4]; participant handler reads MementoPauseStore
-      // for rich context (avoids quote-injection on test titles).
+      // v5.4 §2.1 — two-button notification (Ask Copilot removed); body text
+      // names Agent-mode + Test Explorer as the two engagement paths.
       void vscode.window.showInformationMessage(
         `QA Debug: test "${stored.test_title}" failed at ${path.basename(stored.file)}:${stored.line ?? '?'}. ` +
-          `Browser held — ask Copilot to investigate.`,
-        'Ask Copilot',
+          `Browser held — investigate via Copilot Agent mode (qa-debug tools auto-invoke) ` +
+          `or pick a follow-up in Test Explorer.`,
         'Open Test Explorer',
         'Open Audit Log',
       ).then((sel) => {
-        if (sel === 'Ask Copilot') {
-          const query = '@qa-debug investigate this paused test';
-          if (this.deps.chatOpenAvailable) {
-            try {
-              void vscode.commands.executeCommand('workbench.action.chat.open', {
-                query,
-                isPartialQuery: false,
-              });
-            } catch (err) {
-              appendInfo(
-                this.deps.channel,
-                `[notification] Ask Copilot failed: ${(err as Error).message}`,
-              );
-              void vscode.window.showWarningMessage(
-                `QA Debug: could not open chat — ${(err as Error).message}`,
-              );
-            }
-          } else if (this.deps.chatOpenFallbackAvailable) {
-            void vscode.commands.executeCommand('workbench.action.openChat');
-          } else {
-            void vscode.window.showInformationMessage(
-              'QA Debug: open the Copilot Chat panel manually and type @qa-debug to investigate.',
-            );
-          }
-        } else if (sel === 'Open Audit Log') {
+        if (sel === 'Open Audit Log') {
           this.deps.channel.show();
         } else if (sel === 'Open Test Explorer') {
           void vscode.commands.executeCommand('workbench.view.testing.focus');
@@ -317,6 +301,10 @@ export class SessionManager {
         this.deps.decisionRouter.enroll(params.session_id, (decision) => {
           this.stopHeartbeats(run, params.session_id);
           run.pendingSessions.delete(params.session_id);
+          // v5.4 §4.5 test #2 — entry hides within 500ms of commit; the
+          // decision-router callback fires at the UI button press, ahead of
+          // qa-hooks' final_decision round-trip.
+          this.deps.pauseStatusBar.hide(params.session_id);
           resolve(decision);
         });
         this.startHeartbeats(run, params.session_id, params.heartbeat_ms);

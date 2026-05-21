@@ -13,6 +13,7 @@ import { registerCommands } from './commands.js';
 import { DecisionRouter } from './decision-router.js';
 import { QaDebugMcpProvider } from './mcp-provider.js';
 import { appendInfo, createAuditChannel } from './output-channel.js';
+import { registerPauseStatusBar } from './pause-status-bar.js';
 import { MementoPauseStore } from './pause-store.js';
 import { hostQaDebugMcp, type QaDebugMcpHost } from './qa-debug-server.js';
 import { SessionManager } from './session-manager.js';
@@ -98,6 +99,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     registerQaDebugChatParticipant(context, pauseStore, channel);
   }
 
+  // v5.4 §2.2 / §3.7 — ambient pause indicator. Lives across activations;
+  // SessionManager toggles show/hide via the returned handle.
+  const pauseStatusBar = registerPauseStatusBar(context, pauseStore, channel);
+
   if (workspaceRoot) {
     sessionMgr = new SessionManager({
       pauseStore,
@@ -109,6 +114,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       workspaceRoot,
       chatOpenAvailable,
       chatOpenFallbackAvailable,
+      pauseStatusBar,
     });
     sessionManagerSingleton = sessionMgr;
     registerCommands(context, {

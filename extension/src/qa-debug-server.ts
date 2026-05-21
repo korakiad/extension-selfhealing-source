@@ -39,7 +39,15 @@ export async function hostQaDebugMcp(
   auditChannel: vscode.OutputChannel,
 ): Promise<QaDebugMcpHost> {
   const token = randomUUID();
-  const mcpServer = createQaDebugServer({ pauseStore });
+  const mcpServer = createQaDebugServer({
+    pauseStore,
+    // v5.4 §2.7 — surface every tool invocation to the audit channel so
+    // CR §4.5 test #4 can grep for `[qa-debug-mcp] <name> called session=...`
+    // independent of whether the MCP client renders the wire-side notification.
+    onInvocation: (toolName, sessionId) => {
+      appendInfo(auditChannel, `[qa-debug-mcp] ${toolName} called session=${sessionId}`);
+    },
+  });
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   await mcpServer.connect(transport);
 
