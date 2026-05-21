@@ -272,11 +272,20 @@ export const mochaHooks = {
     } else {
       cdpWsUrl = process.env.QA_DEBUG_CDP_WS_URL ?? 'ws://localhost:9222';
     }
-    // F5-smoke diagnostic: surface what Mocha actually handed us as test.err so
-    // the user can see why failing_assertion was "undefined" (when it was).
+    // v5.8 — defensive diagnostic for unreachable-in-normal-flow cases.
+    // Post-qa-reporter-fix (v5.8 EVENT_TEST_FAIL handler), test.err should
+    // always be set when state==='failed' because Runner.fail wraps non-Error
+    // throws via thrown2Error (runner.js:442) before emitting EVENT_TEST_FAIL.
+    // Remaining cases this WARN catches: (a) third-party code emits
+    // EVENT_TEST_FAIL directly bypassing Runner.fail; (b) reporter regression
+    // removes the assignment; (c) Runner#uncaught paths that don't go through
+    // standard fail emission.
     if (test.err == null) {
       process.stderr.write(
-        `[qa-hooks] WARN test marked failed but test.err is ${typeof test.err}=${String(test.err)} — likely a timeout abort on an async wdio test\n`,
+        `[qa-hooks] WARN test marked failed but test.err is ${typeof test.err}=${String(test.err)} — ` +
+          `Mocha's Runner.fail does NOT set test.err; the active reporter is expected to. ` +
+          `qa-reporter (v5.8+) replicates the Base reporter assignment. ` +
+          `If you see this WARN, either the reporter changed, OR the test was failed via a path that bypasses EVENT_TEST_FAIL.\n`,
       );
     }
     const payload: PausePayload = {

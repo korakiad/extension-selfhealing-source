@@ -9,13 +9,16 @@
     "engagement": "tsx src/engagement.ts",
     "decision-tree": "tsx src/decision-tree.ts",
     "budget": "tsx src/budget.ts",
-    "race-test": "tsx src/race-test.ts"
+    "race-test": "tsx src/race-test.ts",
+    "qa-reporter-test-err": "tsx src/qa-reporter-test-err.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.97.1",
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "@qa-debug/mocha-hooks": "workspace:*",
     "@qa-debug/pause-store-types": "workspace:*",
     "@qa-debug/qa-debug-mcp": "workspace:*",
+    "mocha": "^10.7.3",
     "zod": "^4.4.3"
   },
   "devDependencies": {

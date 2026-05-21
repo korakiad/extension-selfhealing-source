@@ -111,6 +111,26 @@ export class QaReporter {
     });
 
     runner.on(C.EVENT_TEST_FAIL, (test: Mocha.Test, err: Error) => {
+      // v5.8 — replicate Mocha Base reporter's `test.err = err` assignment
+      // (node_modules/mocha/lib/reporters/base.js:379-390). Runner.fail does
+      // NOT set test.err — only the Base reporter does, via this same event.
+      // We replaced Base with this reporter per ARCH v5 §3.6 and inadvertently
+      // dropped the assignment; qa-hooks afterEach reads test.err to ground the
+      // agent's failing_assertion. Multi-attach (test.err.multiple) is
+      // load-bearing not dead-code: runner.js:505,543 call `self.fail(hook,
+      // err)` when a beforeEach/afterEach hook fails AFTER the test fails,
+      // firing a SECOND EVENT_TEST_FAIL for the SAME test in the SAME process
+      // (no respawn needed). The multi-attach prevents the hook-failure error
+      // from clobbering the test-body error.
+      interface ErrorWithMultiple extends Error {
+        multiple?: Error[];
+      }
+      if (test.err && err instanceof Error) {
+        const prior = test.err as ErrorWithMultiple;
+        prior.multiple = (prior.multiple ?? []).concat(err);
+      } else {
+        test.err = err;
+      }
       this.notes.set(key(test), err.message ?? String(err));
     });
 
