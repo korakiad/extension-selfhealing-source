@@ -184,8 +184,11 @@ export class SessionManager {
       this.deps.mcpProvider.setIdle();
       this.deps.pauseStatusBar.hide(stale.session_id);
     });
+    // v5.7 — text matches the real cause: this branch only fires when the
+    // prior deactivate did NOT write the clean-shutdown sentinel (i.e., the
+    // extension didn't get a chance to deactivate cleanly).
     void vscode.window.showInformationMessage(
-      `QA Debug: last suite was interrupted while a pause was active (test: "${stale.test_title}"). ` +
+      `QA Debug: previous session ended unexpectedly while paused (test: "${stale.test_title}"). ` +
         `The browser state is no longer available. Choose **Give Up** in Test Explorer to clear, or close to defer.`,
       'Open Audit Log',
     ).then((sel) => {

@@ -754,6 +754,8 @@ connection.handle(METHOD.decisionAwait, async (params) => {
 
 ## 11. VS-Code-reload-mid-pause flow
 
+> **v5.7 amendment (2026-05-21):** the stale-resume UI described in this section now fires ONLY when the prior `deactivate()` did NOT complete (i.e., true crash / SIGKILL / extension-host shutdown without grace period). Clean closes write a boolean sentinel `qa-debug.clean_shutdown=true` to `globalState`; the next `activate()` reads-and-clears the sentinel and suppresses stale-resume + clears any orphaned pause state. Pause-at-deactivate auto-give_ups via `DecisionRouter.abandon` and appends a `deactivate-with-active-pause` line to `${globalStorageUri}/audit.jsonl`. See `PLAN-clean-shutdown-sentinel.md` for design rationale (Ralph-loop APPROVE-with-polish iter#1 closure; researcher findings cite VS Code Debug/Jupyter/DevTools/Terminal precedents + NN/G Heuristic #1).
+
 (Already addressed in §3.5; full sequence here.)
 
 1. Suite is running. Test fails. `pause.publish` lands. Memento stores `qa-debug.pause.active`. Context key flipped. MCP servers registered.
