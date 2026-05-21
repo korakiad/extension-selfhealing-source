@@ -136,10 +136,44 @@ function getConnection(): JsonRpcConnection | undefined {
 }
 
 function serializeError(err: unknown): SerializedError {
-  if (err instanceof Error) {
-    return { name: err.name, message: err.message, stack: err.stack };
+  // F5-smoke 2026-05-21: wdio v8 tests can reach afterEach with test.state==='failed'
+  // but test.err === undefined (mocha's timeout fires before the async click() rejects,
+  // and the captured runnable error gets cleared on the timeout path). Without
+  // defensive handling, String(undefined) → "undefined" reaches the agent as the
+  // failing_assertion, which is worse than admitting "no error captured".
+  if (err == null) {
+    return {
+      name: 'NoError',
+      message: '(test marked failed but Mocha did not capture an error — likely a timeout abort on an async test; check test stack/console)',
+    };
   }
-  return { name: 'NonError', message: String(err) };
+  if (err instanceof Error) {
+    return {
+      name: err.name || 'Error',
+      message: err.message || String(err) || '(error has empty message)',
+      stack: err.stack,
+    };
+  }
+  // Non-Error throws (e.g., wdio threw a plain object, a string, or a Promise rejection
+  // with a non-Error reason). JSON-stringify what we can; fall back to String() if circular.
+  let message: string;
+  try {
+    message = JSON.stringify(err);
+  } catch {
+    message = String(err);
+  }
+  return { name: 'NonError', message: message || '(non-Error throw with no representation)' };
+}
+
+/**
+ * Normalize CDP WebSocket host so downstream clients (playwright-mcp) can connect.
+ * Chrome bound to `0.0.0.0` (INADDR_ANY) reports back `ws://0.0.0.0:<port>/...` from
+ * getPuppeteer().wsEndpoint(); some clients refuse `0.0.0.0` as a target. Substitute
+ * the loopback address so the URL is dialable. The actual TCP socket on 0.0.0.0
+ * accepts connections from 127.0.0.1 by definition.
+ */
+function normalizeCdpWsUrl(raw: string): string {
+  return raw.replace(/^ws:\/\/0\.0\.0\.0(:|\/)/, 'ws://127.0.0.1$1');
 }
 
 function fileLineFromStack(stack: string | undefined): number | null {
@@ -222,7 +256,7 @@ export const mochaHooks = {
       try {
         const pup = await currentBrowser.getPuppeteer();
         if (pup?.wsEndpoint) {
-          cdpWsUrl = pup.wsEndpoint();
+          cdpWsUrl = normalizeCdpWsUrl(pup.wsEndpoint());
           mode = 'A';
           // v5.3 §2.6 positive logging for Mode A engagement.
           process.stderr.write(`[qa-hooks] Mode A engaged for test="${test.title}" cdp=${cdpWsUrl}\n`);
@@ -237,6 +271,13 @@ export const mochaHooks = {
       }
     } else {
       cdpWsUrl = process.env.QA_DEBUG_CDP_WS_URL ?? 'ws://localhost:9222';
+    }
+    // F5-smoke diagnostic: surface what Mocha actually handed us as test.err so
+    // the user can see why failing_assertion was "undefined" (when it was).
+    if (test.err == null) {
+      process.stderr.write(
+        `[qa-hooks] WARN test marked failed but test.err is ${typeof test.err}=${String(test.err)} — likely a timeout abort on an async wdio test\n`,
+      );
     }
     const payload: PausePayload = {
       test: test.title,
