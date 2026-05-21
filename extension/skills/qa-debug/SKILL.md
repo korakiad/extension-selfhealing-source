@@ -90,8 +90,9 @@ turn N+1: <new human turn arrives; investigate that turn>
 
 **Named-error paths:**
 
-- `NO_ACTIVE_PAUSE` → the pause was already resolved (likely by the human via Test Explorer Give Up). STOP — do not re-call. Report: *"Pause was already resolved; my code-bug analysis stands — please review the source edit at `<file>:<line>`."*
+- `NO_ACTIVE_PAUSE` → no Mocha test is currently paused. STOP — do not re-call. Report: *"No pause is active; my code-bug analysis stands — please review the source edit at `<file>:<line>`."*
 - `SESSION_NOT_FOUND` → your `session_id` is stale (rare; a fresh pause superseded the one you were investigating). Re-call `qa_get_failure_context` (omit `session_id`) to ground in the current pause, then re-classify.
+- `PAUSE_ALREADY_RESOLVED` → another caller (typically the QA via Test Explorer) committed the verb first; your call had no effect. Call `qa_get_failure_context` (omit `session_id`) to confirm idle vs fresh pause, then re-classify if a new pause arrived. Do NOT re-issue the same verb against the stale session_id.
 
 ### Arm 2 — test-bug → `qa-debug:qa_request_retry` after test edit
 
@@ -132,7 +133,7 @@ turn N+1: <new human turn arrives; investigate that turn>
 
 **Turn-end:** Per the Stop-and-report contract — emit *"Proposed abort-suite pending your review; rationale: <text>."* and end the turn.
 
-**Named-error paths:** Same as Arm 1.
+**Named-error paths:** Same `NO_ACTIVE_PAUSE` / `SESSION_NOT_FOUND` handling as Arm 1. PAUSE_ALREADY_RESOLVED does NOT apply — propose verbs return a success payload with `status: 'awaiting_human'` (no `isError`), so a lost-race is impossible by construction.
 
 ### Arm 5 — ambiguous-or-out-of-scope → `qa-debug:qa_request_give_up`
 
@@ -178,6 +179,7 @@ If during investigation you observe signals suggesting multiple tests will fail 
 | Mocha CLI flags (`--bail`, `--reporter`, etc.). | The extension constructs the mocha command line; do not advise the QA to change it. |
 | Polling `qa_get_failure_context.last_proposal_status` in-turn. | The human commit is event-driven (next chat turn), not clock-driven. See the anti-example in the Stop-and-report contract. |
 | Calling `playwright-mcp:browser_close` during investigation. | Destroys the held browser; not recoverable; QA loses the live state they paused to inspect. |
+| Re-issuing `qa_request_retry` / `qa_request_give_up` after `PAUSE_ALREADY_RESOLVED` on the same `session_id`. | The verb has already committed (typically by the QA via Test Explorer); re-issuing only churns the audit log. Re-ground via `qa_get_failure_context` (omit `session_id`) and re-classify if a new pause exists. |
 
 ## Worked examples
 

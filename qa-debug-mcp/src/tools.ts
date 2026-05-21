@@ -111,7 +111,8 @@ export const qa_request_retry: QaToolDef<{ session_id: string; reason: string }>
     'not as a generic "try again" without a diff. The supplied reason is surfaced verbatim in the chat notification, the Test Explorer annotation, ' +
     'and the audit log; callers should write it for a QA who did not see the conversation (e.g., "selector .submit-btn renamed to .primary-submit"). ' +
     "Returns: { decision: 'retry', accepted_at_ms }. " +
-    'Errors: NO_ACTIVE_PAUSE when the pause was already resolved; SESSION_NOT_FOUND when session_id is stale.',
+    'Errors: NO_ACTIVE_PAUSE when no pause is active; SESSION_NOT_FOUND when session_id is stale; ' +
+    'PAUSE_ALREADY_RESOLVED when another caller (e.g., a UI button click in Test Explorer) committed the verb first.',
   inputSchemaJson: {
     type: 'object',
     properties: {
@@ -129,9 +130,11 @@ export const qa_request_retry: QaToolDef<{ session_id: string; reason: string }>
     session_id: z.string(),
     reason: z.string(),
   }),
-  // v5.4 §2.3 — propose verb: creates a proposal, commit happens via UI button.
-  // destructiveHint=false because the proposal itself is additive (DecisionRouter
-  // enforces single-shot semantics — no overwriting prior proposals).
+  // v5.6 — request verb: auto-commits via DecisionRouter when called through
+  // the in-extension qa-debug-server (onDecision callback wires to
+  // decisionRouter.commit(sessionId, 'retry', reason, 'agent')). Returns
+  // PAUSE_ALREADY_RESOLVED on lost-race; the agent should re-ground via
+  // qa_get_failure_context rather than re-issue.
   annotations: {
     readOnlyHint: false,
     destructiveHint: false,
@@ -148,7 +151,8 @@ export const qa_request_give_up: QaToolDef<{ session_id: string; reason: string 
     'Callers should invoke this when the failure is genuine and no retry is warranted (e.g., the asserted product behavior is wrong and requires a fix in source). ' +
     'The supplied reason is surfaced verbatim in the chat notification, the Test Explorer annotation, and the audit log. ' +
     "Returns: { decision: 'give_up', accepted_at_ms }. " +
-    'Errors: NO_ACTIVE_PAUSE when the pause was already resolved; SESSION_NOT_FOUND when session_id is stale.',
+    'Errors: NO_ACTIVE_PAUSE when no pause is active; SESSION_NOT_FOUND when session_id is stale; ' +
+    'PAUSE_ALREADY_RESOLVED when another caller committed the verb first.',
   inputSchemaJson: {
     type: 'object',
     properties: {
@@ -166,7 +170,8 @@ export const qa_request_give_up: QaToolDef<{ session_id: string; reason: string 
     session_id: z.string(),
     reason: z.string(),
   }),
-  // v5.4 §2.3 — propose verb (see qa_request_retry rationale).
+  // v5.6 — request verb (see qa_request_retry rationale): auto-commits via
+  // DecisionRouter; returns PAUSE_ALREADY_RESOLVED on lost-race.
   annotations: {
     readOnlyHint: false,
     destructiveHint: false,

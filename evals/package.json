@@ -8,11 +8,13 @@
     "build:check": "tsc -p tsconfig.json --noEmit",
     "engagement": "tsx src/engagement.ts",
     "decision-tree": "tsx src/decision-tree.ts",
-    "budget": "tsx src/budget.ts"
+    "budget": "tsx src/budget.ts",
+    "race-test": "tsx src/race-test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.97.1",
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "@qa-debug/pause-store-types": "workspace:*",
     "@qa-debug/qa-debug-mcp": "workspace:*",
     "zod": "^4.4.3"
   },

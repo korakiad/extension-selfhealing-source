@@ -26,6 +26,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { createQaDebugServer } from '@qa-debug/qa-debug-mcp/server';
 import type { PauseStore } from '@qa-debug/pause-store-types';
 
+import type { DecisionRouter } from './decision-router.js';
 import { appendInfo } from './output-channel.js';
 
 export interface QaDebugMcpHost {
@@ -36,6 +37,7 @@ export interface QaDebugMcpHost {
 
 export async function hostQaDebugMcp(
   pauseStore: PauseStore,
+  decisionRouter: DecisionRouter,
   auditChannel: vscode.OutputChannel,
 ): Promise<QaDebugMcpHost> {
   const token = randomUUID();
@@ -46,6 +48,17 @@ export async function hostQaDebugMcp(
     // independent of whether the MCP client renders the wire-side notification.
     onInvocation: (toolName, sessionId) => {
       appendInfo(auditChannel, `[qa-debug-mcp] ${toolName} called session=${sessionId}`);
+    },
+    // v5.6 — commit agent-driven request-verb decisions through DecisionRouter.
+    // commit() returns false when no pending callback exists for sessionId (UI
+    // button beat the agent); server.ts then throws PAUSE_ALREADY_RESOLVED.
+    onDecision: (sessionId, kind, reason): boolean => {
+      const ok = decisionRouter.commit(sessionId, kind, reason, 'agent');
+      appendInfo(
+        auditChannel,
+        `[qa-debug-mcp] onDecision sessionId=${sessionId} kind=${kind} committed=${ok}`,
+      );
+      return ok;
     },
   });
   // STATEFUL transport — sessionIdGenerator returns a fresh UUID per client.

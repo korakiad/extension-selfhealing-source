@@ -1,4 +1,4 @@
-export type QaErrorCode = 'NO_ACTIVE_PAUSE' | 'SESSION_NOT_FOUND';
+export type QaErrorCode = 'NO_ACTIVE_PAUSE' | 'SESSION_NOT_FOUND' | 'PAUSE_ALREADY_RESOLVED';
 
 export class QaToolError extends Error {
   constructor(public readonly code: QaErrorCode, message: string) {

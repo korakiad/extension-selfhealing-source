@@ -45,7 +45,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Host the qa-debug MCP server in-extension over Streamable HTTP. The
   // McpProvider returns its URI + token as part of the qa-debug definition
   // during paused state.
-  qaDebugHost = await hostQaDebugMcp(pauseStore, channel);
+  qaDebugHost = await hostQaDebugMcp(pauseStore, decisionRouter, channel);
   context.subscriptions.push({
     dispose: () => {
       void qaDebugHost?.dispose();
