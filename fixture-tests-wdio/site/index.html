@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>QA Debug Companion — wdio fixture site</title>
+  <style>
+    body { font: 14px/1.4 system-ui, sans-serif; margin: 2em; }
+    .product-name { color: #222; }
+    #login-btn { padding: 0.5em 1em; background: #2563eb; color: white; border: none; cursor: pointer; }
+    .visible-late { display: none; }
+  </style>
+</head>
+<body>
+  <h1>QA Debug fixture site</h1>
+  <p>This page is the target for the deterministic-fail wdio fixture specs.</p>
+  <div class="product-name">WidgetPro v3.2</div>
+  <button id="login-btn">Log in</button>
+  <!-- Note: there is intentionally NO #non-existent-button — the selector fixture relies on this. -->
+  <!-- Note: .visible-late stays display:none — the timeout fixture relies on this. -->
+  <div class="visible-late">This element never appears (display:none).</div>
+</body>
+</html>

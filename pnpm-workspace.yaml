@@ -4,4 +4,5 @@ packages:
   - mocha-hooks
   - pause-store-types
   - fixture-tests
+  - fixture-tests-wdio
   - evals
