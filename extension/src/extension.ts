@@ -15,6 +15,7 @@ import { appendInfo, createAuditChannel } from './output-channel.js';
 import { MementoPauseStore } from './pause-store.js';
 import { hostQaDebugMcp, type QaDebugMcpHost } from './qa-debug-server.js';
 import { SessionManager } from './session-manager.js';
+import { smokeTestMessageRetention } from './smoke-test-message.js';
 import { createTestControllerWrapper } from './test-controller.js';
 
 let qaDebugHost: QaDebugMcpHost | undefined;
@@ -98,6 +99,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }),
     );
   }
+
+  // Pre-S4-PR TestMessage-retention smoke per S4_DESIGN §7.2 R#3-NB1.
+  // Invoked via Command Palette: "QA Debug: Smoke — TestMessage Retention".
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      'qa-debug.smokeTestMessageRetention',
+      () => smokeTestMessageRetention(),
+    ),
+  );
 
   appendInfo(channel, `[activate] ready (qa-debug MCP host at ${qaDebugHost.uri.toString()})`);
 }
