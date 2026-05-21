@@ -41,6 +41,8 @@ export function registerCommands(context: vscode.ExtensionContext, deps: Command
 
 async function runFixtureCmd(deps: CommandDeps): Promise<void> {
   try {
+    // qa-debug.runFixture command invokes with no specs; SessionManager.resolveCwd
+    // falls back to fixture-tests/ (legacy demo) or workspaceRoot.
     await deps.sessionManager.runFixtureSuite();
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

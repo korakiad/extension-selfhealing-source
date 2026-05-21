@@ -60,12 +60,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // SessionManager. SessionManager isn't constructed until after the
   // wrapper, so use a deferred binding.
   let sessionMgr: SessionManager | undefined;
-  const testControllerWrapper = createTestControllerWrapper(context, channel, async () => {
+  const testControllerWrapper = createTestControllerWrapper(context, channel, async (specs) => {
     if (!sessionMgr) {
       void vscode.window.showErrorMessage('QA Debug: session manager not ready.');
       return;
     }
-    await sessionMgr.runFixtureSuite();
+    await sessionMgr.runFixtureSuite({ specs });
   });
 
   if (workspaceRoot) {

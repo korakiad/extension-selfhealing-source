@@ -4,36 +4,29 @@
  * DecisionRouter + TestController + MCP provider).
  *
  * S4_DESIGN.md §6, §10, §11.
+ * v5.2 alignment: injects `--require` + `--reporter` as absolute paths
+ * resolved via `createRequire(__filename)` from the extension's location
+ * (CR §2.1 [R#3-NB2 + R#3-NB6]). User's `.mocharc.cjs` needs zero edits.
+ * CWD selection per CR §2.1 NB6: spec-URI-derived when invoked from
+ * TestController; falls back to `<workspaceRoot>/fixture-tests` (demo) or
+ * `<workspaceRoot>` for run-all.
  *
  * Suite-run sequence:
- *   1. runFixtureSuite() called via qa-debug.runFixture command or TestController
- *      run handler.
+ *   1. runFixtureSuite() called via qa-debug.runFixture command or
+ *      TestController run handler.
  *   2. Chrome.spawn() (idempotent — reuse across tests).
  *   3. controller.beginRun() returns a TestRunHandle scoped to this invocation.
- *   4. spawn mocha child with stdio[3]='ipc' + --require qa-hooks +
- *      --reporter qa-reporter.
+ *   4. spawn mocha child with stdio[3]='ipc' + injected --require qa-hooks +
+ *      --reporter qa-reporter (both absolute paths to bundled extension files).
  *   5. Construct JsonRpcConnection on the child. Register handlers.
  *   6. Wait for child exit. On clean exit with no outstanding pause, tear down
  *      Chrome. On exit with outstanding pause, leave Chrome up (per §6.3).
- *
- * Retry flow (§10):
- *   - On final_decision { kind: 'retry' }: queue a respawn task.
- *   - After current child exits, spawn new mocha with --grep '^<escaped>$' on
- *     the same spec file. The TestRunHandle stays alive across respawn so the
- *     same TestItem (per §7.3 id formula) receives subsequent events.
- *
- * Stale-resume flow (§11):
- *   - resumeStalePauseIfAny() — called once on activate. If the Memento has an
- *     active pause, flip context key + setPaused on McpProvider + show
- *     stale-resume notification with Give Up only. The DecisionRouter has no
- *     pending callback (the original mocha child is dead), so a Give Up click
- *     locally clears the pause via the same code path as commit, just without
- *     IPC. The qa-debug.staleResume context key disables Retry / Mark Passed.
  */
 
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import * as vscode from 'vscode';
 
@@ -56,7 +49,26 @@ import type { MementoPauseStore } from './pause-store.js';
 import type { TestControllerWrapper, TestRunHandle } from './test-controller.js';
 
 const HEARTBEAT_MS = Number(process.env.QA_DEBUG_HEARTBEAT_MS ?? 5_000);
-const FIXTURE_DIR = 'fixture-tests';
+
+// v5.2 §2.1: absolute-path resolution for bundled hook + reporter. Resolved
+// once at module load from the extension's own location via createRequire.
+// fs.existsSync guard catches VSIX-misdeploy at extension activation (clearer
+// than failing inside mocha child later). Per CR §5 VSIX-packaging risk row.
+const extReq = createRequire(__filename);
+const REGISTER_PATH: string = extReq.resolve('@qa-debug/mocha-hooks/register');
+const REPORTER_PATH: string = extReq.resolve('@qa-debug/mocha-hooks/qa-reporter');
+for (const [label, p] of [
+  ['register', REGISTER_PATH] as const,
+  ['reporter', REPORTER_PATH] as const,
+]) {
+  if (!existsSync(p)) {
+    throw new Error(
+      `qa-debug-companion bundled hook ${label} not found at ${p}. ` +
+        `Likely VSIX was built without including @qa-debug/mocha-hooks workspace dist. ` +
+        `See ARCHITECTURE-CR-v5.2 §5 risk row "VSIX packaging discipline".`,
+    );
+  }
+}
 
 export interface SessionManagerDeps {
   pauseStore: MementoPauseStore;
@@ -65,7 +77,7 @@ export interface SessionManagerDeps {
   mcpProvider: QaDebugMcpProvider;
   testControllerWrapper: TestControllerWrapper;
   channel: vscode.OutputChannel;
-  /** Workspace root used to resolve mocha bin + fixture-tests cwd. */
+  /** Workspace root used to resolve mocha bin + fallback CWD. */
   workspaceRoot: string;
 }
 
@@ -76,8 +88,24 @@ interface ActiveRun {
   heartbeatTimers: Map<string, NodeJS.Timeout>;
   /** session_ids whose decision.await is currently pending. */
   pendingSessions: Set<string>;
+  /** CWD this run was spawned with — reused on retry respawn. */
+  cwd: string;
+  /** Mocha bin used — reused on retry respawn. */
+  mochaBin: string;
   /** Outstanding retry request to fire after `child` exits. */
   retryAfterExit?: { specFile: string; testTitle: string };
+}
+
+export interface RunFixtureSuiteOptions {
+  /**
+   * Spec file URIs to run. If non-empty, CWD is derived from path.dirname
+   * of the first URI's fsPath (per CR §2.1 NB6 recommended default).
+   * If empty/undefined, CWD falls back to `<workspaceRoot>/fixture-tests`
+   * (legacy demo flow) or `<workspaceRoot>` (generic run-all).
+   */
+  specs?: readonly vscode.Uri[];
+  /** Test-run label surfaced in Test Explorer. */
+  runLabel?: string;
 }
 
 export class SessionManager {
@@ -86,7 +114,7 @@ export class SessionManager {
   constructor(private readonly deps: SessionManagerDeps) {}
 
   /** Entrypoint for qa-debug.runFixture + TestController run handler. */
-  async runFixtureSuite(grep?: string, specFile?: string): Promise<void> {
+  async runFixtureSuite(opts: RunFixtureSuiteOptions = {}): Promise<void> {
     if (this.activeRun) {
       void vscode.window.showWarningMessage(
         'QA Debug: a suite run is already in progress.',
@@ -94,10 +122,13 @@ export class SessionManager {
       return;
     }
     await this.deps.chrome.spawn();
+    const cwd = this.resolveCwd(opts.specs);
+    const mochaBin = this.resolveMochaBin(cwd);
+    const specFiles = (opts.specs ?? []).map((u) => u.fsPath);
     const testHandle = this.deps.testControllerWrapper.beginRun(
-      specFile ? path.basename(specFile) : 'fixture suite',
+      opts.runLabel ?? (specFiles.length === 1 ? path.basename(specFiles[0]) : 'fixture suite'),
     );
-    await this.spawnMochaChild(testHandle, { grep, specFile });
+    await this.spawnMochaChild(testHandle, { cwd, mochaBin, specFiles });
   }
 
   /**
@@ -111,8 +142,6 @@ export class SessionManager {
     await vscode.commands.executeCommand('setContext', 'qa-debug.paused', true);
     await vscode.commands.executeCommand('setContext', 'qa-debug.staleResume', true);
     this.deps.mcpProvider.setPaused(stale.cdp_ws_url.replace(/^ws:/, 'http:'));
-    // Enroll a "synthetic" pending callback so Give Up has something to commit.
-    // Locally resolved — no IPC round-trip — but reuses the same code path.
     this.deps.decisionRouter.enroll(stale.session_id, async (decision) => {
       appendInfo(
         this.deps.channel,
@@ -149,26 +178,39 @@ export class SessionManager {
 
   private async spawnMochaChild(
     testHandle: TestRunHandle,
-    opts: { grep?: string; specFile?: string },
+    opts: {
+      cwd: string;
+      mochaBin: string;
+      grep?: string;
+      specFiles?: string[];
+    },
   ): Promise<void> {
-    const mochaBin = this.resolveMochaBin();
-    const args: string[] = [];
+    // v5.2 §2.1: inject --require + --reporter as absolute paths to the
+    // extension-bundled hook/reporter. User .mocharc.cjs needs no edits.
+    const args: string[] = [
+      '--require',
+      REGISTER_PATH,
+      '--reporter',
+      REPORTER_PATH,
+    ];
     if (opts.grep) {
       args.push('--grep', opts.grep);
     }
-    if (opts.specFile) {
-      args.push(opts.specFile);
+    if (opts.specFiles && opts.specFiles.length > 0) {
+      args.push(...opts.specFiles);
     }
 
-    const cwd = path.join(this.deps.workspaceRoot, FIXTURE_DIR);
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       QA_DEBUG_CDP_WS_URL: this.deps.chrome.cdpWsEndpoint,
     };
 
-    appendInfo(this.deps.channel, `[session-manager] spawn mocha cwd=${cwd} args=${JSON.stringify(args)}`);
-    const child = spawn(mochaBin, args, {
-      cwd,
+    appendInfo(
+      this.deps.channel,
+      `[session-manager] spawn mocha cwd=${opts.cwd} args=${JSON.stringify(args)}`,
+    );
+    const child = spawn(opts.mochaBin, args, {
+      cwd: opts.cwd,
       stdio: ['inherit', 'inherit', 'inherit', 'ipc'],
       env,
     });
@@ -180,6 +222,8 @@ export class SessionManager {
       connection,
       heartbeatTimers: new Map(),
       pendingSessions: new Set(),
+      cwd: opts.cwd,
+      mochaBin: opts.mochaBin,
     };
     this.activeRun = run;
 
@@ -249,15 +293,12 @@ export class SessionManager {
       run.testHandle.recordDecision(decision, pause);
 
       if (decision.kind === 'retry') {
-        // Queue respawn to fire after the current mocha child exits.
         if (pause?.file) {
           run.retryAfterExit = { specFile: pause.file, testTitle: decision.test_title };
         }
-        // Don't clear pause yet — the respawn will overwrite with a new pause if it fails again.
         return;
       }
 
-      // mark_passed / give_up — clear the pause and gate.
       await this.deps.pauseStore.clearActivePause();
       await vscode.commands.executeCommand('setContext', 'qa-debug.paused', false);
       this.deps.mcpProvider.setIdle();
@@ -265,10 +306,6 @@ export class SessionManager {
   }
 
   private peekPauseForFinalDecision(decision: FinalDecisionParams): PausePayload | undefined {
-    // The Memento may have cleared by the time this notification handler runs
-    // (the decision-router commit happens before the hook emits final_decision,
-    // and recordDecision in PauseStore doesn't clear active). In practice the
-    // active pause should still be present when final_decision arrives.
     try {
       return this.deps.pauseStore.getActivePause(decision.session_id);
     } catch {
@@ -292,7 +329,6 @@ export class SessionManager {
   }
 
   private async onMochaExit(run: ActiveRun): Promise<void> {
-    // Synthesize give_up for any sessions still pending — §9.3 row 1.
     for (const sessionId of run.pendingSessions) {
       this.deps.decisionRouter.abandon(
         sessionId,
@@ -314,16 +350,17 @@ export class SessionManager {
         this.deps.channel,
         `[session-manager] respawn for retry: spec=${specFile} test="${testTitle}"`,
       );
-      // Reuse the same TestRunHandle so the TestItem (id includes file + title)
-      // receives subsequent pause-publishes.
+      // Retry reuses the same CWD + mocha bin as the original spawn so the
+      // user's .mocharc.cjs resolution (if any) stays consistent.
       await this.spawnMochaChild(run.testHandle, {
+        cwd: run.cwd,
+        mochaBin: run.mochaBin,
         grep: `^${escapeRegex(testTitle)}$`,
-        specFile,
+        specFiles: [specFile],
       });
       return;
     }
 
-    // Clean exit: tear down Chrome IF no outstanding pause survives.
     const stalePause = this.deps.pauseStore.peekActivePause();
     if (!stalePause) {
       await this.deps.chrome.dispose();
@@ -337,26 +374,44 @@ export class SessionManager {
     run.testHandle.end();
   }
 
-  private resolveMochaBin(): string {
-    const root = this.deps.workspaceRoot;
+  /**
+   * CWD selection per CR §2.1 [R#3-NB6]:
+   *  - If specs[] non-empty: parent dir of first spec (transparent for any
+   *    user project layout — wdio or otherwise).
+   *  - Else if `<workspaceRoot>/fixture-tests` exists: legacy demo flow.
+   *  - Else: workspaceRoot (user's .mocharc.cjs from there decides spec patterns).
+   */
+  private resolveCwd(specs: readonly vscode.Uri[] | undefined): string {
+    if (specs && specs.length > 0) {
+      return path.dirname(specs[0].fsPath);
+    }
+    const fixtureDir = path.join(this.deps.workspaceRoot, 'fixture-tests');
+    if (existsSync(fixtureDir)) {
+      return fixtureDir;
+    }
+    return this.deps.workspaceRoot;
+  }
+
+  private resolveMochaBin(cwd: string): string {
+    // Look in the chosen CWD's node_modules first, then walk up two levels
+    // (works for typical monorepo layouts: cwd/node_modules, cwd/../node_modules,
+    // cwd/../../node_modules), then workspaceRoot.
     const candidates = [
-      path.join(root, FIXTURE_DIR, 'node_modules', '.bin', 'mocha'),
-      path.join(root, 'node_modules', '.bin', 'mocha'),
+      path.join(cwd, 'node_modules', '.bin', 'mocha'),
+      path.join(cwd, '..', 'node_modules', '.bin', 'mocha'),
+      path.join(cwd, '..', '..', 'node_modules', '.bin', 'mocha'),
+      path.join(this.deps.workspaceRoot, 'node_modules', '.bin', 'mocha'),
     ];
     for (const c of candidates) {
       if (existsSync(c)) return c;
     }
     throw new Error(
-      `Could not find mocha binary at any of: ${candidates.join(', ')}. Did pnpm install run?`,
+      `Could not find mocha binary near ${cwd} or ${this.deps.workspaceRoot}. ` +
+        `Did the user's project install mocha?`,
     );
   }
 }
 
-/**
- * Translate the wire payload (mocha-hooks/src/protocol.ts PausePayload shape)
- * to the richer in-extension shape (pause-store-types PausePayload) by
- * filling in derived fields.
- */
 function wireToStored(wire: WirePausePayload, sessionId: string): PausePayload {
   const stackFrames = (wire.error.stack ?? '').split('\n').slice(1).map((s) => s.trimStart());
   return {
@@ -367,19 +422,16 @@ function wireToStored(wire: WirePausePayload, sessionId: string): PausePayload {
     failing_assertion: wire.error.message,
     stack_trace: { frames: stackFrames },
     cdp_ws_url: wire.cdp_ws_url,
-    console_logs: { lines: [], bytes: 0 }, // Phase 2 capture; S4 leaves empty
+    console_logs: { lines: [], bytes: 0 },
     paused_at_ms: wire.started_at,
     retry_count: wire.retry_count,
-    max_retries_remaining: 0, // No native retries per ARCH §3.1
+    max_retries_remaining: 0,
   };
 }
 
-/** §6.4.1 — escape regex metacharacters. */
+/** §6.4.1 — escape regex metacharacters per MDN-canonical pattern. */
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-// Reference: HEARTBEAT_MS lives in the module scope so future timer logic can
-// pick it up; the IPC handler currently uses the value the hook supplies in
-// DecisionAwaitParams.heartbeat_ms (mirrors HEARTBEAT_MS via env).
 void HEARTBEAT_MS;

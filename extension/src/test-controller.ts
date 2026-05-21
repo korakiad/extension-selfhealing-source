@@ -43,19 +43,21 @@ export interface TestControllerWrapper {
 export function createTestControllerWrapper(
   context: vscode.ExtensionContext,
   channel: vscode.OutputChannel,
-  startSuiteRun: () => Promise<void> | void,
+  startSuiteRun: (specs?: readonly vscode.Uri[]) => Promise<void> | void,
 ): TestControllerWrapper {
   const controller = vscode.tests.createTestController('qa-debug-tests', 'QA Debug Companion');
   context.subscriptions.push(controller);
 
   // One Run profile, defaultable. The handler delegates to SessionManager
-  // (passed in via startSuiteRun) which owns the mocha+chrome lifecycle.
+  // via startSuiteRun, passing spec URIs derived from request.include so the
+  // SessionManager can pick the right CWD per CR §2.1 [R#3-NB6].
   controller.createRunProfile(
     'Run',
     vscode.TestRunProfileKind.Run,
-    async (_request, _token) => {
+    async (request, _token) => {
       try {
-        await startSuiteRun();
+        const specs = collectSpecUris(request);
+        await startSuiteRun(specs);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         appendInfo(channel, `[test-controller] suite run failed: ${msg}`);
@@ -217,6 +219,28 @@ export function createTestControllerWrapper(
       };
     },
   };
+}
+
+/**
+ * Walk request.include to collect spec file URIs. TestItems lazy-created on
+ * pause.publish carry a fileUri per S4_DESIGN §7.3 id formula; for pre-S4
+ * runs from the qa-debug.runFixture command, request.include is undefined
+ * (per vscode.d.ts:18596-18599 "extension should simply run all tests") and
+ * we return an empty array — SessionManager.resolveCwd then falls back to
+ * fixture-tests/ or workspaceRoot.
+ */
+function collectSpecUris(request: vscode.TestRunRequest): readonly vscode.Uri[] {
+  if (!request.include || request.include.length === 0) return [];
+  const seen = new Set<string>();
+  const out: vscode.Uri[] = [];
+  for (const item of request.include) {
+    if (!item.uri) continue;
+    const key = item.uri.toString();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(item.uri);
+  }
+  return out;
 }
 
 const FRAME_RE = /^\s*at\s+(.+?)\s+\((.+):(\d+):(\d+)\)\s*$/;
