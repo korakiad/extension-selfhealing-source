@@ -4,13 +4,26 @@ description: Investigates a paused Mocha test failure through the QA Debug Compa
 ---
 
 <!--
-S3 ships frontmatter only. The decision tree the agent consults during a pause
-lands in S5 per SLICE_PLAN.md §S5.
-
-S5 will append imperative-voice content covering:
-- Step 1 (always): call qa-debug:qa_get_failure_context (concise) to ground the investigation.
-- Decision tree mapping failure kind → playwright-mcp:browser_* tool sequence.
-- Guardrail: do not propose qa_propose_mark_passed for assertion failures rooted in production code.
-- Output style: one-line conclusion first, then evidence.
-- After any qa_propose_* call: stop and report; verdict surfaces via qa_get_failure_context.last_proposal_status.
+S4 ships this one-paragraph stub body so an S4-only smoke run does not leave
+the agent unguided after Step 1. The full per-failure-mode decision tree lands
+in S5 per SLICE_PLAN.md §S5 + S4_DESIGN.md §7.6 [R#2-NB9].
 -->
+
+This Skill engages when a Mocha test is currently paused at a failure with a
+held debugging browser available. Step 1: call `qa-debug:qa_get_failure_context`
+(concise) to ground. Step 2: investigate via the held browser using
+`playwright-mcp:browser_snapshot`, `playwright-mcp:browser_evaluate`, and
+`playwright-mcp:browser_console_messages`. Step 3: report a one-line conclusion
+in chat, then either edit the test or source and call
+`qa-debug:qa_request_retry` with a specific `reason` (what was changed), or
+call `qa-debug:qa_request_give_up` with a `reason` if no retry is warranted.
+Reserve `qa-debug:qa_propose_mark_passed` for environmental flake signals
+(transient infra, upstream 503s, known-broken staging fixtures) and provide a
+specific, falsifiable rationale. Do NOT invoke `qa_propose_mark_passed` when
+the failing assertion's value is derived from production code paths — that is
+a real bug and should follow `qa_request_give_up` or a fix-and-retry. After
+any `qa_propose_*` call, stop and report in chat; the human commits or rejects
+via Test Explorer, and the verdict surfaces via
+`qa-debug:qa_get_failure_context.last_proposal_status`.
+
+(S5 will replace this stub with the full per-failure-mode decision tree.)
