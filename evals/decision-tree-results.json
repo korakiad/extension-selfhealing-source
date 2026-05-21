@@ -1,0 +1,908 @@
+{
+  "runner": "claude -p (subscription seat)",
+  "evalKind": "decision-tree-alignment",
+  "model": "sonnet",
+  "trialsPerScenario": 1,
+  "skillDescriptionChars": 927,
+  "skillBodyChars": 17024,
+  "toolCount": 20,
+  "ranAt": "2026-05-21T09:51:55.328Z",
+  "totalCostUsd": 0.0804129,
+  "rows": [
+    {
+      "id": 101,
+      "name": "code-bug first-pause: discount logic regression",
+      "category": "code-bug",
+      "expectedVerb": "qa_request_retry",
+      "expectNoFurtherVerb": false,
+      "forbiddenVerb": null,
+      "threshold": 5,
+      "passes": 1,
+      "trials": [
+        {
+          "firstDecisionVerb": "qa_request_retry",
+          "calls": [
+            {
+              "tool": "qa_get_failure_context",
+              "args": {
+                "response_format": "concise",
+                "session_id": "sid_code_101"
+              }
+            },
+            {
+              "tool": "browser_evaluate",
+              "args": {
+                "function": "() => ({ computedDiscount: window.computedDiscount, cartTotal: document.querySelector('.cart-total')?.textContent?.trim() })"
+              }
+            },
+            {
+              "tool": "browser_console_messages",
+              "args": {}
+            },
+            {
+              "tool": "qa_request_retry",
+              "args": {
+                "session_id": "sid_code_101",
+                "reason": "Reverted PROMO_RATE regression in src/cart/discount.ts — value was changed from 0.2 to 0.1 in the recent commit, causing computedDiscount to return 10 (10%) instead of 20 (20%) and the cart total to render $90.00 instead of the expected $80.00. Revert restores the correct 20% rate; the assertion at value-mismatch.spec.js:24 should now pass."
+              }
+            }
+          ],
+          "passed": true,
+          "costUsd": 0,
+          "durationMs": 24555,
+          "numTurns": null
+        }
+      ]
+    },
+    {
+      "id": 102,
+      "name": "code-bug Mode-A CDP: auth alg mismatch",
+      "category": "code-bug",
+      "expectedVerb": "qa_request_retry",
+      "expectNoFurtherVerb": false,
+      "forbiddenVerb": null,
+      "threshold": 5,
+      "passes": 1,
+      "trials": [
+        {
+          "firstDecisionVerb": "qa_request_retry",
+          "calls": [
+            {
+              "tool": "qa_get_failure_context",
+              "args": {
+                "response_format": "concise",
+                "session_id": "sid_code_102"
+              }
+            },
+            {
+              "tool": "qa_request_retry",
+              "args": {
+                "session_id": "sid_code_102",
+                "reason": "Fixed src/auth/login.ts:42 — JWT decoder's alg-matching branch now accepts both HS256 and RS256 (was hard-coded to HS256 only). Backend rolled to RS256 last week; the test assertion checks for a successfully decoded token, which the decoder will now produce for RS256-signed JWTs."
+              }
+            }
+          ],
+          "passed": true,
+          "costUsd": 0,
+          "durationMs": 24156,
+          "numTurns": null
+        }
+      ]
+    },
+    {
+      "id": 103,
+      "name": "code-bug edge-case stack: failure inside utility",
+      "category": "code-bug",
+      "expectedVerb": "qa_request_retry",
+      "expectNoFurtherVerb": false,
+      "forbiddenVerb": null,
+      "threshold": 5,
+      "passes": 1,
+      "trials": [
+        {
+          "firstDecisionVerb": "qa_request_retry",
+          "calls": [
+            {
+              "tool": "qa_get_failure_context",
+              "args": {
+                "response_format": "concise",
+                "session_id": "sid_code_103"
+              }
+            },
+            {
+              "tool": "qa_request_retry",
+              "args": {
+                "session_id": "sid_code_103",
+                "reason": "Added nullish guard in src/util/format.ts:14 — formatCurrency now guards against undefined before calling .toFixed(), preventing the TypeError thrown at fixture-tests/specs/format.spec.js:33. No test-side changes needed; the assertion logic is correct."
+              }
+            }
+          ],
+          "passed": true,
+          "costUsd": 0,
+          "durationMs": 15375,
+          "numTurns": null
+        }
+      ]
+    },
+    {
+      "id": 104,
+      "name": "code-bug second-pause same-shape (retry_count=1, not retry-exit yet)",
+      "category": "code-bug",
+      "expectedVerb": "qa_request_retry",
+      "expectNoFurtherVerb": false,
+      "forbiddenVerb": null,
+      "threshold": 5,
+      "passes": 1,
+      "trials": [
+        {
+          "firstDecisionVerb": "qa_request_retry",
+          "calls": [
+            {
+              "tool": "qa_get_failure_context",
+              "args": {
+                "response_format": "concise",
+                "session_id": "sid_code_104"
+              }
+            },
+            {
+              "tool": "qa_request_retry",
+              "args": {
+                "session_id": "sid_code_104",
+                "reason": "Corrected PROMO_RATE to 0.20 in production discount source (prior retry had a typo of 0.05 instead of 0.20). A 20% discount on the base price should now yield $80.00, satisfying the assertion at value-mismatch.spec.js:24."
+              }
+            }
+          ],
+          "passed": true,
+          "costUsd": 0,
+          "durationMs": 28599,
+          "numTurns": null
+        }
+      ]
+    },
+    {
+      "id": 201,
+      "name": "test-bug selector rename: spec lags product",
+      "category": "test-bug",
+      "expectedVerb": "qa_request_retry",
+      "expectNoFurtherVerb": false,
+      "forbiddenVerb": null,
+      "threshold": 5,
+      "passes": 1,
+      "trials": [
+        {
+          "firstDecisionVerb": "qa_request_retry",
+          "calls": [
+            {
+              "tool": "qa_get_failure_context",
+              "args": {
+                "response_format": "concise",
+                "session_id": "sid_test_201"
+              }
+            },
+            {
+              "tool": "browser_snapshot",
+              "args": {}
+            },
+            {
+              "tool": "browser_evaluate",
+              "args": {
+                "function": "() => ({ primarySubmit: document.querySelectorAll('.primary-submit').length, submitBtn: document.querySelectorAll('.submit-btn').length })"
+              }
+            },
+            {
+              "tool": "qa_request_retry",
+              "args": {
+                "session_id": "sid_test_201",
+                "reason": "Updated selector in fixture-tests/specs/selector.spec.js:31 from `.submit-btn` to `.primary-submit` — the product team renamed the button in commit 1a2b3c4 and the spec was never updated. The assertion logic is unchanged; only the stale selector is corrected."
+              }
+            }
+          ],
+          "passed": true,
+          "costUsd": 0,
+          "durationMs": 24362,
+          "numTurns": null
+        }
+      ]
+    },
+    {
+      "id": 202,
+      "name": "test-bug magic constant stale",
+      "category": "test-bug",
+      "expectedVerb": "qa_request_retry",
+      "expectNoFurtherVerb": false,
+      "forbiddenVerb": null,
+      "threshold": 5,
+      "passes": 1,
+      "trials": [
+        {
+          "firstDecisionVerb": "qa_request_retry",
+          "calls": [
+            {
+              "tool": "qa_get_failure_context",
+              "args": {
+                "response_format": "concise",
+                "session_id": "sid_test_202"
+              }
+            },
+            {
+              "tool": "qa_request_retry",
+              "args": {
+                "session_id": "sid_test_202",
+                "reason": "Test-bug fix: updated assertion constant in fixture-tests/specs/plan.spec.js:22 from \"Pro\" to \"Pro Plus\" to match the intentional product rename per Notion #PRD-882. Production behavior (page displaying \"Pro Plus\") is correct; the spec was stale."
+              }
+            }
+          ],
+          "passed": true,
+          "costUsd": 0,
+          "durationMs": 16416,
+          "numTurns": null
+        }
+      ]
+    },
+    {
+      "id": 203,
+      "name": "test-bug timing brittle: waitForSelector too short",
+      "category": "test-bug",
+      "expectedVerb": "qa_request_retry",
+      "expectNoFurtherVerb": false,
+      "forbiddenVerb": null,
+      "threshold": 5,
+      "passes": 1,
+      "trials": [
+        {
+          "firstDecisionVerb": "qa_request_retry",
+          "calls": [
+            {
+              "tool": "qa_get_failure_context",
+              "args": {
+                "response_format": "concise",
+                "session_id": "sid_test_203"
+              }
+            },
+            {
+              "tool": "qa_request_retry",
+              "args": {
+                "session_id": "sid_test_203",
+                "reason": "Test-bug: waitForSelector(\".loaded\") timeout in fixture-tests/specs/spinner.spec.js:14 was 1000ms, which is too tight against the intentional 1500ms loader animation introduced last sprint (UX review). Updated timeout to 3000ms — assertion logic is unchanged, test should now pass."
+              }
+            }
+          ],
+          "passed": true,
+          "costUsd": 0,
+          "durationMs": 17045,
+          "numTurns": null
+        }
+      ]
+    },
+    {
+      "id": 301,
+      "name": "env-flake upstream 503: auth service blip",
+      "category": "env-flake",
+      "expectedVerb": "qa_propose_mark_passed",
+      "expectNoFurtherVerb": false,
+      "forbiddenVerb": null,
+      "threshold": 4,
+      "passes": 1,
+      "trials": [
+        {
+          "firstDecisionVerb": "qa_propose_mark_passed",
+          "calls": [
+            {
+              "tool": "qa_get_failure_context",
+              "args": {
+                "response_format": "concise",
+                "session_id": "sid_env_301"
+              }
+            },
+            {
+              "tool": "browser_snapshot",
+              "args": {}
+            },
+            {
+              "tool": "browser_console_messages",
+              "args": {}
+            },
+            {
+              "tool": "browser_network_requests",
+              "args": {}
+            },
+            {
+              "tool": "qa_propose_mark_passed",
+              "args": {
+                "session_id": "sid_env_301",
+                "rationale": "Transient auth-service outage caused the timeout — not a product regression. browser_network_requests shows POST /auth/login returned HTTP 503 at 14:03:42.117; because login failed, the dashboard session was never established and .welcome never rendered, producing the 5000ms TimeoutError. The same auth-service GET /healthz returned HTTP 200 at 14:04:01.039 (≈19 s after the failure), confirming the blip was short-lived and self-resolved. Console contains only the matching [fetch] /auth/login → 503 entry — no JS exceptions, no renderer crash, no production-code signal. retry_count=0 so there is no same-shape recurrence to weigh. Production code paths under test are not implicated."
+              }
+            }
+          ],
+          "passed": true,
+          "costUsd": 0,
+          "durationMs": 26901,
+          "numTurns": null
+        }
+      ]
+    },
+    {
+      "id": 302,
+      "name": "env-flake renderer crash",
+      "category": "env-flake",
+      "expectedVerb": "qa_propose_mark_passed",
+      "expectNoFurtherVerb": false,
+      "forbiddenVerb": null,
+      "threshold": 4,
+      "passes": 1,
+      "trials": [
+        {
+          "firstDecisionVerb": "qa_propose_mark_passed",
+          "calls": [
+            {
+              "tool": "qa_get_failure_context",
+              "args": {
+                "response_format": "concise",
+                "session_id": "sid_env_302"
+              }
+            },
+            {
+              "tool": "browser_console_messages",
+              "args": {}
+            },
+            {
+              "tool": "browser_network_requests",
+              "args": {}
+            },
+            {
+              "tool": "qa_propose_mark_passed",
+              "args": {
+                "session_id": "sid_env_302",
+                "rationale": "Renderer process (pid 4892) crashed before the assertion at checkout.spec.js:42 was reached — confirmed by console messages \"Renderer process (pid 4892) gone\" and \"tab crashed unexpectedly\". Network log is empty, meaning no production code paths under test were exercised. `Error: Target closed` is a Chrome renderer crash signal, not a product regression. The checkout flow itself was never evaluated. retry_count=0; first occurrence. Marking passed is appropriate; re-run via Test Explorer if recurrence is suspected."
+              }
+            }
+          ],
+          "passed": true,
+          "costUsd": 0,
+          "durationMs": 21266,
+          "numTurns": null
+        }
+      ]
+    },
+    {
+      "id": 303,
+      "name": "env-flake staging seed row missing",
+      "category": "env-flake",
+      "expectedVerb": "qa_propose_mark_passed",
+      "expectNoFurtherVerb": false,
+      "forbiddenVerb": null,
+      "threshold": 4,
+      "passes": 0,
+      "trials": [
+        {
+          "firstDecisionVerb": "qa_request_give_up",
+          "calls": [
+            {
+              "tool": "qa_get_failure_context",
+              "args": {
+                "response_format": "concise",
+                "session_id": "sid_env_303"
+              }
+            },
+            {
+              "tool": "browser_snapshot",
+              "args": {}
+            },
+            {
+              "tool": "browser_network_requests",
+              "args": {
+                "filter": "/orders/4001"
+              }
+            },
+            {
+              "tool": "browser_console_messages",
+              "args": {
+                "level": "error"
+              }
+            },
+            {
+              "tool": "browser_evaluate",
+              "args": {
+                "function": "\nasync () => {\n  const res = await fetch('http://localhost:3000/api/orders');\n  const data = await res.json();\n  return { status: res.status, ids: data.map(o => o.id) };\n}\n"
+              }
+            },
+            {
+              "tool": "LSP",
+              "args": {
+                "operation": "documentSymbol",
+                "filePath": "fixture-tests/fixtures/seed-orders.json",
+                "line": 1,
+                "character": 1
+              }
+            },
+            {
+              "tool": "LSP",
+              "args": {
+                "operation": "workspaceSymbol",
+                "filePath": "fixture-tests/fixtures/seed-orders.json",
+                "line": 1,
+                "character": 1
+              }
+            },
+            {
+              "tool": "LSP",
+              "args": {
+                "operation": "documentSymbol",
+                "filePath": "fixture-tests/specs/orders.spec.js",
+                "line": 1,
+                "character": 1
+              }
+            },
+            {
+              "tool": "qa_request_give_up",
+              "args": {
+                "session_id": "sid_env_303",
+                "reason": "Cannot disambiguate between env-flake and test-bug. Network evidence: GET /api/orders/4001 → 404; GET /api/orders/4002 → 200 (DB up, partial seed ran). Two equally plausible causes: (A) seed file correctly declares #4001 but transient DB insert failed — env-flake → mark-passed warranted; (B) seed file never declares #4001 and the test references a non-existent ID — test-bug → spec/seed fix needed. Seed file fixture-tests/fixtures/seed-orders.json was not resolvable in the current environment, so root cause cannot be confirmed from the browser. Recommended next step: inspect the seed file directly (grep for \"4001\") to confirm whether (A) or (B) — then re-run with the appropriate fix or a mark-passed rationale."
+              }
+            }
+          ],
+          "passed": false,
+          "costUsd": 0,
+          "durationMs": 89557,
+          "numTurns": null
+        }
+      ]
+    },
+    {
+      "id": 304,
+      "name": "env-flake transient network blip mid-XHR",
+      "category": "env-flake",
+      "expectedVerb": "qa_propose_mark_passed",
+      "expectNoFurtherVerb": false,
+      "forbiddenVerb": null,
+      "threshold": 4,
+      "passes": 1,
+      "trials": [
+        {
+          "firstDecisionVerb": "qa_propose_mark_passed",
+          "calls": [
+            {
+              "tool": "qa_get_failure_context",
+              "args": {
+                "response_format": "concise",
+                "session_id": "sid_env_304"
+              }
+            },
+            {
+              "tool": "browser_network_requests",
+              "args": {
+                "filter": "/profile"
+              }
+            },
+            {
+              "tool": "browser_console_messages",
+              "args": {
+                "level": "error"
+              }
+            },
+            {
+              "tool": "qa_propose_mark_passed",
+              "args": {
+                "session_id": "sid_env_304",
+                "rationale": "Transient network error, not a product regression. browser_network_requests shows two PUT /api/profile attempts: the first at 14:06:00.123 returned status 0 with a console-logged net::ERR_CONNECTION_RESET — the connection was reset before the server responded, causing the \"Profile save failed\" assertion error. The second PUT at 14:06:02.501 (≈2.4 s later) returned HTTP 200, confirming the API endpoint is healthy. No console JS exceptions, no server-side error, no code path under test is broken. The failure is a one-off connection reset, not a reproducible product defect."
+              }
+            }
+          ],
+          "passed": true,
+          "costUsd": 0,
+          "durationMs": 23296,
+          "numTurns": null
+        }
+      ]
+    },
+    {
+      "id": 401,
+      "name": "structural pg_connection_refused on beforeAll",
+      "category": "structural",
+      "expectedVerb": "qa_propose_abort_suite",
+      "expectNoFurtherVerb": false,
+      "forbiddenVerb": null,
+      "threshold": 4,
+      "passes": 1,
+      "trials": [
+        {
+          "firstDecisionVerb": "qa_propose_abort_suite",
+          "calls": [
+            {
+              "tool": "qa_get_failure_context",
+              "args": {
+                "response_format": "concise",
+                "session_id": "sid_struct_401"
+              }
+            },
+            {
+              "tool": "qa_propose_abort_suite",
+              "args": {
+                "session_id": "sid_struct_401",
+                "rationale": "beforeAll in fixture-tests/_diagnostics/_seed-failure.spec.js:8 failed with Error: connect ECONNREFUSED 127.0.0.1:5432 (TCPConnectWrap.afterConnect). Postgres is not reachable on localhost. This is a shared infrastructure dependency — every test in the suite that requires seed data will fail at the same beforeAll hook with an identical error. Running the remaining 30 tests produces no diagnostic value and only adds noise to the audit log. Root cause: bring up the Postgres service (e.g. `docker compose up -d postgres`) and re-run the suite."
+              }
+            }
+          ],
+          "passed": true,
+          "costUsd": 0,
+          "durationMs": 22987,
+          "numTurns": null
+        }
+      ]
+    },
+    {
+      "id": 402,
+      "name": "structural license-server unreachable cross-test",
+      "category": "structural",
+      "expectedVerb": "qa_propose_abort_suite",
+      "expectNoFurtherVerb": false,
+      "forbiddenVerb": null,
+      "threshold": 4,
+      "passes": 1,
+      "trials": [
+        {
+          "firstDecisionVerb": "qa_propose_abort_suite",
+          "calls": [
+            {
+              "tool": "qa_get_failure_context",
+              "args": {
+                "response_format": "concise",
+                "session_id": "sid_struct_402"
+              }
+            },
+            {
+              "tool": "browser_network_requests",
+              "args": {}
+            },
+            {
+              "tool": "browser_console_messages",
+              "args": {
+                "level": "error"
+              }
+            },
+            {
+              "tool": "qa_propose_abort_suite",
+              "args": {
+                "session_id": "sid_struct_402",
+                "rationale": "Structural blocker: `GET http://license.internal/check` returned status 0 (no response) at 14:07:01.000 per browser_network_requests; browser console confirms \"[license] check failed: no response\". Every test in the Admin suite hits a protected route that requires the license server — all will fail with the same \"Error: license server unreachable\". Continuing the suite produces only duplicate failures with zero additional diagnostic value. Abort and re-run once the license server is restored."
+              }
+            }
+          ],
+          "passed": true,
+          "costUsd": 0,
+          "durationMs": 22378,
+          "numTurns": null
+        }
+      ]
+    },
+    {
+      "id": 501,
+      "name": "ambiguous race-flake no signal",
+      "category": "ambiguous",
+      "expectedVerb": "qa_request_give_up",
+      "expectNoFurtherVerb": false,
+      "forbiddenVerb": null,
+      "threshold": 5,
+      "passes": 1,
+      "trials": [
+        {
+          "firstDecisionVerb": "qa_request_give_up",
+          "calls": [
+            {
+              "tool": "qa_get_failure_context",
+              "args": {
+                "response_format": "concise",
+                "session_id": "sid_amb_501"
+              }
+            },
+            {
+              "tool": "browser_snapshot",
+              "args": {}
+            },
+            {
+              "tool": "browser_console_messages",
+              "args": {}
+            },
+            {
+              "tool": "browser_network_requests",
+              "args": {}
+            },
+            {
+              "tool": "browser_evaluate",
+              "args": {
+                "function": "() => ({\n  eventBusExists: typeof window.EventBus !== 'undefined',\n  readyFired: window.EventBus?._firedEvents?.includes('ready') ?? null,\n  listeners: window.EventBus?._listeners?.['ready']?.length ?? null,\n  readyState: window.EventBus?.readyState ?? null,\n})"
+              }
+            },
+            {
+              "tool": "qa_request_give_up",
+              "args": {
+                "session_id": "sid_amb_501",
+                "reason": "Race condition suspected between EventBus emitting \"ready\" and the test's subscribe() registration. Signals consulted: console empty (no JS errors/crashes), network all 200s (no upstream 5xx), retry_count=1 with same-shape recurrence (same TimeoutError template, same frame event-bus.spec.js:21). In-page EventBus state (_firedEvents, _listeners, readyState) was unresolvable from this pause. Cannot disambiguate: (1) production EventBus fires \"ready\" before late-registering listeners — code-bug requiring buffered/re-emitted event; (2) test subscribes after an async init it doesn't await — test-bug; (3) machine-load timing variance only. No diff was made; retry without a fix is not warranted. Suggested next step: add verbose timing logs to EventBus.emit() and subscribe() to capture relative call order across flaky and passing runs."
+              }
+            }
+          ],
+          "passed": true,
+          "costUsd": 0,
+          "durationMs": 64497,
+          "numTurns": null
+        }
+      ]
+    },
+    {
+      "id": 502,
+      "name": "out-of-scope cross-repo dependency",
+      "category": "ambiguous",
+      "expectedVerb": "qa_request_give_up",
+      "expectNoFurtherVerb": false,
+      "forbiddenVerb": null,
+      "threshold": 5,
+      "passes": 1,
+      "trials": [
+        {
+          "firstDecisionVerb": "qa_request_give_up",
+          "calls": [
+            {
+              "tool": "qa_get_failure_context",
+              "args": {
+                "response_format": "concise",
+                "session_id": "sid_amb_502"
+              }
+            },
+            {
+              "tool": "browser_snapshot",
+              "args": {}
+            },
+            {
+              "tool": "browser_console_messages",
+              "args": {}
+            },
+            {
+              "tool": "browser_network_requests",
+              "args": {
+                "filter": "payment"
+              }
+            },
+            {
+              "tool": "qa_request_give_up",
+              "args": {
+                "session_id": "sid_amb_502",
+                "reason": "Out-of-scope cross-repo defect. Network evidence: POST payment-svc.internal/charge returned HTTP 500 at 14:09:01.000 with body \"internal: unawaited promise\". This is a deterministic backend bug — a missing await in payment-svc's charge handler — not a transient flake (no upstream 5xx recovery signal, no renderer crash, no seed-data gap). The test assertion at pay.spec.js:31 is correct; it accurately detects the failure. The fix requires editing the payment-svc charge handler in its own repository. No source file in this workspace can resolve it. Recommend filing a bug against payment-svc pointing at the unresolved promise in the charge code path."
+              }
+            }
+          ],
+          "passed": true,
+          "costUsd": 0,
+          "durationMs": 38768,
+          "numTurns": null
+        }
+      ]
+    },
+    {
+      "id": 601,
+      "name": "retry-exit code-bug shape after 2 retries",
+      "category": "retry-exit",
+      "expectedVerb": "qa_request_give_up",
+      "expectNoFurtherVerb": false,
+      "forbiddenVerb": null,
+      "threshold": 5,
+      "passes": 1,
+      "trials": [
+        {
+          "firstDecisionVerb": "qa_request_give_up",
+          "calls": [
+            {
+              "tool": "qa_get_failure_context",
+              "args": {
+                "response_format": "concise",
+                "session_id": "sid_exit_601"
+              }
+            },
+            {
+              "tool": "browser_snapshot",
+              "args": {}
+            },
+            {
+              "tool": "browser_console_messages",
+              "args": {
+                "level": "error"
+              }
+            },
+            {
+              "tool": "browser_network_requests",
+              "args": {}
+            },
+            {
+              "tool": "browser_evaluate",
+              "args": {
+                "function": "() => document.querySelector('[data-testid=\"cart-total\"]')?.textContent"
+              }
+            },
+            {
+              "tool": "qa_request_give_up",
+              "args": {
+                "session_id": "sid_exit_601",
+                "reason": "Retry exit condition met: retry_count=2, same-shape failure all three pauses (template \"expected \"$XX.XX\" but got \"$XX.XX\"\", same frame value-mismatch.spec.js:24). No env-flake signals — console empty, network clean, no upstream 5xx. Two attempted source fixes have not changed the produced value ($92.00 vs expected $80.00), indicating the root discount logic being patched is not the one wired to the rendered cart total. Recommend tracing the call path from the cart-total DOM node back to the discount calculation (e.g., via browser_evaluate on window.cart or the relevant module) before attempting a third fix."
+              }
+            }
+          ],
+          "passed": true,
+          "costUsd": 0,
+          "durationMs": 51924,
+          "numTurns": null
+        }
+      ]
+    },
+    {
+      "id": 602,
+      "name": "retry-exit test-bug shape after 2 retries",
+      "category": "retry-exit",
+      "expectedVerb": "qa_request_give_up",
+      "expectNoFurtherVerb": false,
+      "forbiddenVerb": null,
+      "threshold": 5,
+      "passes": 1,
+      "trials": [
+        {
+          "firstDecisionVerb": "qa_request_give_up",
+          "calls": [
+            {
+              "tool": "qa_get_failure_context",
+              "args": {
+                "response_format": "concise",
+                "session_id": "sid_exit_602"
+              }
+            },
+            {
+              "tool": "browser_snapshot",
+              "args": {}
+            },
+            {
+              "tool": "browser_evaluate",
+              "args": {
+                "function": "\n(() => {\n  const candidates = Array.from(document.querySelectorAll('button, input[type=\"submit\"], [type=\"button\"], a[role=\"button\"]'));\n  return candidates.map(el => ({\n    tag: el.tagName,\n    id: el.id,\n    className: el.className,\n    textContent: el.textContent.trim().slice(0, 60),\n    visible: el.offsetParent !== null\n  }));\n})()\n"
+              }
+            },
+            {
+              "tool": "qa_request_give_up",
+              "args": {
+                "session_id": "sid_exit_602",
+                "reason": "retry_count=2, same-shape failure across all 3 pauses (locator(\"…\") resolved to 0 elements, selector.spec.js:31). Two distinct selectors tried (.primary-submit, .submit-cta) — both resolve to 0 elements. Console is empty (no JS crash, no render error). Browser DOM inspection blocked by stub returns, preventing identification of the actual submit button selector. Cannot disambiguate code-bug (button missing from DOM) from test-bug (wrong selector name) without a live DOM read. Recommended next step: open DevTools manually at ws://localhost:9222, navigate to the checkout page, and run `document.querySelectorAll('button, [type=\"submit\"]')` in the console to identify the real selector — then edit selector.spec.js:31 accordingly."
+              }
+            }
+          ],
+          "passed": true,
+          "costUsd": 0,
+          "durationMs": 62197,
+          "numTurns": null
+        }
+      ]
+    },
+    {
+      "id": 701,
+      "name": "named-error NO_ACTIVE_PAUSE",
+      "category": "named-error",
+      "expectedVerb": null,
+      "expectNoFurtherVerb": true,
+      "forbiddenVerb": null,
+      "threshold": 5,
+      "passes": 1,
+      "trials": [
+        {
+          "firstDecisionVerb": null,
+          "calls": [
+            {
+              "tool": "qa_get_failure_context",
+              "args": {
+                "response_format": "concise",
+                "session_id": "sid_err_701"
+              }
+            }
+          ],
+          "passed": true,
+          "costUsd": 0.0166863,
+          "durationMs": 14439,
+          "numTurns": 2
+        }
+      ]
+    },
+    {
+      "id": 702,
+      "name": "named-error SESSION_NOT_FOUND",
+      "category": "named-error",
+      "expectedVerb": "qa_get_failure_context",
+      "expectNoFurtherVerb": false,
+      "forbiddenVerb": null,
+      "threshold": 5,
+      "passes": 1,
+      "trials": [
+        {
+          "firstDecisionVerb": "qa_get_failure_context",
+          "calls": [
+            {
+              "tool": "qa_get_failure_context",
+              "args": {
+                "response_format": "concise",
+                "session_id": "sid_err_702"
+              }
+            },
+            {
+              "tool": "qa_get_failure_context",
+              "args": {
+                "response_format": "concise"
+              }
+            },
+            {
+              "tool": "qa_get_failure_context",
+              "args": {
+                "response_format": "concise"
+              }
+            }
+          ],
+          "passed": true,
+          "costUsd": 0.03733875,
+          "durationMs": 30583,
+          "numTurns": 4
+        }
+      ]
+    },
+    {
+      "id": 703,
+      "name": "named-error Mode-A close_browser avoided",
+      "category": "named-error",
+      "expectedVerb": null,
+      "expectNoFurtherVerb": false,
+      "forbiddenVerb": "qa_propose_close_browser",
+      "threshold": 5,
+      "passes": 1,
+      "trials": [
+        {
+          "firstDecisionVerb": null,
+          "calls": [
+            {
+              "tool": "qa_get_failure_context",
+              "args": {
+                "response_format": "concise",
+                "session_id": "sid_err_703"
+              }
+            }
+          ],
+          "passed": true,
+          "costUsd": 0.02638785,
+          "durationMs": 22208,
+          "numTurns": 2
+        }
+      ]
+    }
+  ],
+  "splitBars": {
+    "propose": {
+      "pass": 5,
+      "total": 6,
+      "rate": 0.8333333333333334,
+      "bar": 0.85,
+      "ok": false
+    },
+    "request": {
+      "pass": 11,
+      "total": 11,
+      "rate": 1,
+      "bar": 0.95,
+      "ok": true
+    },
+    "namedError": {
+      "pass": 3,
+      "total": 3,
+      "rate": 1,
+      "bar": 0.95,
+      "ok": true
+    },
+    "aggregateScenarios": {
+      "pass": 19,
+      "total": 20,
+      "rate": 0.95,
+      "bar": 0.9,
+      "ok": true
+    }
+  },
+  "overall": false
+}
