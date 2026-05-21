@@ -13,11 +13,14 @@
     "build:mcp": "pnpm --filter ./qa-debug-mcp run build",
     "build:extension": "pnpm --filter ./extension run build",
     "test:s2": "pnpm --filter ./mocha-hooks run build && node --import tsx tools/oracle.ts --decisions retry,mark_passed,give_up --tests 'fixture-tests/specs/**/*.spec.js'",
-    "clean": "pnpm -r exec rm -rf dist"
+    "clean": "pnpm -r exec rm -rf dist",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
     "esbuild": "^0.24.0",
+    "prettier": "^3.3.3",
     "tsx": "^4.19.0",
     "typescript": "^5.7.2"
   },

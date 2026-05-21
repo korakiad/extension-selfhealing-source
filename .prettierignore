@@ -1,0 +1,14 @@
+# Build artifacts
+**/dist/
+**/node_modules/
+**/*.tsbuildinfo
+
+# Lockfiles + generated
+pnpm-lock.yaml
+
+# Fixture HTML / assets we don't want to touch
+fixture-tests-wdio/site/
+
+# Audit + eval result snapshots
+**/audit.jsonl
+evals/results.json
