@@ -106,7 +106,11 @@ let currentBrowser: WdioBrowserLike | undefined;
     process.stderr.write(
       `[qa-hooks] wdio.remote patch silently failed (sloppy-mode no-op); Mode B fallback engages\n`,
     );
+    return;
   }
+  // v5.3 §2.6 positive logging: confirms Mode A patch installed; lets engineers
+  // verify from Output Channel without re-running with custom instrumentation.
+  process.stderr.write(`[qa-hooks] wdio.remote patch installed (path=${wdioPath})\n`);
 })();
 
 // Note: discoverCdpWsUrl was inlined into afterEach in sub-phase 14c so the
@@ -220,6 +224,8 @@ export const mochaHooks = {
         if (pup?.wsEndpoint) {
           cdpWsUrl = pup.wsEndpoint();
           mode = 'A';
+          // v5.3 §2.6 positive logging for Mode A engagement.
+          process.stderr.write(`[qa-hooks] Mode A engaged for test="${test.title}" cdp=${cdpWsUrl}\n`);
         } else {
           cdpWsUrl = process.env.QA_DEBUG_CDP_WS_URL ?? 'ws://localhost:9222';
         }

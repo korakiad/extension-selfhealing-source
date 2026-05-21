@@ -79,6 +79,13 @@ export interface SessionManagerDeps {
   channel: vscode.OutputChannel;
   /** Workspace root used to resolve mocha bin + fallback CWD. */
   workspaceRoot: string;
+  /**
+   * v5.3 §2.3: probed at activation; controls which "Ask Copilot" fallback the
+   * pause-publish notification handler takes. Both are internal commands so
+   * presence is per-VS-Code-build runtime detection per [R#3-NB2].
+   */
+  chatOpenAvailable: boolean;
+  chatOpenFallbackAvailable: boolean;
 }
 
 interface ActiveRun {
@@ -254,14 +261,43 @@ export class SessionManager {
       this.deps.mcpProvider.setPaused(this.deps.chrome.cdpHttpEndpoint);
       run.testHandle.recordPause(stored);
 
+      // v5.3 §2.3 — "Ask Copilot" button bridges pause→chat in one click.
+      // Minimal query per [R#2-NB4]; participant handler reads MementoPauseStore
+      // for rich context (avoids quote-injection on test titles).
       void vscode.window.showInformationMessage(
         `QA Debug: test "${stored.test_title}" failed at ${path.basename(stored.file)}:${stored.line ?? '?'}. ` +
-          `Browser held at :9222. Ask Copilot to investigate.`,
+          `Browser held — ask Copilot to investigate.`,
+        'Ask Copilot',
         'Open Test Explorer',
         'Open Audit Log',
       ).then((sel) => {
-        if (sel === 'Open Audit Log') this.deps.channel.show();
-        if (sel === 'Open Test Explorer') {
+        if (sel === 'Ask Copilot') {
+          const query = '@qa-debug investigate this paused test';
+          if (this.deps.chatOpenAvailable) {
+            try {
+              void vscode.commands.executeCommand('workbench.action.chat.open', {
+                query,
+                isPartialQuery: false,
+              });
+            } catch (err) {
+              appendInfo(
+                this.deps.channel,
+                `[notification] Ask Copilot failed: ${(err as Error).message}`,
+              );
+              void vscode.window.showWarningMessage(
+                `QA Debug: could not open chat — ${(err as Error).message}`,
+              );
+            }
+          } else if (this.deps.chatOpenFallbackAvailable) {
+            void vscode.commands.executeCommand('workbench.action.openChat');
+          } else {
+            void vscode.window.showInformationMessage(
+              'QA Debug: open the Copilot Chat panel manually and type @qa-debug to investigate.',
+            );
+          }
+        } else if (sel === 'Open Audit Log') {
+          this.deps.channel.show();
+        } else if (sel === 'Open Test Explorer') {
           void vscode.commands.executeCommand('workbench.view.testing.focus');
         }
       });

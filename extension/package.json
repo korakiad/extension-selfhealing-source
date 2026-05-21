@@ -22,6 +22,27 @@
         "label": "QA Debug Companion MCP Servers"
       }
     ],
+    "chatParticipants": [
+      {
+        "id": "qa-debug",
+        "name": "qa-debug",
+        "fullName": "QA Debug Companion",
+        "description": "Investigates a paused Mocha test failure with live browser access via playwright-mcp.",
+        "isSticky": true,
+        "disambiguation": [
+          {
+            "category": "qa-debug-pause-investigation",
+            "description": "Investigating a paused Mocha test failure where the browser is held alive for live inspection.",
+            "examples": [
+              "the test just failed, what's going on",
+              "this assertion's wrong, can you look",
+              "I think the selector changed",
+              "help me debug this paused test"
+            ]
+          }
+        ]
+      }
+    ],
     "commands": [
       { "command": "qa-debug.runFixture", "title": "QA Debug: Run Fixture Suite", "category": "QA Debug" },
       { "command": "qa-debug.retry", "title": "QA Debug: Retry Paused Test", "category": "QA Debug", "enablement": "qa-debug.paused && !qa-debug.staleResume" },

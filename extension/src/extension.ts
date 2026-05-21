@@ -7,6 +7,7 @@
 import * as vscode from 'vscode';
 import path from 'node:path';
 
+import { registerQaDebugChatParticipant } from './chat-participant.js';
 import { ChromeProcess } from './chrome.js';
 import { registerCommands } from './commands.js';
 import { DecisionRouter } from './decision-router.js';
@@ -68,6 +69,35 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     await sessionMgr.runFixtureSuite({ specs });
   });
 
+  // v5.3 §2.3 — probe chat-open commands at activation so notification handler
+  // can degrade gracefully. Both are internal commands per CR §0 / [R#3-NB2].
+  let chatOpenAvailable = false;
+  let chatOpenFallbackAvailable = false;
+  try {
+    const cmds = await vscode.commands.getCommands(true);
+    chatOpenAvailable = cmds.includes('workbench.action.chat.open');
+    chatOpenFallbackAvailable = cmds.includes('workbench.action.openChat');
+  } catch {
+    // getCommands rarely fails; treat both as unavailable
+  }
+  if (!chatOpenAvailable && !chatOpenFallbackAvailable) {
+    appendInfo(
+      channel,
+      `[activate] neither workbench.action.chat.open nor workbench.action.openChat registered; Ask Copilot button will show manual-open instruction`,
+    );
+  } else if (!chatOpenAvailable) {
+    appendInfo(
+      channel,
+      `[activate] workbench.action.chat.open absent; degraded to workbench.action.openChat (no query seeding)`,
+    );
+  }
+
+  // v5.3 §2.1 — register chat participant. Runtime-guarded inside the helper
+  // for engines.vscode below the createChatParticipant landing version.
+  if (workspaceRoot) {
+    registerQaDebugChatParticipant(context, pauseStore, channel);
+  }
+
   if (workspaceRoot) {
     sessionMgr = new SessionManager({
       pauseStore,
@@ -77,6 +107,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       testControllerWrapper,
       channel,
       workspaceRoot,
+      chatOpenAvailable,
+      chatOpenFallbackAvailable,
     });
     sessionManagerSingleton = sessionMgr;
     registerCommands(context, {
