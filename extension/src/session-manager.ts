@@ -422,6 +422,7 @@ function wireToStored(wire: WirePausePayload, sessionId: string): PausePayload {
     failing_assertion: wire.error.message,
     stack_trace: { frames: stackFrames },
     cdp_ws_url: wire.cdp_ws_url,
+    mode: wire.mode, // v5.2 §2.4 — propagated for qa_propose_close_browser decline check
     console_logs: { lines: [], bytes: 0 },
     paused_at_ms: wire.started_at,
     retry_count: wire.retry_count,

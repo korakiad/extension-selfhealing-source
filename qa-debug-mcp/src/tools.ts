@@ -173,6 +173,9 @@ export const qa_propose_close_browser: QaToolDef<{ session_id: string; rationale
     'Callers should invoke this only when investigation is genuinely complete or the browser is unrecoverable (e.g., crashed renderer). ' +
     'After calling, stop and report in chat; the verdict surfaces via qa_get_failure_context.last_proposal_status. ' +
     "Returns: { proposal_id, status: 'awaiting_human' }. " +
+    'Mode A note (transparent wdio.remote integration, v5.2): when the browser was launched by your test code via webdriverio.remote(), ' +
+    "this tool returns { status: 'declined', reason: '...' } immediately because the test code owns the browser lifecycle. " +
+    'Close the browser via browser.deleteSession() in your test teardown instead. ' +
     'Errors: NO_ACTIVE_PAUSE when no pause is active; SESSION_NOT_FOUND when session_id is stale.',
   inputSchemaJson: {
     type: 'object',

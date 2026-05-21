@@ -16,12 +16,22 @@ export const SerializedError = z.object({
 });
 export type SerializedError = z.infer<typeof SerializedError>;
 
+export const BrowserOwnershipMode = z.enum(['A', 'B']);
+export type BrowserOwnershipMode = z.infer<typeof BrowserOwnershipMode>;
+
 export const PausePayload = z.object({
   test: z.string(),
   file: z.string().nullable(),
   line: z.number().int().nullable(),
   error: SerializedError,
   cdp_ws_url: z.string(),
+  // v5.2 §2.4: which mode owns the browser this pause is investigating.
+  // Mode A = wdio.remote() in user test code (user owns lifecycle; qa_propose_
+  // close_browser declines per §2.6). Mode B = companion-launched :9222
+  // (companion owns lifecycle; commit semantics unchanged). Defaults to 'B'
+  // for backward compatibility with pre-v5.2 oracles / hooks that don't set
+  // it explicitly (the field is optional on the wire, normalized to 'B').
+  mode: BrowserOwnershipMode.optional().default('B'),
   started_at: z.number().int(),
   retry_count: z.number().int().nonnegative(),
 });

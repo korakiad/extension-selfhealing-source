@@ -109,23 +109,10 @@ let currentBrowser: WdioBrowserLike | undefined;
   }
 })();
 
-async function discoverCdpWsUrl(): Promise<string> {
-  if (currentBrowser?.getPuppeteer) {
-    try {
-      const pup = await currentBrowser.getPuppeteer();
-      if (pup?.wsEndpoint) {
-        return pup.wsEndpoint();
-      }
-    } catch (err) {
-      // B1: getPuppeteer throws when no capability branch matches.
-      // Fall through to env fallback per CR §3.4.1 Mode B path.
-      process.stderr.write(
-        `[qa-hooks] wdio getPuppeteer() failed: ${(err as Error).message}; falling back to QA_DEBUG_CDP_WS_URL\n`,
-      );
-    }
-  }
-  return process.env.QA_DEBUG_CDP_WS_URL ?? 'ws://localhost:9222';
-}
+// Note: discoverCdpWsUrl was inlined into afterEach in sub-phase 14c so the
+// mode-detection result (Mode A vs Mode B) can be captured alongside the URL
+// for the PausePayload.mode field. The capability-branch try/catch logic
+// remains structurally identical.
 
 function getConnection(): JsonRpcConnection | undefined {
   if (conn) return conn;
@@ -223,13 +210,35 @@ export const mochaHooks = {
       return;
     }
 
+    // v5.2 §3.1: discover via wdio singleton (Mode A) or fall back to env (Mode B).
+    // Mode is determined by whether currentBrowser AND getPuppeteer succeeded.
+    let cdpWsUrl: string;
+    let mode: 'A' | 'B' = 'B';
+    if (currentBrowser?.getPuppeteer) {
+      try {
+        const pup = await currentBrowser.getPuppeteer();
+        if (pup?.wsEndpoint) {
+          cdpWsUrl = pup.wsEndpoint();
+          mode = 'A';
+        } else {
+          cdpWsUrl = process.env.QA_DEBUG_CDP_WS_URL ?? 'ws://localhost:9222';
+        }
+      } catch (err) {
+        process.stderr.write(
+          `[qa-hooks] wdio getPuppeteer() failed: ${(err as Error).message}; falling back to QA_DEBUG_CDP_WS_URL\n`,
+        );
+        cdpWsUrl = process.env.QA_DEBUG_CDP_WS_URL ?? 'ws://localhost:9222';
+      }
+    } else {
+      cdpWsUrl = process.env.QA_DEBUG_CDP_WS_URL ?? 'ws://localhost:9222';
+    }
     const payload: PausePayload = {
       test: test.title,
       file: test.file ?? null,
       line: fileLineFromStack(test.err?.stack),
       error: serializeError(test.err),
-      // v5.2 §3.1: discover via wdio singleton (Mode A) or fall back to env (Mode B).
-      cdp_ws_url: await discoverCdpWsUrl(),
+      cdp_ws_url: cdpWsUrl,
+      mode,
       started_at: Date.now(),
       retry_count: currentRetryOf(test),
     };

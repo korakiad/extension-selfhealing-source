@@ -15,6 +15,14 @@
 export type ProposalKind = 'mark_passed' | 'close_browser' | 'abort_suite';
 export type ProposalStatus = 'none' | 'awaiting_human' | 'accepted' | 'rejected';
 
+/**
+ * v5.2 §2.4 browser-ownership mode for the pause's investigation surface.
+ *  - 'A' — user's wdio.remote() launched the browser; user owns lifecycle.
+ *  - 'B' — extension launched headed Chrome at :9222; extension owns lifecycle.
+ * qa_propose_close_browser declines in Mode A per §2.6.
+ */
+export type BrowserOwnershipMode = 'A' | 'B';
+
 export interface PausePayload {
   session_id: string;
   test_title: string;
@@ -23,6 +31,8 @@ export interface PausePayload {
   failing_assertion: string;
   stack_trace: { frames: string[]; more_at?: string };
   cdp_ws_url: string;
+  /** v5.2 §2.4: defaults to 'B' for back-compat with pre-v5.2 stored pauses. */
+  mode?: BrowserOwnershipMode;
   screenshot_path?: string;
   console_logs: { lines: string[]; bytes: number; more_at?: string };
   paused_at_ms: number;

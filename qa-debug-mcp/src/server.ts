@@ -116,6 +116,28 @@ export function createQaDebugServer(options: CreateQaDebugServerOptions): McpSer
       async (args) => {
         try {
           const input = tool.inputSchemaZod.parse(args);
+          // v5.2 §2.6 [R#3-Q1]: qa_propose_close_browser declines in Mode A
+          // because the user's test code owns the browser lifecycle via
+          // `browser.deleteSession()`. Decline-with-reason per Anthropic
+          // "high signal information back to agents" guidance — lets the
+          // agent update its plan instead of waiting on a no-op.
+          if (kind === 'close_browser') {
+            const active = store.getActivePause(input.session_id)!;
+            if (active.mode === 'A') {
+              const payload = {
+                proposal_id: '',
+                status: 'declined' as const,
+                reason:
+                  'browser is owned by your test code (Mode A); close it via ' +
+                  'browser.deleteSession() in your test teardown. The QA Debug Companion ' +
+                  'does not close a browser it does not own. See ARCHITECTURE-CR-v5.2 §2.6.',
+              };
+              return {
+                content: [{ type: 'text' as const, text: JSON.stringify(payload) }],
+                structuredContent: payload,
+              };
+            }
+          }
           const proposal = store.proposeAction(input.session_id, kind, input.rationale);
           const payload = { proposal_id: proposal.proposal_id, status: proposal.status };
           return {

@@ -5,6 +5,12 @@
   "description": "Shared PauseStore interface + payload types + toFailureContextView helper. Consumed by qa-debug-mcp (InMemoryPauseStore stub) and extension (MementoPauseStore).",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "build:check": "tsc -p tsconfig.json --noEmit",
