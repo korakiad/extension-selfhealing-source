@@ -7,8 +7,6 @@
   },
   "include": ["src/**/*.ts"],
   "references": [
-    { "path": "../mocha-hooks" },
-    { "path": "../pause-store-types" },
-    { "path": "../qa-debug-mcp" }
+    { "path": "../pause-store-types" }
   ]
 }

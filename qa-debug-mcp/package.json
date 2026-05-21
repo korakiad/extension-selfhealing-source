@@ -6,9 +6,9 @@
   "bin": "./dist/qa-debug-mcp.js",
   "main": "./dist/server.js",
   "exports": {
-    ".": "./dist/server.js",
-    "./server": "./dist/server.js",
-    "./pause-store": "./dist/pause-store.js"
+    ".": { "types": "./src/server.ts", "default": "./dist/server.js" },
+    "./server": { "types": "./src/server.ts", "default": "./dist/server.js" },
+    "./pause-store": { "types": "./src/pause-store.ts", "default": "./dist/pause-store.js" }
   },
   "scripts": {
     "build": "node esbuild.config.mjs",
