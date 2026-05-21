@@ -159,48 +159,6 @@ export class SessionManager {
     });
   }
 
-  /**
-   * On activate, peek the Memento for a stale pause. If found, surface the
-   * reduced-action-surface UI per §11.
-   */
-  async resumeStalePauseIfAny(): Promise<void> {
-    const stale = this.deps.pauseStore.peekActivePause();
-    if (!stale) return;
-    appendInfo(this.deps.channel, `[session-manager] stale-resume detected session=${stale.session_id}`);
-    await vscode.commands.executeCommand('setContext', 'qa-debug.paused', true);
-    await vscode.commands.executeCommand('setContext', 'qa-debug.staleResume', true);
-    // v5.4 §3.7 — show the ambient indicator BEFORE the stale-resume toast so
-    // the entry is already visible when the user dismisses the notification.
-    this.deps.pauseStatusBar.show(stale.session_id);
-    const staleMcpEndpoint = cdpWsUrlToHttpRoot(stale.cdp_ws_url);
-    this.deps.mcpProvider.setPaused(staleMcpEndpoint);
-    appendInfo(
-      this.deps.channel,
-      `[session-manager] stale-resume mcpProvider.setPaused endpoint=${staleMcpEndpoint} source_ws=${stale.cdp_ws_url}`,
-    );
-    this.deps.decisionRouter.enroll(stale.session_id, async (decision) => {
-      appendInfo(
-        this.deps.channel,
-        `[session-manager] stale-resume resolved session=${stale.session_id} kind=${decision.kind}`,
-      );
-      await this.deps.pauseStore.clearActivePause();
-      await vscode.commands.executeCommand('setContext', 'qa-debug.paused', false);
-      await vscode.commands.executeCommand('setContext', 'qa-debug.staleResume', false);
-      this.deps.mcpProvider.setIdle();
-      this.deps.pauseStatusBar.hide(stale.session_id);
-    });
-    // v5.7 — text matches the real cause: this branch only fires when the
-    // prior deactivate did NOT write the clean-shutdown sentinel (i.e., the
-    // extension didn't get a chance to deactivate cleanly).
-    void vscode.window.showInformationMessage(
-      `QA Debug: previous session ended unexpectedly while paused (test: "${stale.test_title}"). ` +
-        `The browser state is no longer available. Choose **Give Up** in Test Explorer to clear, or close to defer.`,
-      'Open Audit Log',
-    ).then((sel) => {
-      if (sel === 'Open Audit Log') this.deps.channel.show();
-    });
-  }
-
   /** Tear down everything; called from extension deactivate. */
   async dispose(): Promise<void> {
     if (this.activeRun) {

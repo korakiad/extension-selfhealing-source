@@ -1,5 +1,7 @@
 # PLAN — auto-reset stale-resume on clean shutdown
 
+> **SUPERSEDED 2026-05-21 by `PLAN-no-persist-on-restart.md` (v5.11).** The clean-shutdown sentinel + crash-path stale-resume UI introduced here are both removed. Activate now unconditionally clears the Memento pause and writes an `orphan-pause-at-activate` audit line; `createTestRun(..., persist: false)` keeps Test Explorer from replaying prior failures. Kept on disk as the design-history record for the intermediate v5.7 state.
+
 ## Problem
 
 Today, every F5 launch runs `resumeStalePauseIfAny()` at activate(). If `MementoPauseStore` (over `globalState`) has ANY persisted active pause, the extension shows `$(debug-alt) QA Paused` status bar + info toast + reduced-action Test Explorer (only Give Up enabled). This was empirically confusing 2026-05-21 — user reported "is this a bug?" when seeing `QA Paused` at fresh-launch `0/0` state.

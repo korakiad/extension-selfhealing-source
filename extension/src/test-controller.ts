@@ -520,7 +520,11 @@ export function createTestControllerWrapper(
     reparseFile,
     beginRun: (name?: string): TestRunHandle => {
       const request = new vscode.TestRunRequest();
-      const run = controller.createTestRun(request, name, /* persist */ true);
+      // v5.11 — close + reopen resets the run state per PLAN-no-persist-on-restart.md.
+      // VS Code testing-guide on the persist flag: "Passing `false` here instructs
+      // VS Code not to retain the test result, like it would for runs in the editor,
+      // since these results can be reloaded from an external source externally."
+      const run = controller.createTestRun(request, name, /* persist */ false);
       const failureMessages = new Map<string, vscode.TestMessage[]>(); // testItemId → messages
 
       return {

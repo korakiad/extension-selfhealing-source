@@ -7,7 +7,7 @@
 import * as vscode from 'vscode';
 import path from 'node:path';
 
-import { appendDeactivateAudit } from './audit-file.js';
+import { appendDeactivateAudit, appendOrphanPauseAudit } from './audit-file.js';
 import { registerQaDebugChatParticipant } from './chat-participant.js';
 import { ChromeProcess } from './chrome.js';
 import { registerCommands } from './commands.js';
@@ -23,10 +23,9 @@ import { createTestControllerWrapper } from './test-controller.js';
 
 let qaDebugHost: QaDebugMcpHost | undefined;
 let sessionManagerSingleton: SessionManager | undefined;
-// v5.7 — closure captures pauseStore + decisionRouter + context.globalState +
-// context.globalStorageUri at activate() so deactivate() can synthesize give_up
-// + append audit-file line + write the clean-shutdown sentinel. Avoids adding
-// 4 module-level singletons per PLAN-clean-shutdown-sentinel.md [R#NB4].
+// Closure captures pauseStore + decisionRouter + context.globalStorageUri at
+// activate() so deactivate() can synthesize give_up + append audit-file line.
+// Avoids extra module-level singletons.
 let deactivateHook: (() => Promise<void>) | undefined;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
@@ -180,46 +179,36 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       channel,
     });
 
-    // v5.7 — wire the clean-shutdown sentinel BEFORE stale-resume. If the
-    // sentinel is present, the prior deactivate ran cleanly; suppress the
-    // stale-resume UI per PLAN-clean-shutdown-sentinel.md. Crash path (no
-    // deactivate ran → no sentinel) falls through to the existing UI.
-    const cleanShutdown =
-      context.globalState.get<boolean>('qa-debug.clean_shutdown') === true;
-    await context.globalState.update('qa-debug.clean_shutdown', undefined);
-    if (cleanShutdown) {
-      // Defense-in-depth: any orphaned pause data from pre-v5.7 globalState
-      // (where no sentinel was written) is stale-by-definition. Remove in v5.8
-      // once the migration window passes. [R#NB5]
-      await pauseStore.clearActivePause();
-      appendInfo(channel, `[activate] clean-shutdown sentinel found; skipped stale-resume`);
-    } else {
-      // Stale-resume per S4_DESIGN §11 — surface the persisted pause with
-      // reduced action surface (Give Up only). v5.7 amendment: only fires when
-      // the prior shutdown did NOT write the clean-shutdown sentinel.
-      await sessionMgr.resumeStalePauseIfAny();
+    // v5.11 — restart-reset semantics per PLAN-no-persist-on-restart.md. The
+    // previous extension-host instance is gone; any leftover Memento pause is
+    // orphaned. Audit-trail goes to audit.jsonl, not live UI.
+    const orphan = pauseStore.peekActivePause();
+    if (orphan) {
+      try {
+        await appendOrphanPauseAudit(context.globalStorageUri, orphan);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        appendInfo(channel, `[activate] orphan-pause audit append failed: ${msg}`);
+      }
+      appendInfo(
+        channel,
+        `[activate] orphan pause cleared session=${orphan.session_id} test="${orphan.test_title}"`,
+      );
     }
+    await pauseStore.clearActivePause();
 
-    // v5.7 — capture closure for deactivate(). Fires after sessionMgr is wired
-    // so abandon() can route to its enrolled callback if mocha is still alive.
     deactivateHook = async (): Promise<void> => {
       const active = pauseStore.peekActivePause();
       if (active) {
-        // Best-effort: synthesize give_up via DecisionRouter. abandon() never
-        // throws — returns false + logs if no pending callback exists.
         decisionRouter.abandon(active.session_id, 'extension deactivated', 'hook');
         try {
           await appendDeactivateAudit(context.globalStorageUri, active);
         } catch (err) {
-          // Audit-completeness degrades gracefully; never block shutdown.
           const msg = err instanceof Error ? err.message : String(err);
           appendInfo(channel, `[deactivate] audit-file append failed: ${msg}`);
         }
         await pauseStore.clearActivePause();
       }
-      // Boolean sentinel — proves "the close immediately preceding the next
-      // activate was clean." No freshness window per [R#NB3].
-      await context.globalState.update('qa-debug.clean_shutdown', true);
     };
   } else {
     // Register a thin runFixture that complains; the other commands are
@@ -247,9 +236,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 }
 
 export async function deactivate(): Promise<void> {
-  // v5.7 — sentinel + audit-file flow runs first; sessionMgr/host dispose
-  // chain follows. Audit write is best-effort and bounded under the ~5s VS
-  // Code deactivate budget (extHostExtensionService Promise.race(timeout(5000))).
+  // audit-file flow runs first; sessionMgr/host dispose chain follows. Audit
+  // write is best-effort and bounded under the ~5s VS Code deactivate budget
+  // (extHostExtensionService Promise.race(timeout(5000))).
   await deactivateHook?.();
   await sessionManagerSingleton?.dispose();
   await qaDebugHost?.dispose();

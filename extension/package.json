@@ -45,15 +45,15 @@
     ],
     "commands": [
       { "command": "qa-debug.runFixture", "title": "QA Debug: Run Fixture Suite", "category": "QA Debug" },
-      { "command": "qa-debug.retry", "title": "QA Debug: Retry Paused Test", "category": "QA Debug", "enablement": "qa-debug.paused && !qa-debug.staleResume" },
-      { "command": "qa-debug.markPassed", "title": "QA Debug: Mark Paused Test as Passed", "category": "QA Debug", "enablement": "qa-debug.paused && !qa-debug.staleResume" },
+      { "command": "qa-debug.retry", "title": "QA Debug: Retry Paused Test", "category": "QA Debug", "enablement": "qa-debug.paused" },
+      { "command": "qa-debug.markPassed", "title": "QA Debug: Mark Paused Test as Passed", "category": "QA Debug", "enablement": "qa-debug.paused" },
       { "command": "qa-debug.giveUp", "title": "QA Debug: Give Up on Paused Test", "category": "QA Debug", "enablement": "qa-debug.paused" },
       { "command": "qa-debug.smokeTestMessageRetention", "title": "QA Debug: Smoke — TestMessage Retention", "category": "QA Debug" }
     ],
     "menus": {
       "testing/message/content": [
-        { "command": "qa-debug.retry",       "when": "testMessage == qaDebugPaused && !qa-debug.staleResume" },
-        { "command": "qa-debug.markPassed",  "when": "testMessage == qaDebugPaused && !qa-debug.staleResume" },
+        { "command": "qa-debug.retry",       "when": "testMessage == qaDebugPaused" },
+        { "command": "qa-debug.markPassed",  "when": "testMessage == qaDebugPaused" },
         { "command": "qa-debug.giveUp",      "when": "testMessage == qaDebugPaused" }
       ]
     }
