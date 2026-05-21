@@ -60,14 +60,20 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   // TestController needs a startSuiteRun callback that delegates to
   // SessionManager. SessionManager isn't constructed until after the
-  // wrapper, so use a deferred binding.
+  // wrapper, so use a deferred binding. v5.5 §2.5 — opts gain grep +
+  // cancellationToken so the run handler can pass through the planned
+  // alternation grep + the Test Explorer cancel button.
   let sessionMgr: SessionManager | undefined;
-  const testControllerWrapper = createTestControllerWrapper(context, channel, async (specs) => {
+  const testControllerWrapper = createTestControllerWrapper(context, channel, async (opts) => {
     if (!sessionMgr) {
       void vscode.window.showErrorMessage('QA Debug: session manager not ready.');
       return;
     }
-    await sessionMgr.runFixtureSuite({ specs });
+    await sessionMgr.runFixtureSuite({
+      specs: opts.specs,
+      grep: opts.grep,
+      cancellationToken: opts.cancellationToken,
+    });
   });
 
   // v5.3 §2.3 — probe chat-open commands at activation so notification handler
@@ -102,6 +108,50 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // v5.4 §2.2 / §3.7 — ambient pause indicator. Lives across activations;
   // SessionManager toggles show/hide via the returned handle.
   const pauseStatusBar = registerPauseStatusBar(context, pauseStore, channel);
+
+  // v5.5 §2.7 — FileSystemWatcher keeps the discovered Test Explorer tree in
+  // sync with on-disk changes. 300ms per-URI debounce absorbs editor save +
+  // multi-buffer flush bursts; reparse semantics are id-based replace (NB10)
+  // so expand/collapse state survives.
+  const specWatcher = vscode.workspace.createFileSystemWatcher(
+    '**/*.spec.{ts,js}',
+    /* ignoreCreate */ false,
+    /* ignoreChange */ false,
+    /* ignoreDelete */ false,
+  );
+  context.subscriptions.push(specWatcher);
+  const REPARSE_DEBOUNCE_MS = 300;
+  const pendingReparse = new Map<string, NodeJS.Timeout>();
+  context.subscriptions.push({
+    dispose: () => {
+      for (const t of pendingReparse.values()) clearTimeout(t);
+      pendingReparse.clear();
+    },
+  });
+  specWatcher.onDidCreate((uri) => {
+    testControllerWrapper.addFileItem(uri);
+  });
+  specWatcher.onDidChange((uri) => {
+    const key = uri.toString();
+    const existing = pendingReparse.get(key);
+    if (existing) clearTimeout(existing);
+    pendingReparse.set(
+      key,
+      setTimeout(() => {
+        pendingReparse.delete(key);
+        void testControllerWrapper.reparseFile(uri);
+      }, REPARSE_DEBOUNCE_MS),
+    );
+  });
+  specWatcher.onDidDelete((uri) => {
+    const key = uri.toString();
+    const pending = pendingReparse.get(key);
+    if (pending) {
+      clearTimeout(pending);
+      pendingReparse.delete(key);
+    }
+    testControllerWrapper.removeFileItem(uri);
+  });
 
   if (workspaceRoot) {
     sessionMgr = new SessionManager({

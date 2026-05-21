@@ -240,6 +240,10 @@ export const mochaHooks = {
     }
     const payload: PausePayload = {
       test: test.title,
+      // v5.5 §2.4 / C1 — Mocha's Runnable.fullTitle() at runnable.js:206;
+      // space-joined ancestor titles + own title. Canonical id key for
+      // unifying with Test Explorer discovery.
+      full_title: test.fullTitle(),
       file: test.file ?? null,
       line: fileLineFromStack(test.err?.stack),
       error: serializeError(test.err),
@@ -274,7 +278,8 @@ export const mochaHooks = {
       kind: decision.kind,
       reason: decision.reason,
       by: decision.by,
-      test_title: test.fullTitle(),
+      // v5.5 §2.4: renamed test_title → full_title (always was test.fullTitle()).
+      full_title: test.fullTitle(),
       test_file: test.file ?? null,
     };
     inProcBus.emitFinalDecision(finalDecision);

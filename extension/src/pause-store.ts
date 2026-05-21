@@ -24,6 +24,7 @@ import {
   type PausePayload,
   type Proposal,
   type ProposalKind,
+  normalizeStoredPause,
 } from '@qa-debug/pause-store-types';
 import { QaToolError } from '@qa-debug/qa-debug-mcp/pause-store';
 
@@ -46,11 +47,14 @@ export class MementoPauseStore implements PauseStore {
 
   /** Returns the active pause without throwing, for boot-time stale-pause detection (§11). */
   peekActivePause(): PausePayload | undefined {
-    return this.globalState.get<PausePayload>(KEY_ACTIVE);
+    // v5.5 §2.4 / NB5 — pre-v5.5 stored pauses lack `full_title`; normalize at
+    // the read site so chat-participant + decision-router never see the
+    // pre-rename shape.
+    return normalizeStoredPause(this.globalState.get(KEY_ACTIVE));
   }
 
   getActivePause(sessionId?: string): PausePayload | undefined {
-    const active = this.globalState.get<PausePayload>(KEY_ACTIVE);
+    const active = normalizeStoredPause(this.globalState.get(KEY_ACTIVE));
     if (!active) {
       throw new QaToolError('NO_ACTIVE_PAUSE', 'No Mocha test is currently paused.');
     }

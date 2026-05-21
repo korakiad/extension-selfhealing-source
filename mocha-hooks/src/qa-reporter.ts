@@ -80,7 +80,9 @@ export class QaReporter {
     // mocha child process cannot get via `process.on('message')` (that only carries
     // messages sent FROM the parent).
     this.unsubscribe = inProcBus.onFinalDecision((params: FinalDecisionParams) => {
-      const k = `${params.test_file ?? '<inline>'} :: ${params.test_title}`;
+      // v5.5 §2.4: field renamed test_title → full_title; correlation key is
+      // unchanged (it was always the full title — just the field name shifts).
+      const k = `${params.test_file ?? '<inline>'} :: ${params.full_title}`;
       this.decisions.set(k, {
         kind: params.kind,
         reason: params.reason,

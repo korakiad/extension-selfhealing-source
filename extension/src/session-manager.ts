@@ -116,6 +116,18 @@ export interface RunFixtureSuiteOptions {
   specs?: readonly vscode.Uri[];
   /** Test-run label surfaced in Test Explorer. */
   runLabel?: string;
+  /**
+   * v5.5 §2.5 — anchored alternation grep synthesized by TestController
+   * planRun (NB13 mandatory alternation parens block the /pat/flags shortcut).
+   * Forwarded to mocha as `--grep <value>`.
+   */
+  grep?: string;
+  /**
+   * v5.5 C2 — wired to `child.kill('SIGTERM')` on cancellation. The
+   * heartbeat-abandon path in qa-hooks resolves the IPC decision so the
+   * child exits cleanly.
+   */
+  cancellationToken?: vscode.CancellationToken;
 }
 
 export class SessionManager {
@@ -138,7 +150,13 @@ export class SessionManager {
     const testHandle = this.deps.testControllerWrapper.beginRun(
       opts.runLabel ?? (specFiles.length === 1 ? path.basename(specFiles[0]) : 'fixture suite'),
     );
-    await this.spawnMochaChild(testHandle, { cwd, mochaBin, specFiles });
+    await this.spawnMochaChild(testHandle, {
+      cwd,
+      mochaBin,
+      specFiles,
+      grep: opts.grep,
+      cancellationToken: opts.cancellationToken,
+    });
   }
 
   /**
@@ -197,6 +215,7 @@ export class SessionManager {
       mochaBin: string;
       grep?: string;
       specFiles?: string[];
+      cancellationToken?: vscode.CancellationToken;
     },
   ): Promise<void> {
     // v5.2 §2.1: inject --require + --reporter as absolute paths to the
@@ -227,6 +246,22 @@ export class SessionManager {
       cwd: opts.cwd,
       stdio: ['inherit', 'inherit', 'inherit', 'ipc'],
       env,
+    });
+
+    // v5.5 C2 — Test Explorer Cancel button reaches the mocha child via SIGTERM.
+    // The heartbeat-abandon path in qa-hooks resolves any open decision so the
+    // child exits cleanly; per §4.5 test #5 the exit log lands before the next
+    // heartbeat would have fired.
+    opts.cancellationToken?.onCancellationRequested(() => {
+      appendInfo(
+        this.deps.channel,
+        `[session-manager] cancellation requested; SIGTERM mocha pid=${child.pid}`,
+      );
+      try {
+        child.kill('SIGTERM');
+      } catch {
+        // already exited
+      }
     });
 
     const connection = new JsonRpcConnection(nodeIpcTransport(child));
@@ -318,7 +353,10 @@ export class SessionManager {
 
       if (decision.kind === 'retry') {
         if (pause?.file) {
-          run.retryAfterExit = { specFile: pause.file, testTitle: decision.test_title };
+          // v5.5 §2.4: decision.full_title is the canonical fullTitle (was
+          // decision.test_title pre-rename; mocha --grep matches against
+          // Runnable.fullTitle() per runnable.js:206).
+          run.retryAfterExit = { specFile: pause.file, testTitle: decision.full_title };
         }
         return;
       }
@@ -441,6 +479,9 @@ function wireToStored(wire: WirePausePayload, sessionId: string): PausePayload {
   return {
     session_id: sessionId,
     test_title: wire.test,
+    // v5.5 §2.4 — pass the canonical full title through to the store so
+    // TestController.recordPause can look up the discovery TestItem by unified id.
+    full_title: wire.full_title,
     file: wire.file ?? '<unknown>',
     line: wire.line ?? undefined,
     failing_assertion: wire.error.message,

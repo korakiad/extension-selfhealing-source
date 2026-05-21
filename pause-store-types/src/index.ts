@@ -25,7 +25,14 @@ export type BrowserOwnershipMode = 'A' | 'B';
 
 export interface PausePayload {
   session_id: string;
+  /** It()-only title (kept for Output Channel + UI label friendliness). */
   test_title: string;
+  /**
+   * v5.5 §2.4 — canonical id key (Mocha Runnable.fullTitle(): space-joined
+   * ancestor titles + own title). Unifies discovery-time TestItems with
+   * pause-time TestItems via `${fileUri}::it::${full_title}`.
+   */
+  full_title: string;
   file: string;
   line?: number;
   failing_assertion: string;
@@ -52,6 +59,9 @@ export interface Proposal {
 export interface FailureContextView {
   session_id: string;
   test_title: string;
+  /** v5.5 §2.4 / Q3 — exposed to MCP consumers so agents can reason about
+   *  hierarchy ("Login should accept valid creds" vs just "should accept valid creds"). */
+  full_title: string;
   file: string;
   line?: number;
   failing_assertion: string;
@@ -100,6 +110,7 @@ export function toFailureContextView(
   const view: FailureContextView = {
     session_id: active.session_id,
     test_title: active.test_title,
+    full_title: active.full_title,
     file: active.file,
     line: active.line,
     failing_assertion: active.failing_assertion,
@@ -126,4 +137,22 @@ export function toFailureContextView(
     };
   }
   return view;
+}
+
+/**
+ * v5.5 §2.4 / NB5 / Q4 — defensive normalization for `PausePayload` blobs
+ * read from untrusted-by-design storage (e.g., MementoPauseStore over
+ * `ExtensionContext.globalState`). Pre-v5.5 stored pauses lack `full_title`;
+ * fall back to `test_title` so stale-resume + Give Up flows do not crash on
+ * the version bump. Returns undefined for non-object input (defaults the
+ * `peekActivePause()` empty case).
+ */
+export function normalizeStoredPause(raw: unknown): PausePayload | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const obj = raw as Record<string, unknown>;
+  if (typeof obj.full_title === 'string') {
+    return obj as unknown as PausePayload;
+  }
+  const test_title = typeof obj.test_title === 'string' ? obj.test_title : '';
+  return { ...obj, full_title: test_title } as unknown as PausePayload;
 }

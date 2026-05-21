@@ -21,6 +21,11 @@ export type BrowserOwnershipMode = z.infer<typeof BrowserOwnershipMode>;
 
 export const PausePayload = z.object({
   test: z.string(),
+  // v5.5 §2.4: Mocha's currentTest.fullTitle() — space-joined ancestor titles
+  // + own title (runnable.js:206). This is the canonical id key for unifying
+  // discovery-time TestItems with pause-time TestItems (CR §3.8.1). Required;
+  // Phase 1 has no released consumers outside the in-repo qa-hooks/oracle/extension.
+  full_title: z.string(),
   file: z.string().nullable(),
   line: z.number().int().nullable(),
   error: SerializedError,
@@ -71,14 +76,17 @@ export type HeartbeatParams = z.infer<typeof HeartbeatParams>;
 // final_decision is a notification (no response) that the hook emits to the channel
 // immediately after `decision.await` resolves. The qa-reporter (subscribed via the same
 // IPC channel as the oracle/extension) consumes this to render the tri-state outcome at
-// EVENT_TEST_END. test_title + test_file are included so the reporter can correlate
+// EVENT_TEST_END. full_title + test_file are included so the reporter can correlate
 // without a separate PauseStore lookup.
+// v5.5 §2.4 / NB8: renamed `test_title` → `full_title` for symmetry with
+// PausePayload.full_title. The field has always been populated with
+// test.fullTitle() (qa-hooks.ts) — the rename clarifies semantics.
 export const FinalDecisionParams = z.object({
   session_id: z.string(),
   kind: DecisionKind,
   reason: z.string(),
   by: DecisionBy,
-  test_title: z.string(),
+  full_title: z.string(),
   test_file: z.string().nullable(),
 });
 export type FinalDecisionParams = z.infer<typeof FinalDecisionParams>;
