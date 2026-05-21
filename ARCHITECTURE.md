@@ -1,0 +1,328 @@
+# QA Debug Companion for Mocha + Copilot — Architecture v5
+
+> Status: applies v4→v5 follow-ups from S1+S2 implementation discovery (R4#A–R4#E). v4 was APPROVED on 2026-05-20; v5 was triggered by `ARCHITECTURE-CR-v5.md` after S2 smoke runs surfaced that Mocha v10's `Runner#fail` emits before `afterEach`, making ARCHITECTURE v4 §3.1's state-mutation pattern empirically broken. Reviewer APPROVE-with-polish on 2026-05-20 (iteration #1).
+> Change tags: **[R1#n]** = iteration-1 blockers (preserved). **[R2#n]** = iteration-2 follow-ups (preserved). **[R3#n]** = iteration-3 follow-ups (preserved). **[R4#n]** = v4→v5 follow-ups (this iteration).
+
+## 0. Engineering rules (standing) [R4#A]
+
+These rules govern how this document evolves across Ralph-loop iterations. Reviewers MAY reject any §3.x prescription that violates them.
+
+- **0.1 Capability claims require citation.** A claim about Mocha, VS Code, MCP SDK, Playwright MCP, Anthropic Skills, Anthropic API, or any other platform requires *either* (i) a citation to installed source under `node_modules/` with file path + line number, *or* (ii) a WebFetched URL on the platform's own domain (`code.visualstudio.com`, `modelcontextprotocol.io`, `docs.claude.com`, etc.). Training-time priors are not sufficient.
+- **0.2 Agentic-design claims require Anthropic sources only.** Critiques and prescriptions about how agents should behave, tool design, human oversight, Skill engagement, context engineering, etc., must cite Anthropic-owned domains (per [[reference-anthropic-agentic-docs]]). VS Code / MCP spec / Mocha source is *not* acceptable for agentic-design claims; only for capability claims (rule 0.1).
+- **0.3 Lessons from prior iterations (don't relearn them).**
+  - **v3→v4 lesson:** `chatSkills` contribution schema does not have a `when` clause. Engagement is description-driven per Anthropic Skills semantics. Verified via `code.visualstudio.com/docs/copilot/customization/agent-skills`.
+  - **v4→v5 lesson:** Mocha v10 `Runner#fail` emits `EVENT_TEST_FAIL` synchronously **before** `Runner#hookUp(afterEach)`. State mutation in `afterEach` cannot retract the emitted failure event or decrement `Runner#failures`. Verified via `node_modules/.../mocha@10.8.2/lib/runner.js:825-828` and lib/context.js:80-86.
+
+## 1. Problem and user
+
+- **User**: QA engineers who use GitHub Copilot Chat in VS Code 100%. They write E2E web tests with **Mocha** as the test runner and an external browser launcher (their own helper, headed Chrome).
+- **Pain today**: when a test fails, the browser is killed by teardown, so the QA cannot inspect or discuss the failure with the agent. The fallback is a manual repro loop with logging sprinkled around.
+- **Goal**: when a Mocha test fails, hold execution at the failure point, keep the browser alive, and surface a full Playwright toolset attached to that same live browser to the Copilot agent. The QA converses with Copilot until the issue is understood, then chooses **Retry**, **Mark Passed** (human-only commit), or **Give Up**.
+
+## 2. Architecture decision: VS Code Extension + gated dynamic MCP registration
+
+The system ships as a single VS Code extension that:
+
+1. Owns the Mocha lifecycle (spawn / observe / hold-on-fail / continue).
+2. Owns the browser lifecycle (launch headed with `--remote-debugging-port=9222`, never closes on fail).
+3. Registers MCP servers conditionally per pause via `vscode.lm.registerMcpServerDefinitionProvider` and `onDidChangeMcpServerDefinitions` — see §3.4 [**R1#5**].
+4. Surfaces a `qa-debug` Skill via the `chatSkills` contribution point, **always loaded**. Engagement is **description-driven** per Anthropic Skills semantics (`platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices`) — the SKILL.md `description` is what Claude matches against the user turn. The `qa-debug.paused` VS Code context key, previously proposed in this architecture as a `chatSkills.when` gate (a field that does not exist in the contribution schema), is **repurposed**: it gates UI command enablement / Test Explorer button visibility only. The VS Code `chatSkills` contribution schema documents only `path` (pointing directly at the SKILL.md file per the page's canonical example); it does not have a `when` field. [**R3#A**]
+
+### Why an extension (not a standalone MCP + scaffolded `.vscode/mcp.json`)
+
+- `cdpEndpoint` of the paused browser is known only at runtime; a static config cannot rebind per failure. `registerMcpServerDefinitionProvider` is the only API that supports per-session re-binding.
+- LSP-aware edits, Test Explorer UI, and debug session control are first-class only inside an extension.
+- Workspace trust, secret storage, and the `chatSkills` contribution point require extension context.
+
+### Phase 1 scope explicitly excludes
+
+- chrome-devtools-mcp (deferred to phase 2).
+- Parallel mocha mode (`--parallel`).
+- Multi-window / multi-context Playwright sessions.
+
+## 3. Components
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│ VS Code Extension (TypeScript)                               │
+│                                                              │
+│  ┌───────────────┐   spawn   ┌──────────────────────────┐    │
+│  │ Session Mgr   │──────────▶│ mocha (child_process)    │    │
+│  │               │           │  --require qa-hooks.js   │    │
+│  │ pause-store   │◀──IPC─────│                          │    │
+│  │ (durable)     │           └──────────────────────────┘    │
+│  └───┬───────┬───┘                                           │
+│      │       │ launch                                        │
+│      │       ▼                                               │
+│      │   ┌──────────────────────┐                            │
+│      │   │ Chrome :9222         │  ← held on fail            │
+│      │   └──────────────────────┘                            │
+│      │                                                       │
+│      │ on pause: open MCP gate                               │
+│      │ on release: close gate, unregister                    │
+│      ▼                                                       │
+│  vscode.lm.registerMcpServerDefinitionProvider               │
+│      │                                                       │
+│      ├─▶ playwright-mcp   (cdpEndpoint=ws://:9222)           │
+│      └─▶ qa-debug         (stdio, owned by extension)        │
+│                                                              │
+│  chatSkills contribution: qa-debug SKILL.md (always loaded; │
+│  engagement is description-driven; qa-debug.paused context  │
+│  key gates UI commands only) [R3#A]                         │
+└──────────────────────────────────────────────────────────────┘
+                       ▲
+                       ▼
+                  Copilot Chat (agent mode)
+```
+
+### 3.1 Mocha root hook plugin (`qa-hooks.cjs`) [R4#B]
+
+```js
+afterEach(async function () {
+  if (this.currentTest.state !== 'failed') return;
+
+  const sessionId = await ipc.publishPause({
+    test: this.currentTest.title,
+    file: this.currentTest.file,
+    line: this.currentTest.err?.stack?.match(/:(\d+):/)?.[1],
+    error: serializeError(this.currentTest.err),
+    cdp_ws_url: process.env.QA_DEBUG_CDP_WS_URL ?? 'ws://localhost:9222',
+    started_at: Date.now(),
+    retry_count: this.currentTest.currentRetry(),
+  });
+
+  const decision = await ipc.awaitDecision(sessionId, {
+    heartbeatMs: 5_000,
+    onAbandoned: 'give_up',     // hook resolves locally as { kind: 'give_up', reason: 'abandoned', by: 'hook' }
+  });
+
+  // The hook does NOT mutate test.state / test.err / parent.retries / currentTest.retries.
+  // Mocha's `Runner#fail` emits EVENT_TEST_FAIL synchronously before this hook runs
+  // (see lib/runner.js:825 → :828 in mocha@10.8.2). Outcome translation lives in the
+  // `qa-reporter` reporter (§3.6), which subscribes to EVENT_TEST_FAIL and produces the
+  // human-facing tally tri-state (passed / failed / marked-passed). [R4#B]
+  //
+  // The hook's sole job is: publish pause, await decision with heartbeat, IPC-acknowledge
+  // the decision so the reporter can correlate by session_id and PauseStore can update UI.
+
+  if (decision.kind === 'retry') {
+    invalidateRequireCache(this.currentTest.file);
+    return;
+  }
+  // mark_passed and give_up: no mocha-side state change; the reporter renders the tri-state
+  // outcome from the IPC decision payload via `last_proposal_status` and the session log.
+});
+```
+
+The pause is published to the extension's durable `pause-store` (`Memento`-backed, keyed by `sessionId`). Mocha is never exposed to the agent as a long-blocking tool call.
+
+**Why no state mutation?** [R4#B] Mocha v10's `Runner.prototype.fail` (lib/runner.js:423–465) synchronously sets `test.state = STATE_FAILED`, increments `Runner#failures`, and emits `EVENT_TEST_FAIL` at line 464. In `Runner#runTests`'s `self.runTest` callback (lines 800–836), `self.fail(test, err)` is invoked at line 825 — *before* `self.hookUp(HOOK_TYPE_AFTER_EACH, next)` at line 828. By the time `afterEach` runs, the failure event has already been broadcast to all attached reporters and `Runner#failures` is already incremented. State mutation cannot retract either side effect. Additionally, `this.retries(999)` inside `beforeEach` is a no-op because `Context.prototype.retries(n)` mutates `this.runnable()._retries`, and `this.runnable()` inside `beforeEach` returns the *hook*, not the upcoming test (lib/context.js:80–86; lib/runner.js:487/494). The Mocha-canonical way to enable retries from a hook is `this.currentTest.retries(n)`, which we deliberately do *not* use — the reporter handles tri-state outcomes without depending on retry budgets at all.
+
+**Why no native mocha retries?** [R4#B] Even with `this.currentTest.retries(N)` set in `beforeEach`, the retry branch (lib/runner.js:814–823) creates `clonedTest = test.clone()` and `tests.unshift(clonedTest)` *before* `hookUp(afterEach)` runs at line 823. `Test.prototype.clone()` (lib/test.js:71–83, line 75) snapshots `this.retries()` at clone time; mutating the source test's `_retries` in `afterEach` does not propagate to the queued clone. For deterministic-failure tests, this means: with retries enabled, mocha loops the clone until the budget is exhausted; the hook cannot intercede. We therefore do *not* enable mocha's native retries. The `retry` decision is honored by the **extension** (S4), which re-invokes mocha against the same test file via `--grep <test title>` in a fresh child process — the held browser at `:9222` persists across child-process restart because the extension owns the Chrome lifecycle independently of the mocha lifecycle (see §3.4 / S4). In the S2 fake-oracle flow, the oracle simulates this by tracking the retry decision in its session ledger and emitting a follow-up mocha child invocation.
+
+### 3.2 `qa-debug` MCP — tool surface
+
+All tools are prefixed `qa_` under server `qa-debug`. **Agent-facing FQN is `qa-debug:qa_*`** per Skills best-practices format `<server>:<tool>` (`platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices`). The page's two worked examples (`BigQuery:bigquery_schema`, `GitHub:create_issue`) reflect each server's self-registered name; we follow the same rule and use `qa-debug:qa_*` and `playwright-mcp:browser_*` because that is what `@playwright/mcp` self-identifies as and what we register `qa-debug` under via `vscode.lm.registerMcpServerDefinitionProvider`. The legacy double-underscore form `mcp__qa-debug__qa_*` is Claude-Code-internal logging/permission shape and is NOT used in author-facing Skill content. [**R3#B**] Tool descriptions follow third-person voice per Anthropic Skills authoring guidance [**R2#NB1**].
+
+```yaml
+- name: qa_get_failure_context
+  description: |
+    Returns the currently paused Mocha failure as a structured payload.
+    Idempotent and safe to call multiple times. Returns null when no pause
+    is active. Callers should invoke this first upon entering a debugging
+    session to ground subsequent investigation. Also surfaces the verdict
+    of any in-flight mark-passed proposal via `last_proposal_status`.    # [R2#Q1]
+  params:
+    session_id: string (optional; defaults to active)
+    response_format: 'concise' | 'detailed'
+  returns:
+    test_title, file, line, failing_assertion,
+    stack_trace: { frames: <=50 inline, more_at: resource_uri? },        # [R2#Q3]
+    cdp_ws_url, screenshot_path?,
+    console_logs: { lines: <=100 inline (<=8KB), more_at: resource_uri? },# [R2#Q3]
+    paused_for_ms, retry_count, max_retries_remaining,
+    last_proposal_status: 'none' | 'awaiting_human' | 'accepted' | 'rejected'
+  errors:
+    NO_ACTIVE_PAUSE — no test is currently paused
+    SESSION_NOT_FOUND — sessionId does not match any pause
+
+- name: qa_request_retry
+  description: |
+    Requests that Mocha re-runs the currently paused test. beforeEach
+    re-runs. Callers should invoke this after the test or source code
+    has been edited to address the failure. Reversible: a subsequent
+    failure simply pauses again. `reason` is surfaced inline in the
+    chat notification and Test Explorer annotation.                      # [R2#Q4]
+  params:
+    session_id: string
+    reason: string
+
+- name: qa_request_give_up
+  description: |
+    Stops retrying the paused test, marking it as a final failure. Mocha
+    proceeds to the next test. `reason` is surfaced to the human inline.
+    Reversible only by re-running the suite.                             # [R2#Q4]
+  params:
+    session_id: string
+    reason: string
+
+- name: qa_propose_mark_passed
+  description: |
+    Proposes marking the paused test as passed. Does NOT commit — surfaces
+    a confirmation button to the human. Callers should reserve this for
+    environmental flake signals, not for assertion failures against
+    production code paths. After calling, the next correct step is to
+    stop and report the proposal in chat; the verdict will surface via   # [R2#Q1]
+    `qa_get_failure_context.last_proposal_status`.
+  params:
+    session_id: string
+    rationale: string  # the human reads this verbatim; be specific
+  returns:
+    proposal_id, status: 'awaiting_human'
+
+- name: qa_propose_close_browser
+  description: |
+    Proposes closing the held browser at :9222. Does NOT commit — surfaces  # [R2#Q5]
+    a confirmation button to the human. Destroys all live inspection
+    state and ends the investigation session.
+  params:
+    session_id: string
+    rationale: string
+  returns:
+    proposal_id, status: 'awaiting_human'
+
+- name: qa_propose_abort_suite
+  description: |
+    Proposes aborting the remaining mocha suite. Does NOT commit —          # [R2#Q5]
+    surfaces a confirmation button to the human. Destroys remaining
+    test work for the current run.
+  params:
+    session_id: string
+    rationale: string
+  returns:
+    proposal_id, status: 'awaiting_human'
+```
+
+The committing verbs `qa_commit_mark_passed`, `qa_commit_close_browser`, `qa_commit_abort_suite` exist in IPC and are wired **only** to UI buttons. They are **not** exposed as MCP tools [**R1#1, R2#Q5**].
+
+**On `qa_propose_close_browser` reversibility [R3#D].** `https://www.anthropic.com/research/measuring-agent-autonomy` (Feb 18, 2026) cautions that "oversight requirements that prescribe specific interaction patterns, such as requiring humans to approve every action, will create friction without necessarily producing safety benefits." `qa_propose_close_browser` is kept behind a UI commit anyway because closing the browser destroys **the human's own investigation context** — live DOM, console history, network state — which is the whole asset the system is preserving. The human is not approving an agent action against an external system; they are approving destruction of their debugging surface. This asymmetry is consistent with the gating principles published in `https://www.anthropic.com/news/our-framework-for-developing-safe-and-trustworthy-agents` (Aug 4, 2025), which frames approval by **impact severity** and **modification vs. read-only**, and with the Plan Mode pattern in `https://www.anthropic.com/research/trustworthy-agents` (Apr 9, 2026) — gates positioned as plan review before execution. The gate is therefore a novel framing consistent with published principles, not blanket per-action approval.
+
+playwright-mcp tools (`browser_snapshot`, `browser_click`, `browser_evaluate`, etc., ~25 of them) are loaded as-is from `@playwright/mcp`. They register only while a pause is active — see §3.4.
+
+### 3.3 `qa-debug` SKILL.md — procedural knowledge layer
+
+Registered via the VS Code `chatSkills` contribution point. The contribution shape is (matching the canonical example on `code.visualstudio.com/docs/copilot/customization/agent-skills`, page dated 5/20/2026):
+
+```json
+{ "contributes": { "chatSkills": [ { "path": "./skills/qa-debug/SKILL.md" } ] } }
+```
+
+`path` points directly at the `SKILL.md` file. The `chatSkills` schema documents `path` only — no `id`, no `when`. (The page contains contradictory prose elsewhere about a "directory containing a SKILL.md", but its package.json registration section and worked example both use the file path.) [**R3#A**]
+
+Engagement is **description-driven**: Claude matches the SKILL.md `description` against the user turn (per `platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices` and `code.claude.com/docs/en/skills`). The SKILL.md description is therefore the load-bearing engagement signal and must include both *what* the Skill does and *when* to use it — specifically, that it engages when a Mocha test is currently paused at a failure with a held browser available for live inspection.
+
+The `qa-debug.paused` VS Code context key gates **UI affordances only** — Test Explorer button visibility, command enablement, status-bar indicators. It does not gate Skill engagement.
+
+Content (frontmatter description in third person per R2#NB1; body in imperative voice — third-person voice in Skills best-practices is scoped to the description field):
+
+- Step 1 (always): call `qa-debug:qa_get_failure_context` (concise) to ground the investigation.
+- Decision tree:
+  - Timeout → `playwright-mcp:browser_snapshot` + `playwright-mcp:browser_console_messages`.
+  - Selector-not-found → `playwright-mcp:browser_snapshot` + `playwright-mcp:browser_evaluate` with `document.querySelectorAll(...)`.
+  - Value mismatch → `playwright-mcp:browser_evaluate` reading the asserted value live; compare to expected.
+- Guardrail: callers must not invoke `qa-debug:qa_propose_mark_passed` when the failing assertion's value is derived from production code paths. Mark-passed is reserved for environment/flake signals.
+- Output style: agents should produce a one-line conclusion first, then evidence.
+- After calling any `qa_propose_*` tool, the agent should pause and report in chat; verdicts surface via `qa-debug:qa_get_failure_context.last_proposal_status`.
+
+### 3.4 MCP gating & lifecycle
+
+- On extension activation: the `McpServerDefinitionProvider` is registered with an empty server list.
+- On pause publish: provider returns `[playwright-mcp(cdpEndpoint=ws://:9222), qa-debug]`; `onDidChangeMcpServerDefinitions` fires.
+- On release: provider returns `[]`; change event fires again. Tool surface returns to 0 at idle.
+- Tool count cap during pause: ~25 (playwright) + 6 (qa-debug) = ~31. Zero at idle. (Reduced from v3's ~32 after `qa_wait_for_pause` removal — see [**R3#C**] / §3.2.) The combined surface hits **three of four** Tool Search Tool triggers published in `anthropic.com/engineering/advanced-tool-use` (Nov 24 2025): (a) >10K tokens of tool definitions (estimated 12K–18K), (b) MCP-powered systems with multiple servers (qa-debug + playwright-mcp), and (c) 10+ tools available. The fourth trigger ("tool selection accuracy issues") is exactly what the S3 engagement evals measure empirically. Phase 1 defers Tool Search Tool because (i) the SKILL.md decision tree disambiguates among playwright tools, (ii) the surface is registered only during paused windows (seconds-to-minutes, not the whole session), and (iii) S3 engagement evals empirically verify the agent picks the right first tool ≥ 4/5 on golden scenarios and 5/5 on negative scenarios. **If S3 evals miss the bar, Tool Search becomes a blocking Phase 1 add.** [**R3#A** companion note, **R3#C**]
+- The `qa-debug` SKILL itself is *not* gated through MCP. Skill engagement is **description-driven** per Anthropic Skills semantics (see §3.3); the `qa-debug.paused` VS Code context key gates UI affordances only. [**R3#A**, replaces R2#Q2 framing]
+
+### 3.5 IPC, pause-store, and observability
+
+- **IPC**: JSON-RPC 2.0 envelopes carried over Node's built-in `ipc` channel (parent spawns mocha child with `stdio: [..., 'ipc']`; both ends use `process.send` / `process.on('message')`) [R4#C]. The mocha child's stdout/stderr stay clean for human-readable mocha output and the `qa-reporter` (§3.6); IPC does not collide with reporter output. Heartbeat every 5s; the hook resolves locally as `{ kind: 'give_up', reason: 'abandoned', by: 'hook' }` after 3 missed heartbeats per `onAbandoned: 'give_up'`.
+- **Pause-store**: `Memento` (extension-global state) keyed by `sessionId`. Survives Copilot Chat restart but not VS Code restart (intentional for phase 1).
+- **Observability** [**R2#Q4**]: every decision `reason` / `rationale` is rendered inline in
+  - the chat notification (e.g., *"Agent requested retry — reason: 'selector updated to .new-class'"*),
+  - the Test Explorer failure annotation,
+  - the extension's audit log channel,
+  - the `qa-reporter` stdout summary at end-of-run (§3.6).
+- **Cancellation**: if the extension shuts down with an active pause, the next mocha tick after timeout treats the pause as abandoned per `onAbandoned`.
+
+### 3.6 `qa-reporter` Mocha reporter [R4#B]
+
+The `qa-reporter` is a Mocha reporter packaged alongside the hook (`@qa-debug/mocha-hooks/qa-reporter`). It is the **single source of truth for human-facing outcome rendering** — stdout summary, Test Explorer state, audit log channel. Mocha's built-in reporters (`spec`, `dot`, `json`, etc.) are not used in QA-debug runs; `mocha --reporter @qa-debug/mocha-hooks/qa-reporter` is the canonical invocation.
+
+**Subscribed events (Mocha v10 names):**
+- `EVENT_RUN_BEGIN` — initialize tally.
+- `EVENT_TEST_BEGIN` — log session start.
+- `EVENT_TEST_PASS` — render `✓` and increment passed count.
+- `EVENT_TEST_FAIL` — *intercept and defer*. Do not increment failed count yet; instead correlate with PauseStore by `(file, title)` and wait for the IPC decision to land. The hook's `decision.await` round-trip is already complete by the time `EVENT_TEST_FAIL` fires (because afterEach ran first; see §3.1), so the reporter can look up the decision synchronously via the shared in-process PauseStore (S3+/S4) or via a final-decision IPC message from the oracle (S2).
+- `EVENT_TEST_RETRY` — render retry annotation (only for any future native-retry use; not used by Phase 1 directly).
+- `EVENT_TEST_END` — render the final outcome per the tri-state below.
+- `EVENT_RUN_END` — render summary tally.
+
+**Tri-state outcome rendering:**
+- `passed` — test fn returned cleanly. Count as passed in the tally and exit code.
+- `failed` — test fn threw; decision was `give_up` (or no decision recorded, e.g., for tests that fail outside the QA-debug session). Count as failed in the tally and exit code.
+- `marked-passed` — test fn threw; human committed `qa_propose_mark_passed` via UI. Rendered as `✓ marked-passed by <user>: <rationale>` in stdout AND in the Test Explorer annotation. **CI exit-code semantics:** marked-passed tests do *not* decrement `process.exitCode`; the run exits non-zero whenever `failed + marked-passed > 0`, unless the explicit `--qa-treat-marked-as-passing` reporter option is set. This preserves CI-conservatism: a freshly-failed test reported as marked-passed by a human reviewer in interactive QA still shows up as a build-breaking signal in headless CI, unless the team opts in to the relaxed semantics.
+
+**Why the reporter and not state mutation?** See §3.1's "Why no state mutation?" paragraph — the reporter is the architecturally clean alternative because it consumes Mocha's documented event surface rather than mutating internal state that `Runner#fail` has already broadcast to all subscribers.
+
+**Reporter does not bypass propose/commit gates.** The reporter only renders outcomes that have *already* been committed (or rejected) through the §3.2 propose/commit verbs. The reporter is read-only with respect to PauseStore. The asset-destruction asymmetry defense for `qa_propose_close_browser` (§3.2) is unaffected.
+
+**Reporter is for humans, not for the agent.** Verdicts back to the agent flow through `qa-debug:qa_get_failure_context.last_proposal_status` (§3.2) — high-signal structured data per `anthropic.com/engineering/writing-tools-for-agents`. The reporter's stdout is human-facing noise the agent must not poll. [R4#D]
+
+**Reporter↔hook coordination in S2** [R4#E]: the in-process PauseStore is not available (the oracle is a separate child of the parent shell, not the in-process extension). The S2 fake oracle correlates by emitting a `final_decision(session_id, kind, by, reason)` IPC notification immediately after the `decision.await` response; the reporter subscribes to that notification via the same IPC channel and uses it to render the tri-state outcome before `EVENT_RUN_END`. S4 simplifies this: the extension's in-process PauseStore is queried directly.
+
+## 4. Failure-pause loop (sequence)
+
+1. User clicks Run in Test Explorer or invokes `@qa run` in chat.
+2. Extension launches Chrome `:9222`, then `mocha --require qa-hooks.cjs --reporter @qa-debug/mocha-hooks/qa-reporter` [R4#B].
+3. Test `T` fails → mocha's `Runner#fail` emits `EVENT_TEST_FAIL` (the reporter intercepts and defers tri-state rendering); afterEach hook publishes pause with a new `sessionId`.
+4. Extension opens the MCP gate (registers playwright-mcp + qa-debug); SKILL.md is already loaded and Claude's description-match engages it on the next user turn that mentions the failure (Skill engagement is description-driven, not gated by a `when` clause — see §3.3). The `qa-debug.paused` context key concurrently enables the Test Explorer commit buttons. [**R3#A**]
+5. Chat notification: *"Test T failed at line 42. Browser held at :9222. Ask anything."*
+6. Agent flow:
+   - Call `qa_get_failure_context` (concise) to ground.
+   - Use `browser_snapshot`, `browser_evaluate`, etc., to investigate.
+   - Edit files via Copilot's built-in edit tools when warranted.
+7. Decision verbs:
+   - Agent calls `qa_request_retry` / `qa_request_give_up` autonomously with a `reason`.
+   - For mark-passed / close-browser / abort-suite: agent calls the `qa_propose_*` variant; a button appears in Test Explorer + chat; the human commits or rejects.
+8. On decision: hook's `decision.await` returns; hook publishes a `final_decision` IPC notification to the reporter; extension closes the MCP gate; provider returns `[]`. The reporter renders the tri-state outcome (passed / failed / marked-passed) at `EVENT_TEST_END`. For `retry` decisions, the extension re-invokes mocha against the same test file via `--grep <title>` in a fresh child while Chrome `:9222` stays held; the reporter aggregates retries into a single test entry in the final tally.
+
+## 5. Concrete tech stack
+
+- **Language**: TypeScript (extension + qa-debug MCP).
+- **MCP SDK**: `@modelcontextprotocol/sdk` (stdio transport).
+- **VS Code APIs**:
+  - `vscode.lm.registerMcpServerDefinitionProvider` + `onDidChangeMcpServerDefinitions`
+  - `chatSkills` contribution point (schema: `{ path: "<path-to-SKILL.md>" }` only — no `when`, no `id`; engagement is description-driven, see §3.3) [**R3#A**]
+  - `vscode.tests.*` (Test Controller)
+  - `vscode.tasks.*` or raw `child_process.spawn`
+  - `vscode.debug.*` (phase 2)
+- **Mocha**: `^10.7` (verified against `mocha@10.8.2` runner.js capabilities per [R4#A] rule). `--require` for root hooks, `--reporter @qa-debug/mocha-hooks/qa-reporter` for tri-state outcome rendering (§3.6). [R4#B]
+- **Playwright MCP**: `@playwright/mcp` configured via JSON with `browser.cdpEndpoint`.
+
+## 6. Status
+
+v2 was APPROVED by Reviewer #2. v3 applied R2#NB1, R2#NB2, and answers to R2#Q1–Q5. v3 was treated as implementation-ready, but SLICE_PLAN Ralph-loop iteration #2 surfaced four mismatches with current published guidance:
+
+- **R3#A** — VS Code `chatSkills` schema has no `when` field; engagement is description-driven per Anthropic Skills semantics. §1, §3.3, §3.4, §5 updated; `qa-debug.paused` context key repurposed to UI-affordance gating only.
+- **R3#B** — MCP FQN form in §3.3 switched from `mcp__server__tool` (Claude-Code-internal) to `server:tool` (Skills best-practices format).
+- **R3#C** — `qa_wait_for_pause` removed from §3.2; description-driven engagement makes the long-poll redundant. Tool count cap in §3.4 dropped from ~32 to ~31.
+- **R3#D** — `qa_propose_close_browser` retains its UI commit gate; defense paragraph added in §3.2 citing the asset-destruction asymmetry.
+
+**v4 APPROVED by Ralph-loop reviewer #4 on 2026-05-20.** v5 was triggered by `ARCHITECTURE-CR-v5.md` during S2 implementation when mocha v10's `Runner#fail` event-emission order was empirically verified against runner.js source — making §3.1's state-mutation pattern unworkable. Reviewer iteration #1 returned APPROVE-with-polish (recommending Option A custom reporter) on 2026-05-20:
+
+- **R4#A** — Added §0 "Engineering rules" with the capability-claim-citation requirement (rule 0.1) and the agentic-design-source restriction (rule 0.2). Codifies the lesson from v3→v4 (chatSkills schema) and v4→v5 (mocha runtime).
+- **R4#B** — Adopted Option A: dropped state-mutation lines from §3.1; added §3.6 `qa-reporter` Mocha reporter as the single source of truth for human-facing outcome rendering. Tri-state tally (passed/failed/marked-passed) with CI-conservative exit-code semantics. Mocha tech stack updated to `^10.7`.
+- **R4#C** — IPC clarified in §3.5: JSON-RPC envelopes carried over Node's `ipc` channel (stdio[3]), not over mocha's stdin/stdout. This keeps mocha's stdout free for the reporter and matches the implementation in `mocha-hooks/src/protocol.ts`.
+- **R4#D** — §3.6 explicitly separates human observation surface (reporter stdout) from agent observation surface (`qa_get_failure_context.last_proposal_status`) per `anthropic.com/engineering/writing-tools-for-agents` (Sep 11 2025) high-signal principle.
+- **R4#E** — §3.6 covers reporter↔hook coordination in S2 (oracle emits `final_decision` IPC notification) vs S4 (in-process PauseStore query). Lands as a bullet at the end of §3.6.
+
+**v5 APPROVED by Ralph-loop reviewer #5 on 2026-05-20.** Iteration #1 returned APPROVE-with-polish (5 non-blocking items); iteration #2 returned APPROVE clean (3 cosmetic SLICE_PLAN sweeps flagged, swept inline, "do not warrant a third iteration"). Implementation may resume against v5 §3.1 / §3.6 contracts.

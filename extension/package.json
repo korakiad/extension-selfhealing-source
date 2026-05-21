@@ -1,0 +1,40 @@
+{
+  "name": "qa-debug-companion",
+  "displayName": "QA Debug Companion",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Holds Mocha on test failure with browser alive; surfaces playwright-mcp + qa-debug skill to Copilot. Phase 1.",
+  "publisher": "qa-debug",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "chatSkills": [
+      { "path": "./skills/qa-debug/SKILL.md" }
+    ],
+    "commands": [
+      { "command": "qa-debug.runFixture", "title": "QA Debug: Run Fixture Suite", "category": "QA Debug" },
+      { "command": "qa-debug.retry", "title": "QA Debug: Retry Paused Test", "category": "QA Debug", "enablement": "qa-debug.paused" },
+      { "command": "qa-debug.markPassed", "title": "QA Debug: Mark Paused Test as Passed", "category": "QA Debug", "enablement": "qa-debug.paused" },
+      { "command": "qa-debug.giveUp", "title": "QA Debug: Give Up on Paused Test", "category": "QA Debug", "enablement": "qa-debug.paused" }
+    ]
+  },
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "build:check": "tsc -p tsconfig.json --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@qa-debug/mocha-hooks": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/vscode": "^1.95.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.7.2"
+  }
+}

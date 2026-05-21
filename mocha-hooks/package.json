@@ -1,0 +1,28 @@
+{
+  "name": "@qa-debug/mocha-hooks",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Mocha root hook plugin (qa-hooks.cjs) and shared IPC protocol module. Per ARCHITECTURE v4 §3.1 and §3.5.",
+  "main": "dist/qa-hooks.js",
+  "exports": {
+    ".": "./dist/qa-hooks.js",
+    "./protocol": "./dist/protocol.js",
+    "./register": "./dist/qa-hooks.js",
+    "./qa-reporter": "./dist/qa-reporter.js"
+  },
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "build:check": "tsc -p tsconfig.json --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^22.10.0",
+    "esbuild": "^0.24.0",
+    "mocha": "^10.7.3",
+    "typescript": "^5.7.2"
+  }
+}

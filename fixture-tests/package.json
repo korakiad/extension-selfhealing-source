@@ -1,0 +1,14 @@
+{
+  "name": "@qa-debug/fixture-tests",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Mocha suite with intentionally-failing tests for S2 IPC verification and S3/S5/S6 real-agent flows.",
+  "scripts": {
+    "test": "mocha",
+    "test:fake-oracle": "node --import tsx ../tools/oracle.ts --decisions retry,mark_passed,give_up --tests 'specs/**/*.spec.js'"
+  },
+  "devDependencies": {
+    "@qa-debug/mocha-hooks": "workspace:*",
+    "mocha": "^10.7.3"
+  }
+}

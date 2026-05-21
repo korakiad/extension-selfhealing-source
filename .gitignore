@@ -1,0 +1,7 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.vscode-test/
+*.vsix
+.DS_Store
+.claude/settings.local.json

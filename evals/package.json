@@ -1,0 +1,23 @@
+{
+  "name": "@qa-debug/evals",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Anthropic-style Skill / tool engagement evals. S3 lands the 6 scenarios; S5 adds the decision-tree alignment eval.",
+  "scripts": {
+    "build:check": "tsc -p tsconfig.json --noEmit",
+    "engagement": "tsx src/engagement.ts",
+    "budget": "tsx src/budget.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.97.1",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@qa-debug/qa-debug-mcp": "workspace:*",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.2"
+  }
+}

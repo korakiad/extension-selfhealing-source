@@ -1,0 +1,282 @@
+{
+  "runner": "claude -p (subscription seat)",
+  "model": "sonnet",
+  "trialsPerScenario": 5,
+  "skillDescriptionChars": 927,
+  "toolCount": 20,
+  "ranAt": "2026-05-21T00:10:31.512Z",
+  "totalCostUsd": 0.11563185000000002,
+  "rows": [
+    {
+      "id": 1,
+      "name": "timeout (positive)",
+      "paused": true,
+      "expect": "qa_get_failure_context",
+      "threshold": 4,
+      "passes": 5,
+      "trials": [
+        {
+          "firstToolName": "qa_get_failure_context",
+          "passed": true,
+          "costUsd": 0,
+          "durationMs": 5396,
+          "numTurns": null
+        },
+        {
+          "firstToolName": "qa_get_failure_context",
+          "passed": true,
+          "costUsd": 0,
+          "durationMs": 7611,
+          "numTurns": null
+        },
+        {
+          "firstToolName": "qa_get_failure_context",
+          "passed": true,
+          "costUsd": 0,
+          "durationMs": 4379,
+          "numTurns": null
+        },
+        {
+          "firstToolName": "qa_get_failure_context",
+          "passed": true,
+          "costUsd": 0,
+          "durationMs": 4494,
+          "numTurns": null
+        },
+        {
+          "firstToolName": "qa_get_failure_context",
+          "passed": true,
+          "costUsd": 0,
+          "durationMs": 4872,
+          "numTurns": null
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "name": "value mismatch (positive, browser_evaluate distractor)",
+      "paused": true,
+      "expect": "qa_get_failure_context",
+      "threshold": 4,
+      "passes": 5,
+      "trials": [
+        {
+          "firstToolName": "qa_get_failure_context",
+          "passed": true,
+          "costUsd": 0,
+          "durationMs": 4515,
+          "numTurns": null
+        },
+        {
+          "firstToolName": "qa_get_failure_context",
+          "passed": true,
+          "costUsd": 0,
+          "durationMs": 4662,
+          "numTurns": null
+        },
+        {
+          "firstToolName": "qa_get_failure_context",
+          "passed": true,
+          "costUsd": 0,
+          "durationMs": 4200,
+          "numTurns": null
+        },
+        {
+          "firstToolName": "qa_get_failure_context",
+          "passed": true,
+          "costUsd": 0,
+          "durationMs": 4393,
+          "numTurns": null
+        },
+        {
+          "firstToolName": "qa_get_failure_context",
+          "passed": true,
+          "costUsd": 0,
+          "durationMs": 4197,
+          "numTurns": null
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "name": "selector (positive, browser_snapshot distractor)",
+      "paused": true,
+      "expect": "qa_get_failure_context",
+      "threshold": 4,
+      "passes": 5,
+      "trials": [
+        {
+          "firstToolName": "qa_get_failure_context",
+          "passed": true,
+          "costUsd": 0,
+          "durationMs": 7864,
+          "numTurns": null
+        },
+        {
+          "firstToolName": "qa_get_failure_context",
+          "passed": true,
+          "costUsd": 0,
+          "durationMs": 4422,
+          "numTurns": null
+        },
+        {
+          "firstToolName": "qa_get_failure_context",
+          "passed": true,
+          "costUsd": 0,
+          "durationMs": 4604,
+          "numTurns": null
+        },
+        {
+          "firstToolName": "qa_get_failure_context",
+          "passed": true,
+          "costUsd": 0,
+          "durationMs": 13905,
+          "numTurns": null
+        },
+        {
+          "firstToolName": "qa_get_failure_context",
+          "passed": true,
+          "costUsd": 0,
+          "durationMs": 4413,
+          "numTurns": null
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "name": "unrelated postgres query (negative, paused)",
+      "paused": true,
+      "expect": "no_qa_tool",
+      "threshold": 5,
+      "passes": 5,
+      "trials": [
+        {
+          "firstToolName": null,
+          "passed": true,
+          "costUsd": 0.00981045,
+          "durationMs": 9706,
+          "numTurns": 1
+        },
+        {
+          "firstToolName": null,
+          "passed": true,
+          "costUsd": 0.0071187,
+          "durationMs": 8986,
+          "numTurns": 1
+        },
+        {
+          "firstToolName": null,
+          "passed": true,
+          "costUsd": 0.0078237,
+          "durationMs": 9565,
+          "numTurns": 1
+        },
+        {
+          "firstToolName": null,
+          "passed": true,
+          "costUsd": 0.0082737,
+          "durationMs": 11862,
+          "numTurns": 1
+        },
+        {
+          "firstToolName": null,
+          "passed": true,
+          "costUsd": 0.0080337,
+          "durationMs": 10526,
+          "numTurns": 1
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "name": "weather (negative, paused)",
+      "paused": true,
+      "expect": "no_qa_tool",
+      "threshold": 5,
+      "passes": 5,
+      "trials": [
+        {
+          "firstToolName": null,
+          "passed": true,
+          "costUsd": 0.0070691999999999994,
+          "durationMs": 7566,
+          "numTurns": 1
+        },
+        {
+          "firstToolName": null,
+          "passed": true,
+          "costUsd": 0.005841600000000001,
+          "durationMs": 18115,
+          "numTurns": 1
+        },
+        {
+          "firstToolName": null,
+          "passed": true,
+          "costUsd": 0.0053916,
+          "durationMs": 7174,
+          "numTurns": 1
+        },
+        {
+          "firstToolName": null,
+          "passed": true,
+          "costUsd": 0.0062016,
+          "durationMs": 6861,
+          "numTurns": 1
+        },
+        {
+          "firstToolName": null,
+          "passed": true,
+          "costUsd": 0.0051366,
+          "durationMs": 6448,
+          "numTurns": 1
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "name": "postgres test failing in CI (near-miss, NOT paused)",
+      "paused": false,
+      "expect": "no_qa_tool",
+      "threshold": 5,
+      "passes": 5,
+      "trials": [
+        {
+          "firstToolName": null,
+          "passed": true,
+          "costUsd": 0.0098442,
+          "durationMs": 12243,
+          "numTurns": 1
+        },
+        {
+          "firstToolName": null,
+          "passed": true,
+          "costUsd": 0.0079392,
+          "durationMs": 11166,
+          "numTurns": 1
+        },
+        {
+          "firstToolName": null,
+          "passed": true,
+          "costUsd": 0.0090792,
+          "durationMs": 29367,
+          "numTurns": 1
+        },
+        {
+          "firstToolName": null,
+          "passed": true,
+          "costUsd": 0.0086592,
+          "durationMs": 11594,
+          "numTurns": 1
+        },
+        {
+          "firstToolName": null,
+          "passed": true,
+          "costUsd": 0.009409200000000001,
+          "durationMs": 13318,
+          "numTurns": 1
+        }
+      ]
+    }
+  ],
+  "overall": true
+}

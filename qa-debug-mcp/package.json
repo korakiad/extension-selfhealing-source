@@ -1,0 +1,23 @@
+{
+  "name": "@qa-debug/qa-debug-mcp",
+  "version": "0.0.0",
+  "private": true,
+  "description": "stdio MCP server that exposes the 6 qa_* tools (read + propose-only). Body lands in S3.",
+  "bin": "./dist/qa-debug-mcp.js",
+  "main": "./dist/qa-debug-mcp.js",
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "build:check": "tsc -p tsconfig.json --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@qa-debug/mocha-hooks": "workspace:*",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.7.2"
+  }
+}

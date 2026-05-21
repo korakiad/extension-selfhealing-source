@@ -1,0 +1,11 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "types": ["node"],
+    "composite": false
+  },
+  "include": ["**/*.ts", "../mocha-hooks/src/protocol.ts"]
+}

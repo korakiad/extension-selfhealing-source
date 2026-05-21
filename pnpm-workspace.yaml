@@ -1,0 +1,6 @@
+packages:
+  - extension
+  - qa-debug-mcp
+  - mocha-hooks
+  - fixture-tests
+  - evals
