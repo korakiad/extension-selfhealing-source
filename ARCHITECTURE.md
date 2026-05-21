@@ -106,7 +106,6 @@ afterEach(async function () {
   // the decision so the reporter can correlate by session_id and PauseStore can update UI.
 
   if (decision.kind === 'retry') {
-    invalidateRequireCache(this.currentTest.file);
     return;
   }
   // mark_passed and give_up: no mocha-side state change; the reporter renders the tri-state
@@ -119,6 +118,8 @@ The pause is published to the extension's durable `pause-store` (`Memento`-backe
 **Why no state mutation?** [R4#B] Mocha v10's `Runner.prototype.fail` (lib/runner.js:423–465) synchronously sets `test.state = STATE_FAILED`, increments `Runner#failures`, and emits `EVENT_TEST_FAIL` at line 464. In `Runner#runTests`'s `self.runTest` callback (lines 800–836), `self.fail(test, err)` is invoked at line 825 — *before* `self.hookUp(HOOK_TYPE_AFTER_EACH, next)` at line 828. By the time `afterEach` runs, the failure event has already been broadcast to all attached reporters and `Runner#failures` is already incremented. State mutation cannot retract either side effect. Additionally, `this.retries(999)` inside `beforeEach` is a no-op because `Context.prototype.retries(n)` mutates `this.runnable()._retries`, and `this.runnable()` inside `beforeEach` returns the *hook*, not the upcoming test (lib/context.js:80–86; lib/runner.js:487/494). The Mocha-canonical way to enable retries from a hook is `this.currentTest.retries(n)`, which we deliberately do *not* use — the reporter handles tri-state outcomes without depending on retry budgets at all.
 
 **Why no native mocha retries?** [R4#B] Even with `this.currentTest.retries(N)` set in `beforeEach`, the retry branch (lib/runner.js:814–823) creates `clonedTest = test.clone()` and `tests.unshift(clonedTest)` *before* `hookUp(afterEach)` runs at line 823. `Test.prototype.clone()` (lib/test.js:71–83, line 75) snapshots `this.retries()` at clone time; mutating the source test's `_retries` in `afterEach` does not propagate to the queued clone. For deterministic-failure tests, this means: with retries enabled, mocha loops the clone until the budget is exhausted; the hook cannot intercede. We therefore do *not* enable mocha's native retries. The `retry` decision is honored by the **extension** (S4), which re-invokes mocha against the same test file via `--grep <test title>` in a fresh child process — the held browser at `:9222` persists across child-process restart because the extension owns the Chrome lifecycle independently of the mocha lifecycle (see §3.4 / S4). In the S2 fake-oracle flow, the oracle simulates this by tracking the retry decision in its session ledger and emitting a follow-up mocha child invocation.
+
+**Why no `require.cache` invalidation in the retry branch?** [R5#A, v5.1] Since the retry runs in a different Node process (the `--grep` respawn child), in-process `require.cache` invalidation has no addressable target — the retry-process module cache starts empty by construction, so there is nothing for the original-process hook to invalidate. The hook therefore performs no in-process invalidation step. A future Phase 2 in-process retry mechanism (not in current scope) would re-introduce a need for cache invalidation — see the mandatory Phase 2 follow-up tracked in SLICE_PLAN.md §4 and mocha-hooks/README.md "Phase 2 follow-up" block for the evidence chain.
 
 ### 3.2 `qa-debug` MCP — tool surface
 
@@ -326,3 +327,7 @@ v2 was APPROVED by Reviewer #2. v3 applied R2#NB1, R2#NB2, and answers to R2#Q1�
 - **R4#E** — §3.6 covers reporter↔hook coordination in S2 (oracle emits `final_decision` IPC notification) vs S4 (in-process PauseStore query). Lands as a bullet at the end of §3.6.
 
 **v5 APPROVED by Ralph-loop reviewer #5 on 2026-05-20.** Iteration #1 returned APPROVE-with-polish (5 non-blocking items); iteration #2 returned APPROVE clean (3 cosmetic SLICE_PLAN sweeps flagged, swept inline, "do not warrant a third iteration"). Implementation may resume against v5 §3.1 / §3.6 contracts.
+
+**v5.1 APPROVED by Ralph-loop reviewer #6 on 2026-05-21** (`ARCHITECTURE-CR-v5.1.md`). Scope: §3.1 retry branch only — removed the `invalidateRequireCache(file)` call after S2 implementation found it is a no-op in the v5 `--grep` respawn retry flow (mocha-hooks/README.md "Phase 2 follow-up" block carries the evidence chain). Iteration #1 returned APPROVE-with-polish (4 non-blocking items addressing SLICE_PLAN bidirectional cross-reference, README evidence retention, citation swap to Skills "Old patterns" idiom, and §3.1 addressable-target prose); iteration #2 returned APPROVE clean. Mandatory Phase 2 follow-up tracked in SLICE_PLAN §4 — restoring cache invalidation is a hard prerequisite for any future in-process retry mechanism.
+
+- **R5#A** — Removed `invalidateRequireCache(this.currentTest.file)` from §3.1 retry branch (pseudocode + qa-hooks.ts). Added the "Why no `require.cache` invalidation in the retry branch?" paragraph in §3.1 documenting the addressable-target framing and pointing to the Phase 2 follow-up.

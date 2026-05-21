@@ -66,16 +66,6 @@ function currentRetryOf(test: Mocha.Test): number {
   return (test as unknown as { currentRetry: () => number }).currentRetry();
 }
 
-function invalidateRequireCache(file: string | null | undefined): void {
-  if (!file) return;
-  try {
-    const resolved = require.resolve(file);
-    delete require.cache[resolved];
-  } catch {
-    // Resolution miss is non-fatal — file is just not in cache to begin with.
-  }
-}
-
 async function awaitDecisionWithHeartbeat(
   c: JsonRpcConnection,
   params: DecisionAwaitParams,
@@ -176,7 +166,11 @@ export const mochaHooks = {
     c.notify(METHOD.finalDecision, finalDecision);
 
     if (decision.kind === 'retry') {
-      invalidateRequireCache(test.file);
+      // ARCHITECTURE v5.1 §3.1: no in-process require.cache invalidation — the
+      // --grep respawn runs in a fresh child process whose require.cache is empty
+      // by construction. See mocha-hooks/README.md "Phase 2 follow-up" block for
+      // the evidence chain and the re-add requirement if Phase 2 introduces an
+      // in-process retry mechanism.
       return;
     }
 

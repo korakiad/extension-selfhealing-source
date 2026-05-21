@@ -57,31 +57,51 @@ QA_DEBUG_HEARTBEAT_MS=200 node --import tsx tools/oracle.ts \
 The hook abandons after ~600ms, the reporter renders the test as failed, mocha
 exits cleanly.
 
-## Q2 verification: `require.cache` invalidation for retry decisions
+## Q2 follow-up: `require.cache` invalidation for retry decisions (v5.1 removed)
 
-ARCHITECTURE v4 §3.1 unconditionally specified `invalidateRequireCache(file)`
-inside the hook's `retry` branch. v5 §3.1 retains this call. Empirical observation
-from S2 implementation:
+**Status (v5.1, 2026-05-21).** The `invalidateRequireCache(file)` call has been
+removed from `qa-hooks.ts` and from ARCHITECTURE.md §3.1 per `ARCHITECTURE-CR-v5.1.md`
+(Ralph-loop reviewer #6 APPROVE clean). The evidence below explains *why* it was
+safe to remove and *what would re-introduce the need*.
 
-**Observation.** In the v5 retry flow, mocha does not natively retry the test
-(see ARCHITECTURE v5 §3.1's "Why no native mocha retries?"). Instead, the
-extension (S4) or the oracle (S2 simulation) re-spawns mocha against the same
-test file via `--grep <test title>` in a fresh child process. A fresh child has
-a fresh Node module cache, so `require.cache` invalidation **inside the original
-process** has no effect on the re-spawn's resolution.
+### Evidence (retained from S2 verification; load-bearing for Phase 2 re-add)
 
-**Conclusion.** The `invalidateRequireCache(file)` call in the hook is presently
-a no-op for the v5 retry flow. It is retained because:
+In the v5 retry flow, mocha does not natively retry the test (see ARCHITECTURE v5
+§3.1's "Why no native mocha retries?"). Instead, the extension (S4) or the
+oracle (S2 simulation) re-spawns mocha against the same test file via
+`--grep <test title>` in a fresh `child_process.spawn` call. A fresh child Node
+process has a fresh module cache **by construction** — `require.cache` starts
+empty. Therefore in-process `require.cache` invalidation in the original mocha
+process has no addressable target: there is no shared module cache that an
+invalidation call on one side reaches the other.
 
-1. Phase 2 may consider an in-process retry mechanism (not yet designed). If so,
-   `require.cache` invalidation will be load-bearing.
-2. Removing it without an ARCHITECTURE v5.1 CR would violate the standing rule
-   in ARCHITECTURE v5 §0.3 ("don't silently simplify"). The cost is one
-   `require.resolve()` + one `delete require.cache[...]` per retry decision —
-   negligible at the per-second timescale this hook operates at.
+This is confirmed by `node_modules/.pnpm/mocha@10.8.2/.../lib/runner.js:814–823`
+(retry branch clones the test in-process) and `lib/test.js:71–83` (clone snapshots
+retries at clone time) — both of which describe *in-process* native retry, which
+v5 does NOT use. The v5 retry path skips this code entirely; the extension owns
+the retry by spawning a new mocha invocation.
 
-**Recommendation.** Open an ARCHITECTURE v5.1 CR if Phase 2 retains the
-`--grep` respawn flow exclusively. For Phase 1, leave the call in.
+### Phase 2 follow-up — restore on in-process retry
+
+**If Phase 2 introduces an in-process Mocha retry mechanism** (not currently
+designed, not in Phase 1 scope per SLICE_PLAN.md §4), the require.cache
+invalidation becomes load-bearing again: an in-process retry runs in the same
+Node process whose `require.cache` may hold stale modules from the first
+attempt, and the QA may have edited a source file between attempts.
+
+In that future, the re-add steps are:
+
+1. Restore `invalidateRequireCache(file)` helper in `qa-hooks.ts`.
+2. Call it from the `retry` branch with the failing test's source file.
+3. Update ARCHITECTURE.md §3.1 "Why no `require.cache` invalidation in the retry
+   branch?" paragraph to reflect the new in-process retry pathway.
+4. Document the re-add as a v5.x CR per ARCHITECTURE.md §0.3.
+
+The Phase 2 backlog entry tracking this requirement lives in `SLICE_PLAN.md §4
+"Out of phase 1 (binding)"` with a bidirectional cross-reference to this block
+and ARCHITECTURE.md §3.1 — both entry points (Phase 2 design reading SLICE_PLAN,
+and someone reading ARCHITECTURE §3.1) surface the requirement, so the re-add
+cannot be silently skipped.
 
 ## Build
 

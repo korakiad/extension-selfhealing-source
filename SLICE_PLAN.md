@@ -63,7 +63,7 @@ Each slice must produce a **runnable, demoable artifact** with explicit exit cri
   - Server-pushed `heartbeat` every 5s; hook resolves locally as `{ kind: 'give_up', reason: 'abandoned', by: 'hook' }` if it misses 3 in a row.
   - **`final_decision`** notification from oracle/extension → reporter, immediately after `decision.await` responds, so the reporter can render the tri-state outcome at `EVENT_TEST_END`. [v5#1]
 - Decision dispatch in `afterEach` (post-v5):
-  - `retry` → invalidate `require.cache` for `currentTest.file` then return. **Note:** mocha will *not* re-run the test in S2 (no native-retry budget); the oracle re-spawns mocha against the same test in a follow-up child if it wants to simulate the S4 retry flow. The require-cache invalidation is retained per ARCHITECTURE v5 §3.1 because S4's `--grep` respawn relies on a fresh require resolution for the test file across the same Node process — Q2 verification is still binding. [v5#1]
+  - `retry` → return. **Note:** mocha will *not* re-run the test in S2 (no native-retry budget); the oracle re-spawns mocha against the same test in a follow-up child if it wants to simulate the S4 retry flow. ARCHITECTURE v5.1 §3.1 removed the in-process `require.cache` invalidation — the `--grep` respawn child has an empty require.cache by construction, so in-process invalidation has no addressable target. The mandatory Phase 2 re-add (if in-process retry lands) is tracked in §4 "Out of phase 1 (binding)". [v5#1, v5.1#A]
   - `mark_passed` → return. The reporter renders the test as `✓ marked-passed by <user>: <rationale>` at `EVENT_TEST_END`.
   - `give_up` → return. The reporter renders the test as failed at `EVENT_TEST_END`.
 - **Fake decision oracle:** a standalone Node CLI (`tools/oracle.ts`) that spawns mocha as a child with `stdio: [..., 'ipc']`, drives a scripted decision sequence per `--decisions` arg, and emits `final_decision` notifications for the reporter to consume. Not shipped in the extension bundle.
@@ -74,7 +74,7 @@ Each slice must produce a **runnable, demoable artifact** with explicit exit cri
 - Unit tests cover the heartbeat-timeout path (`onAbandoned: 'give_up'`).
 - IPC schemas (Zod) exported from `mocha-hooks/src/protocol.ts` for reuse by S3 / S4 / qa-reporter.
 - **Reporter integration test:** the reporter's stdout for the 3-decision exit-criteria run matches a snapshot (committed) showing `1 passing, 1 failing, 1 marked-passed (rationale: ...)`. CI exit code: 1 (because failed + marked-passed > 0 and the relaxed flag is not set). [v5#1]
-- **Q2 verification artifact:** the require-cache invalidation behavior is exercised by editing a test file before a simulated `--grep` respawn; document the observed behavior in `mocha-hooks/README.md`. **If the verification shows `require.cache` invalidation is unnecessary in the respawn flow, raise an ARCHITECTURE v5.1 change request** rather than silently simplifying. The call remains in ARCHITECTURE v5 §3.1. [**NB-v2-3** revised]
+- **Q2 verification artifact (RESOLVED in v5.1):** the require-cache invalidation was verified during S2 to be a no-op in the `--grep` respawn flow; per the v5 standing rule against silent simplification, `ARCHITECTURE-CR-v5.1.md` raised the removal as a documented CR (Ralph-loop reviewer #6 APPROVE clean 2026-05-21). The call has been removed from ARCHITECTURE v5.1 §3.1 and `mocha-hooks/src/qa-hooks.ts`; the evidence chain and Phase 2 re-add steps live in `mocha-hooks/README.md` "Phase 2 follow-up — restore on in-process retry" block. [**NB-v2-3** revised, **v5.1#A**]
 
 **Out of scope here.** No real MCP server. No VS Code involvement. No Chrome. No `qa-debug` Skill engagement evals (S3).
 
@@ -242,6 +242,7 @@ All five v4→v5 follow-ups have been applied to ARCHITECTURE v5 (APPROVE-with-p
 - Restart-across-VS-Code-restart pause durability (intentionally not handled; pause-store survives chat restart only).
 - Chat-participant (`vscode.chat.createChatParticipant`) — Phase 2 if needed for `@qa run` user-driven invocation.
 - **Tool Search Tool** — deferred to Phase 2 conditional on S3 engagement evals clearing the 12/15 + 5/5 + 5/5 + 5/5 bar without it. If those evals miss, Tool Search becomes a blocking Phase 1 addition. [**NB-v2-1**]
+- **`require.cache` invalidation in `qa-hooks.ts` retry branch [v5.1#A — mandatory Phase 2 re-add]** — If Phase 2 introduces in-process Mocha retry (not currently scoped), restore `invalidateRequireCache(file)` per `ARCHITECTURE-CR-v5.1.md` §3 and the evidence chain in `mocha-hooks/README.md` "Phase 2 follow-up — restore on in-process retry" block. Both `ARCHITECTURE.md §3.1` "Why no `require.cache` invalidation in the retry branch?" paragraph and the README block carry cross-references back to this entry; restoring this is a hard prerequisite for any in-process retry mechanism, not a nice-to-have.
 
 ## 5. Status
 
