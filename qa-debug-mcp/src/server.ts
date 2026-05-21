@@ -1,17 +1,25 @@
 /**
- * qa-debug-mcp — stdio MCP server exposing 6 qa_* tools.
- * ARCHITECTURE §3.2. Self-identifies as server name 'qa-debug' (lowercase, hyphenated)
- * to match published Anthropic Skills FQN convention `qa-debug:qa_get_failure_context`.
+ * qa-debug MCP server factory — transport-agnostic library.
  *
- * S3 ships an InMemoryPauseStore stub. S4 swaps via constructor DI when the VS Code
- * extension hosts this server in-process and feeds it a Memento-backed store.
+ * Consumed by:
+ *  - `bin/stdio.ts` — the S3 stdio CLI used by the MCP Inspector and the
+ *    `evals/` engagement harness (paired with `InMemoryPauseStore`).
+ *  - `extension/src/qa-debug-server.ts` — the S4 in-extension Streamable HTTP
+ *    host (paired with `MementoPauseStore` over `ExtensionContext.globalState`).
+ *
+ * The factory takes an options object (per S4_DESIGN.md §5.3 — was positional
+ * `createQaDebugServer(store)` in S3; S4 BREAKS that signature to
+ * `createQaDebugServer({ pauseStore })`).
+ *
+ * Self-identifies as MCP server name `qa-debug` per ARCHITECTURE §3.2 — the
+ * agent-facing FQN is `qa-debug:qa_*` per Skills best-practices.
  */
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import type { PauseStore } from '@qa-debug/pause-store-types';
+import { toFailureContextView } from '@qa-debug/pause-store-types';
 
 import { errorResult } from './errors.js';
-import { InMemoryPauseStore, type PauseStore, toFailureContextView } from './pause-store.js';
 import {
   qa_get_failure_context,
   qa_propose_abort_suite,
@@ -21,7 +29,12 @@ import {
   qa_request_retry,
 } from './tools.js';
 
-export function createQaDebugServer(store: PauseStore): McpServer {
+export interface CreateQaDebugServerOptions {
+  pauseStore: PauseStore;
+}
+
+export function createQaDebugServer(options: CreateQaDebugServerOptions): McpServer {
+  const { pauseStore: store } = options;
   const server = new McpServer({ name: 'qa-debug', version: '0.0.0' });
 
   server.registerTool(
@@ -117,25 +130,4 @@ export function createQaDebugServer(store: PauseStore): McpServer {
   }
 
   return server;
-}
-
-async function main() {
-  const store = new InMemoryPauseStore();
-  const server = createQaDebugServer(store);
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-  console.error('qa-debug MCP server running on stdio');
-}
-
-const invokedDirectly =
-  typeof process !== 'undefined' &&
-  Array.isArray(process.argv) &&
-  process.argv[1] !== undefined &&
-  (process.argv[1].endsWith('qa-debug-mcp.js') || process.argv[1].endsWith('qa-debug-mcp.ts'));
-
-if (invokedDirectly) {
-  main().catch((err) => {
-    console.error('qa-debug MCP server fatal error:', err);
-    process.exit(1);
-  });
 }

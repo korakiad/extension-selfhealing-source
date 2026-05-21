@@ -2,9 +2,14 @@
   "name": "@qa-debug/qa-debug-mcp",
   "version": "0.0.0",
   "private": true,
-  "description": "stdio MCP server that exposes the 6 qa_* tools (read + propose-only). Body lands in S3.",
+  "description": "qa-debug MCP server — exposes the 6 qa_* tools. Library factory (`server.js`) + stdio CLI binary. The extension imports the library; the binary is for Inspector / evals smoke.",
   "bin": "./dist/qa-debug-mcp.js",
-  "main": "./dist/qa-debug-mcp.js",
+  "main": "./dist/server.js",
+  "exports": {
+    ".": "./dist/server.js",
+    "./server": "./dist/server.js",
+    "./pause-store": "./dist/pause-store.js"
+  },
   "scripts": {
     "build": "node esbuild.config.mjs",
     "build:check": "tsc -p tsconfig.json --noEmit",
@@ -13,6 +18,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@qa-debug/mocha-hooks": "workspace:*",
+    "@qa-debug/pause-store-types": "workspace:*",
     "zod": "^4.4.3"
   },
   "devDependencies": {

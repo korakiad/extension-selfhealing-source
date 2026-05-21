@@ -6,7 +6,7 @@
   "description": "Holds Mocha on test failure with browser alive; surfaces playwright-mcp + qa-debug skill to Copilot. Phase 1.",
   "publisher": "qa-debug",
   "engines": {
-    "vscode": "^1.95.0"
+    "vscode": "^1.120.0"
   },
   "main": "./dist/extension.js",
   "activationEvents": [
@@ -16,12 +16,25 @@
     "chatSkills": [
       { "path": "./skills/qa-debug/SKILL.md" }
     ],
+    "mcpServerDefinitionProviders": [
+      {
+        "id": "qa-debug.mcp-servers",
+        "label": "QA Debug Companion MCP Servers"
+      }
+    ],
     "commands": [
       { "command": "qa-debug.runFixture", "title": "QA Debug: Run Fixture Suite", "category": "QA Debug" },
-      { "command": "qa-debug.retry", "title": "QA Debug: Retry Paused Test", "category": "QA Debug", "enablement": "qa-debug.paused" },
-      { "command": "qa-debug.markPassed", "title": "QA Debug: Mark Paused Test as Passed", "category": "QA Debug", "enablement": "qa-debug.paused" },
+      { "command": "qa-debug.retry", "title": "QA Debug: Retry Paused Test", "category": "QA Debug", "enablement": "qa-debug.paused && !qa-debug.staleResume" },
+      { "command": "qa-debug.markPassed", "title": "QA Debug: Mark Paused Test as Passed", "category": "QA Debug", "enablement": "qa-debug.paused && !qa-debug.staleResume" },
       { "command": "qa-debug.giveUp", "title": "QA Debug: Give Up on Paused Test", "category": "QA Debug", "enablement": "qa-debug.paused" }
-    ]
+    ],
+    "menus": {
+      "testing/message/content": [
+        { "command": "qa-debug.retry",       "when": "testMessage == qaDebugPaused && !qa-debug.staleResume" },
+        { "command": "qa-debug.markPassed",  "when": "testMessage == qaDebugPaused && !qa-debug.staleResume" },
+        { "command": "qa-debug.giveUp",      "when": "testMessage == qaDebugPaused" }
+      ]
+    }
   },
   "scripts": {
     "build": "node esbuild.config.mjs",
@@ -29,11 +42,15 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@qa-debug/mocha-hooks": "workspace:*"
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@qa-debug/mocha-hooks": "workspace:*",
+    "@qa-debug/pause-store-types": "workspace:*",
+    "@qa-debug/qa-debug-mcp": "workspace:*",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
-    "@types/vscode": "^1.95.0",
+    "@types/vscode": "^1.120.0",
     "esbuild": "^0.24.0",
     "typescript": "^5.7.2"
   }

@@ -1,72 +1,42 @@
+/**
+ * In-memory `PauseStore` stub used by the stdio CLI (`bin/stdio.ts`) for
+ * Inspector smoke runs and by the `evals/` engagement harness. The shared
+ * interface + payload types + `toFailureContextView` projection live in
+ * `@qa-debug/pause-store-types` (extracted in S4).
+ *
+ * The S4 extension swaps this for `MementoPauseStore` via constructor DI
+ * when it hosts the qa-debug MCP server in-process over Streamable HTTP.
+ */
+
+import {
+  type PauseStore,
+  type PausePayload,
+  type Proposal,
+  type ProposalKind,
+} from '@qa-debug/pause-store-types';
 import { QaToolError } from './errors.js';
 
-export type ProposalKind = 'mark_passed' | 'close_browser' | 'abort_suite';
-export type ProposalStatus = 'none' | 'awaiting_human' | 'accepted' | 'rejected';
+export {
+  type PauseStore,
+  type PausePayload,
+  type Proposal,
+  type ProposalKind,
+  type ProposalStatus,
+  type FailureContextView,
+  type ResponseFormat,
+  toFailureContextView,
+} from '@qa-debug/pause-store-types';
 
-export interface PausePayload {
-  session_id: string;
-  test_title: string;
-  file: string;
-  line?: number;
-  failing_assertion: string;
-  stack_trace: { frames: string[]; more_at?: string };
-  cdp_ws_url: string;
-  screenshot_path?: string;
-  console_logs: { lines: string[]; bytes: number; more_at?: string };
-  paused_at_ms: number;
-  retry_count: number;
-  max_retries_remaining: number;
-}
-
-export interface Proposal {
-  proposal_id: string;
-  session_id: string;
-  kind: ProposalKind;
-  rationale: string;
-  status: Exclude<ProposalStatus, 'none'>;
-  created_at_ms: number;
-}
-
-export interface FailureContextView {
-  session_id: string;
-  test_title: string;
-  file: string;
-  line?: number;
-  failing_assertion: string;
-  stack_trace: { frames: string[]; more_at?: string };
-  cdp_ws_url: string;
-  screenshot_path?: string;
-  console_logs: { lines: string[]; more_at?: string };
-  paused_for_ms: number;
-  retry_count: number;
-  max_retries_remaining: number;
-  last_proposal_status: ProposalStatus;
-}
-
-export type ResponseFormat = 'concise' | 'detailed';
-
-export interface PauseStore {
-  getActivePause(sessionId?: string): PausePayload | undefined;
-  proposeAction(
-    sessionId: string,
-    kind: ProposalKind,
-    rationale: string,
-  ): Proposal;
-  pollProposal(sessionId: string): Proposal | undefined;
-  recordDecision(
-    sessionId: string,
-    kind: 'retry' | 'give_up',
-    reason: string,
-  ): { decision: 'retry' | 'give_up'; accepted_at_ms: number };
-}
-
-/** S3 in-memory stub. S4 swaps for an extension-backed store via DI. */
+/** S3 in-memory stub; S4 swaps for `MementoPauseStore` in the extension. */
 export class InMemoryPauseStore implements PauseStore {
   private active?: PausePayload;
   private proposals = new Map<string, Proposal>();
 
   setActivePause(p: PausePayload): void {
     this.active = p;
+    // S4 contract: setActivePause clears any prior proposal slot
+    // (per S4_DESIGN.md §3.3 — every new pause starts clean).
+    this.proposals.clear();
   }
 
   clearActivePause(): void {
@@ -110,43 +80,13 @@ export class InMemoryPauseStore implements PauseStore {
     kind: 'retry' | 'give_up',
     _reason: string,
   ): { decision: 'retry' | 'give_up'; accepted_at_ms: number } {
-    this.getActivePause(sessionId);
+    const active = this.getActivePause(sessionId)!;
+    // S4 contract per S4_DESIGN.md §3.3 + §9.3 row 5: recordDecision for
+    // retry/give_up clears the proposal slot atomically, closing the
+    // orphan-proposal window. The active pause stays — SessionManager
+    // clears it after the IPC round-trip in the extension; the in-memory
+    // stub's caller (oracle / Inspector smoke) clears separately if needed.
+    this.proposals.delete(active.session_id);
     return { decision: kind, accepted_at_ms: Date.now() };
   }
-}
-
-export function toFailureContextView(
-  active: PausePayload,
-  proposal: Proposal | undefined,
-  format: ResponseFormat,
-): FailureContextView {
-  const view: FailureContextView = {
-    session_id: active.session_id,
-    test_title: active.test_title,
-    file: active.file,
-    line: active.line,
-    failing_assertion: active.failing_assertion,
-    stack_trace: active.stack_trace,
-    cdp_ws_url: active.cdp_ws_url,
-    screenshot_path: active.screenshot_path,
-    console_logs: {
-      lines: active.console_logs.lines,
-      more_at: active.console_logs.more_at,
-    },
-    paused_for_ms: Date.now() - active.paused_at_ms,
-    retry_count: active.retry_count,
-    max_retries_remaining: active.max_retries_remaining,
-    last_proposal_status: proposal?.status ?? 'none',
-  };
-  if (format === 'concise') {
-    view.stack_trace = {
-      frames: active.stack_trace.frames.slice(0, 10),
-      more_at: active.stack_trace.more_at,
-    };
-    view.console_logs = {
-      lines: active.console_logs.lines.slice(0, 20),
-      more_at: active.console_logs.more_at,
-    };
-  }
-  return view;
 }
