@@ -414,13 +414,15 @@ export async function hostQaDebugMcp(pauseStore: PauseStore): Promise<{
 
 ## 6. SessionManager (mocha child + Chrome lifecycle)
 
+> **v5.9 amendment (2026-05-21):** `pause.publish` now passes the **hook-discovered** CDP URL (`wire.cdp_ws_url`) into `mcpProvider.setPaused`, not the Mode B hardcoded `chrome.cdpHttpEndpoint`. Pre-fix bug: in Mode A (wdio launches chrome on a framework-locked port ≠ 9222), Playwright MCP attached to the extension's empty Mode B chrome and the agent's ground-truth was silently wrong (only saw `chrome://new-tab-page/`). Conversion via `cdpWsUrlToHttpRoot(wsUrl)` helper: `new URL(wsUrl).host` → `http://host:port` (drops `/devtools/browser/<UUID>` so Playwright re-discovers via `/json/version` if the target UUID rotates between hook discovery and MCP connect). Both fresh-pause path and `resumeStalePauseIfAny` route through the helper. `PausePayload.cdp_ws_url` zod schema also tightened to require `ws://` or `wss://` scheme as defense-in-depth. See `PLAN-mcp-cdp-wire.md` (Ralph-loop iter#1 APPROVE-WITH-NITS → iter#2 APPROVE).
+
 ### 6.1 Responsibilities
 
 - Spawn Chrome at Mocha **suite start** (single Chrome per suite invocation; reused across all tests per SLICE_PLAN §S4 (a) [Q5]).
 - Spawn Mocha child with `child_process.spawn('node', ['<mocha-bin>', '--require', '<qa-hooks>', '--reporter', '<qa-reporter>', ...specs], { stdio: ['inherit', 'inherit', 'inherit', 'ipc'] })`.
 - Construct `JsonRpcConnection` (from `mocha-hooks/src/protocol.ts:137`) wrapping the child's IPC channel via `nodeIpcTransport(child)`.
 - Register handlers:
-  - `pause.publish` → `PauseStore.setActivePause`, flip context key, call `mcpProvider.setPaused(cdpHttp)`, surface UI.
+  - `pause.publish` → `PauseStore.setActivePause`, flip context key, call `mcpProvider.setPaused(cdpWsUrlToHttpRoot(wire.cdp_ws_url))` *(v5.9; was `cdpHttp` from chrome.cdpHttpEndpoint pre-fix — see amendment at section header)*, surface UI.
   - `decision.await` → enroll in `DecisionRouter` keyed by `session_id`; do NOT resolve immediately.
   - `heartbeat` (server-pushed): forwarded silently; presence-only signal.
   - `final_decision` (notification from hook after decision resolves): clear pause, `mcpProvider.setIdle()`, flip context key off, dispatch to `TestController`.

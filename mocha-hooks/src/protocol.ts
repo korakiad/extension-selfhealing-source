@@ -29,7 +29,14 @@ export const PausePayload = z.object({
   file: z.string().nullable(),
   line: z.number().int().nullable(),
   error: SerializedError,
-  cdp_ws_url: z.string(),
+  // CDP WebSocket URL the hook discovered (Mode A: `getPuppeteer().wsEndpoint()`;
+  // Mode B: env-injected fallback). Must be `ws://` or `wss://` — the extension's
+  // URL-parser conversion to HTTP root form depends on a valid ws scheme; rejecting
+  // malformed input here surfaces a structured zod error at parse time instead of
+  // a raw `ERR_INVALID_URL` deep inside the pausePublish handler.
+  cdp_ws_url: z.string().url().refine((s) => s.startsWith('ws://') || s.startsWith('wss://'), {
+    message: 'cdp_ws_url must use ws:// or wss:// scheme',
+  }),
   // v5.2 §2.4: which mode owns the browser this pause is investigating.
   // Mode A = wdio.remote() in user test code (user owns lifecycle; qa_propose_
   // close_browser declines per §2.6). Mode B = companion-launched :9222

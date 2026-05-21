@@ -172,7 +172,12 @@ export class SessionManager {
     // v5.4 §3.7 — show the ambient indicator BEFORE the stale-resume toast so
     // the entry is already visible when the user dismisses the notification.
     this.deps.pauseStatusBar.show(stale.session_id);
-    this.deps.mcpProvider.setPaused(stale.cdp_ws_url.replace(/^ws:/, 'http:'));
+    const staleMcpEndpoint = cdpWsUrlToHttpRoot(stale.cdp_ws_url);
+    this.deps.mcpProvider.setPaused(staleMcpEndpoint);
+    appendInfo(
+      this.deps.channel,
+      `[session-manager] stale-resume mcpProvider.setPaused endpoint=${staleMcpEndpoint} source_ws=${stale.cdp_ws_url}`,
+    );
     this.deps.decisionRouter.enroll(stale.session_id, async (decision) => {
       appendInfo(
         this.deps.channel,
@@ -303,7 +308,12 @@ export class SessionManager {
       const stored = wireToStored(wire, sessionId);
       await this.deps.pauseStore.setActivePause(stored);
       await vscode.commands.executeCommand('setContext', 'qa-debug.paused', true);
-      this.deps.mcpProvider.setPaused(this.deps.chrome.cdpHttpEndpoint);
+      const mcpEndpoint = cdpWsUrlToHttpRoot(wire.cdp_ws_url);
+      this.deps.mcpProvider.setPaused(mcpEndpoint);
+      appendInfo(
+        this.deps.channel,
+        `[session-manager] mcpProvider.setPaused endpoint=${mcpEndpoint} mode=${wire.mode} source_ws=${wire.cdp_ws_url}`,
+      );
       run.testHandle.recordPause(stored);
       // v5.4 §2.2 — ambient status-bar entry augments the notification toast.
       this.deps.pauseStatusBar.show(sessionId);
@@ -475,6 +485,27 @@ export class SessionManager {
         `Did the user's project install mocha?`,
     );
   }
+}
+
+/**
+ * Convert a CDP WebSocket URL (`ws://host:port` or `ws://host:port/devtools/browser/<UUID>`)
+ * to the HTTP root form (`http://host:port`) that `mcpProvider.setPaused` expects.
+ *
+ * Playwright `connectOverCDP` accepts BOTH ws-with-path and http-root forms
+ * (class-browsertype.md), but canonicalizing to http-root keeps the wire-bound
+ * value aligned with `chrome.cdpHttpEndpoint` (chrome.ts:138) — single shape
+ * across Mode A (wire-discovered random/locked port) and Mode B (extension's
+ * own 9222 chrome). http-root also lets Playwright re-discover the active
+ * target via `/json/version` if the devtools UUID rotates between discovery
+ * and connect.
+ *
+ * Assumes the input uses `ws://` scheme (validated by `PausePayload.cdp_ws_url`
+ * zod schema in mocha-hooks/protocol.ts). If remote-chrome `wss://` support is
+ * ever added, preserve scheme via `wsUrl.startsWith('wss:') ? 'https' : 'http'`.
+ */
+function cdpWsUrlToHttpRoot(wsUrl: string): string {
+  const u = new URL(wsUrl);
+  return `http://${u.host}`;
 }
 
 function wireToStored(wire: WirePausePayload, sessionId: string): PausePayload {
