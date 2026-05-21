@@ -48,7 +48,18 @@ export async function hostQaDebugMcp(
       appendInfo(auditChannel, `[qa-debug-mcp] ${toolName} called session=${sessionId}`);
     },
   });
-  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+  // STATEFUL transport — sessionIdGenerator returns a fresh UUID per client.
+  // The SDK's stateless path (sessionIdGenerator: undefined) throws on the
+  // SECOND request with "Stateless transport cannot be reused across requests"
+  // (webStandardStreamableHttp.js:140 in @modelcontextprotocol/sdk@1.29.0).
+  // VS Code's MCP client only handshakes initialize-then-everything-else on
+  // one logical session, so stateful is the right shape: initialize emits an
+  // mcp-session-id header, subsequent requests include it, transport routes
+  // them through the single persistent server instance. Empirically validated
+  // 2026-05-21 via /tmp/probe-stateful.mjs against the same server factory.
+  const transport = new StreamableHTTPServerTransport({
+    sessionIdGenerator: () => randomUUID(),
+  });
   await mcpServer.connect(transport);
 
   const httpServer: HttpServer = createServer((req, res) => {
