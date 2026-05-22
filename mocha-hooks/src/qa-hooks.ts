@@ -29,6 +29,21 @@ const MAX_MISSED_HEARTBEATS = 3;
 let conn: JsonRpcConnection | undefined;
 let connDisabledReason: string | undefined;
 
+// ---------- v5.15 hook-order injection state ----------
+// See PLAN-hook-order-injection.md. Tag identifies our afterEach when it
+// re-enters the patched Suite.prototype.afterEach via rootHooks (mocha.js:1082).
+// QA_PATCH_INSTALLED on Suite.prototype guards against double --require of
+// qa-hooks (the IIFE no-ops on the second pass).
+// WeakSets dedupe pause.publish / test.passed across the multiple suite levels
+// our injected hook fires from (Mocha walks innermost-first per runner.js:610,
+// AND hookErr re-enters hookUp from errSuite.parent per runner.js:695-718).
+// Identity is stable within one attempt (runner.js:494) and fresh on retry via
+// test.clone() (test.js:71-83) — so retries naturally get a fresh pause.
+const OUR_HOOK_TAG: unique symbol = Symbol('qa-hooks.afterEach');
+const QA_PATCH_INSTALLED: unique symbol = Symbol('qa-hooks.patchInstalled');
+const pausedTests = new WeakSet<Mocha.Test>();
+const passedTests = new WeakSet<Mocha.Test>();
+
 // ---------- v5.2 Mode A: wdio.remote() monkey-patch + CDP discovery ----------
 // Per ARCHITECTURE-CR-v5.2 §2.2: at --require time, probe for webdriverio
 // cheaply via require.resolve (no module execution per nodejs.org/api/modules.html).
@@ -112,6 +127,85 @@ let currentBrowser: WdioBrowserLike | undefined;
   // v5.3 §2.6 positive logging: confirms Mode A patch installed; lets engineers
   // verify from Output Channel without re-running with custom instrumentation.
   process.stderr.write(`[qa-hooks] wdio.remote patch installed (path=${wdioPath})\n`);
+})();
+
+// ---------- v5.15 Suite.prototype.afterEach monkey-patch ----------
+// Per PLAN-hook-order-injection.md §3. Mocha's hookUp (runner.js:610-619)
+// runs afterEach innermost-first → root last. If a user has an afterEach in
+// any describe block that closes the browser, our root mochaHooks fires too
+// late to capture the CDP URL. Fix: inject our hook at _afterEach[0] of any
+// suite where afterEach is registered, so we always run first.
+//
+// Verified invariants (mocha@10.8.2):
+//   I1 mocha.js:1082 — rootHooks → this.suite.afterEach(hook) flows through us
+//   I2 cli/run.js:354,370 — handleRequires before new Mocha() → patch ready in time
+//   I6 suite.js:319-322 — afterEach early-returns on pending suite (length-delta guards)
+//   I7 suite.js:78 — _afterEach is instance-level (probe via fresh Suite)
+//   I9 nodejs/worker.js + buffered-worker-pool.js:84 — MOCHA_WORKER_ID set per worker
+;(function installAfterEachOrderPatch(): void {
+  // Prefer the public re-export over the deep internal path; mocha 10.x has no
+  // exports map but a future minor could add one.
+  const { Suite } = require('mocha') as { Suite: typeof Mocha.Suite };
+
+  if ((Suite.prototype as unknown as Record<symbol, unknown>)[QA_PATCH_INSTALLED]) return;
+
+  // I7 positive schema probe — instance-level _afterEach must exist as an array.
+  // Hard-fails loud on mocha version drift (per PLAN Q2 resolution): silent
+  // degradation gives engineers a "Chrome unreachable" red herring when the
+  // pause-publish path falls back to a stale Mode B endpoint.
+  const probe = new Suite('__qa_probe__');
+  if (!Array.isArray((probe as unknown as { _afterEach: unknown })._afterEach)) {
+    throw new Error(
+      '[qa-hooks] expected Suite#_afterEach to be an array (mocha 10.x internal). ' +
+        'Detected schema drift — pin mocha to ~10.8 or file an issue.',
+    );
+  }
+
+  // I9 parallel-worker detect. In workers, process.send IS defined (workerpool
+  // uses child_process.fork) but targets the workerpool main, NOT the extension.
+  // Pause-publish would silently disappear. Skip patch + IPC entirely.
+  if (process.argv.includes('--parallel') || process.env.MOCHA_WORKER_ID) {
+    process.stderr.write(
+      '[qa-hooks] disabled in parallel-worker context (pause protocol incompatible)\n',
+    );
+    (Suite.prototype as unknown as Record<symbol, unknown>)[QA_PATCH_INSTALLED] = true;
+    return;
+  }
+
+  const origAfterEach = Suite.prototype.afterEach;
+  Suite.prototype.afterEach = function patchedAfterEach(
+    this: Mocha.Suite,
+    titleOrFn: unknown,
+    maybeFn?: unknown,
+  ): Mocha.Suite {
+    const fn = typeof titleOrFn === 'function' ? titleOrFn : maybeFn;
+    const sink = this as unknown as { _afterEach: Array<{ fn?: unknown }> };
+
+    // 1. Delegate caller's request first — preserves chainable contract,
+    //    pending-suite early-return (I6), and EVENT_SUITE_ADD_HOOK_AFTER_EACH.
+    const result = (origAfterEach as Function).call(this, titleOrFn, maybeFn) as Mocha.Suite;
+
+    // 2. rootHooks (or any future direct call by us) delivering qaAfterEachImpl
+    //    back through the patched prototype: it's already pushed, no inject.
+    if (fn && (fn as Record<symbol, unknown>)[OUR_HOOK_TAG]) return result;
+
+    // 3. Already injected in this suite by a prior user afterEach call.
+    if (sink._afterEach.some((h) => h.fn && (h.fn as Record<symbol, unknown>)[OUR_HOOK_TAG])) {
+      return result;
+    }
+
+    // 4. Inject ours, then move to index 0 — but ONLY if origAfterEach actually
+    //    pushed (length-delta guard handles pending suites where it no-ops).
+    const before = sink._afterEach.length;
+    (origAfterEach as Function).call(this, '__qa_pause_publish__', qaAfterEachImpl);
+    if (sink._afterEach.length === before + 1) {
+      sink._afterEach.unshift(sink._afterEach.pop()!);
+    }
+    return result; // returns Suite per mocha's chainable contract
+  };
+
+  (Suite.prototype as unknown as Record<symbol, unknown>)[QA_PATCH_INSTALLED] = true;
+  process.stderr.write('[qa-hooks] Suite#afterEach patched for first-position injection\n');
 })();
 
 // Note: discoverCdpWsUrl was inlined into afterEach in sub-phase 14c so the
@@ -230,163 +324,192 @@ async function awaitDecisionWithHeartbeat(
   });
 }
 
-export const mochaHooks = {
-  // No `beforeEach`: ARCHITECTURE v5 §3.1 explicitly removes `this.retries(999)`.
-  // Mocha v10 retries from beforeEach mutate the hook's runnable, not the test;
-  // and even if we did set retries on the test, the clone-on-retry semantics in
-  // runner.js:814–823 make state mutation in afterEach unable to stop the loop.
-  // Outcome translation lives in qa-reporter (§3.6); retry decisions are honored
-  // by the extension respawning mocha with `--grep` (S4) or by the S2 oracle
-  // simulating the same.
+// v5.15: extracted from mochaHooks.afterEach so the same body serves both
+// the root mochaHooks export AND the per-suite injected copies installed by
+// installAfterEachOrderPatch above. Tagged with OUR_HOOK_TAG so the wrapper
+// recognizes self-delivery (rootHooks → suite.afterEach path) and skips
+// re-injection.
+async function qaAfterEachImpl(this: Mocha.Context): Promise<void> {
+  const test = this.currentTest;
+  if (!test) return;
 
-  async afterEach(this: Mocha.Context): Promise<void> {
-    const test = this.currentTest;
-    if (!test) return;
+  const c = getConnection();
+  if (!c) {
+    // No IPC parent — let mocha + the built-in reporter handle the outcome normally.
+    return;
+  }
 
-    const c = getConnection();
-    if (!c) {
-      // No IPC parent — let mocha + the built-in reporter handle the outcome normally.
-      return;
-    }
-
-    // v5.13 — pass branch: fire test.passed as a REQUEST (awaited) before mocha
-    // advances. Mocha's runnable.js:367 `result.then(done, …)` blocks the hook
-    // completion callback until this Promise resolves, which only happens after
-    // the parent has read AND replied. This structurally closes the IPC exit-race
-    // (Node provides no 'message'-before-'exit' invariant; mocha's exitMochaLater
-    // + qa-hooks' channel.unref let the loop drain in a few ticks otherwise).
-    // The parent's handler returns AFTER it has cleaned up paused-test state, so
-    // there is no observable window where the extension still thinks the test
-    // is paused at the moment afterEach returns. See PLAN-retry-pass-recovery.md.
-    if (test.state === 'passed') {
-      try {
-        await c.request(METHOD.testPassed, {
-          full_title: test.fullTitle(),
-          test_file: test.file ?? null,
-        }, TestPassedResult);
-      } catch (err) {
-        // Parent disconnect or malformed reply: log and let mocha continue.
-        // The cleanup gap re-emerges only if the parent crashed, in which case
-        // the extension lifecycle has bigger problems than a stuck spinner.
-        process.stderr.write(
-          `[qa-hooks] test.passed request failed: ${(err as Error).message}\n`,
-        );
-      }
-      return;
-    }
-
-    if (test.state !== 'failed') return;
-
-    // Disable Mocha's runnable timeout for this hook. pause.publish + decision.await
-    // is a blocking, human-paced flow (engineer inspects browser via CDP, decides
-    // mark_passed / retry / give_up). User .mocharc timeouts of 10-15s are designed
-    // for test-body assertions, not for a debugging session — leaving the timeout
-    // enabled kills the hook mid-debug, tearing down the wdio session and closing
-    // the browser. The real liveness watchdog is the heartbeat protocol below
-    // (parent emits every HEARTBEAT_MS; hook gives up after MAX_MISSED_HEARTBEATS).
-    // See Mocha docs: https://mochajs.org/#timeouts ("To disable timeouts ... pass 0").
-    this.timeout(0);
-
-    // v5.2 §3.1: discover via wdio singleton (Mode A) or fall back to env (Mode B).
-    // Mode is determined by whether currentBrowser AND getPuppeteer succeeded.
-    let cdpWsUrl: string;
-    let mode: 'A' | 'B' = 'B';
-    if (currentBrowser?.getPuppeteer) {
-      try {
-        const pup = await currentBrowser.getPuppeteer();
-        if (pup?.wsEndpoint) {
-          cdpWsUrl = normalizeCdpWsUrl(pup.wsEndpoint());
-          mode = 'A';
-          // v5.3 §2.6 positive logging for Mode A engagement.
-          process.stderr.write(`[qa-hooks] Mode A engaged for test="${test.title}" cdp=${cdpWsUrl}\n`);
-        } else {
-          cdpWsUrl = process.env.QA_DEBUG_CDP_WS_URL ?? 'ws://localhost:9222';
-        }
-      } catch (err) {
-        process.stderr.write(
-          `[qa-hooks] wdio getPuppeteer() failed: ${(err as Error).message}; falling back to QA_DEBUG_CDP_WS_URL\n`,
-        );
-        cdpWsUrl = process.env.QA_DEBUG_CDP_WS_URL ?? 'ws://localhost:9222';
-      }
-    } else {
-      cdpWsUrl = process.env.QA_DEBUG_CDP_WS_URL ?? 'ws://localhost:9222';
-    }
-    // v5.8 — defensive diagnostic for unreachable-in-normal-flow cases.
-    // Post-qa-reporter-fix (v5.8 EVENT_TEST_FAIL handler), test.err should
-    // always be set when state==='failed' because Runner.fail wraps non-Error
-    // throws via thrown2Error (runner.js:442) before emitting EVENT_TEST_FAIL.
-    // Remaining cases this WARN catches: (a) third-party code emits
-    // EVENT_TEST_FAIL directly bypassing Runner.fail; (b) reporter regression
-    // removes the assignment; (c) Runner#uncaught paths that don't go through
-    // standard fail emission.
-    if (test.err == null) {
+  // v5.13 — pass branch: fire test.passed as a REQUEST (awaited) before mocha
+  // advances. Mocha's runnable.js:367 `result.then(done, …)` blocks the hook
+  // completion callback until this Promise resolves, which only happens after
+  // the parent has read AND replied. This structurally closes the IPC exit-race
+  // (Node provides no 'message'-before-'exit' invariant; mocha's exitMochaLater
+  // + qa-hooks' channel.unref let the loop drain in a few ticks otherwise).
+  // The parent's handler returns AFTER it has cleaned up paused-test state, so
+  // there is no observable window where the extension still thinks the test
+  // is paused at the moment afterEach returns. See PLAN-retry-pass-recovery.md.
+  if (test.state === 'passed') {
+    // v5.15 dedupe — innermost-first walk + injected hook at every suite level
+    // means ancestor suites re-fire us within one attempt. WeakSet keyed on Test
+    // (stable per attempt via runner.js:494; fresh per retry via test.js:71-83
+    // → retries naturally get a fresh test.passed call).
+    // Add BEFORE the await so a re-entry during the in-flight request returns
+    // early instead of stacking duplicate requests.
+    if (passedTests.has(test)) return;
+    passedTests.add(test);
+    try {
+      await c.request(METHOD.testPassed, {
+        full_title: test.fullTitle(),
+        test_file: test.file ?? null,
+      }, TestPassedResult);
+    } catch (err) {
+      // Parent disconnect or malformed reply: log and let mocha continue.
+      // The cleanup gap re-emerges only if the parent crashed, in which case
+      // the extension lifecycle has bigger problems than a stuck spinner.
       process.stderr.write(
-        `[qa-hooks] WARN test marked failed but test.err is ${typeof test.err}=${String(test.err)} — ` +
-          `Mocha's Runner.fail does NOT set test.err; the active reporter is expected to. ` +
-          `qa-reporter (v5.8+) replicates the Base reporter assignment. ` +
-          `If you see this WARN, either the reporter changed, OR the test was failed via a path that bypasses EVENT_TEST_FAIL.\n`,
+        `[qa-hooks] test.passed request failed: ${(err as Error).message}\n`,
       );
     }
-    const payload: PausePayload = {
-      test: test.title,
-      // v5.5 §2.4 / C1 — Mocha's Runnable.fullTitle() at runnable.js:206;
-      // space-joined ancestor titles + own title. Canonical id key for
-      // unifying with Test Explorer discovery.
-      full_title: test.fullTitle(),
-      file: test.file ?? null,
-      line: fileLineFromStack(test.err?.stack),
-      error: serializeError(test.err),
-      cdp_ws_url: cdpWsUrl,
-      mode,
-      started_at: Date.now(),
-      retry_count: currentRetryOf(test),
-    };
+    return;
+  }
 
-    let sessionId: string;
+  if (test.state !== 'failed') return;
+
+  // v5.15 dedupe — load-bearing for two re-entry paths:
+  //   (a) injected hook fires at every suite level (innermost-first walk).
+  //   (b) hookErr re-enters hookUp from errSuite.parent (runner.js:695-718)
+  //       when a downstream user afterEach throws AFTER ours ran.
+  // Without this guard, a single failure would publish multiple pause sessions.
+  if (pausedTests.has(test)) return;
+  pausedTests.add(test);
+
+  // Disable Mocha's runnable timeout for this hook. pause.publish + decision.await
+  // is a blocking, human-paced flow (engineer inspects browser via CDP, decides
+  // mark_passed / retry / give_up). User .mocharc timeouts of 10-15s are designed
+  // for test-body assertions, not for a debugging session — leaving the timeout
+  // enabled kills the hook mid-debug, tearing down the wdio session and closing
+  // the browser. The real liveness watchdog is the heartbeat protocol below
+  // (parent emits every HEARTBEAT_MS; hook gives up after MAX_MISSED_HEARTBEATS).
+  // See Mocha docs: https://mochajs.org/#timeouts ("To disable timeouts ... pass 0").
+  this.timeout(0);
+
+  // v5.2 §3.1: discover via wdio singleton (Mode A) or fall back to env (Mode B).
+  // Mode is determined by whether currentBrowser AND getPuppeteer succeeded.
+  let cdpWsUrl: string;
+  let mode: 'A' | 'B' = 'B';
+  if (currentBrowser?.getPuppeteer) {
     try {
-      const result = await c.request(METHOD.pausePublish, payload, PausePublishResult);
-      sessionId = result.session_id;
+      const pup = await currentBrowser.getPuppeteer();
+      if (pup?.wsEndpoint) {
+        cdpWsUrl = normalizeCdpWsUrl(pup.wsEndpoint());
+        mode = 'A';
+        // v5.3 §2.6 positive logging for Mode A engagement.
+        process.stderr.write(`[qa-hooks] Mode A engaged for test="${test.title}" cdp=${cdpWsUrl}\n`);
+      } else {
+        cdpWsUrl = process.env.QA_DEBUG_CDP_WS_URL ?? 'ws://localhost:9222';
+      }
     } catch (err) {
-      process.stderr.write(`[qa-hooks] pause.publish failed: ${(err as Error).message}\n`);
-      return;
+      process.stderr.write(
+        `[qa-hooks] wdio getPuppeteer() failed: ${(err as Error).message}; falling back to QA_DEBUG_CDP_WS_URL\n`,
+      );
+      cdpWsUrl = process.env.QA_DEBUG_CDP_WS_URL ?? 'ws://localhost:9222';
     }
+  } else {
+    cdpWsUrl = process.env.QA_DEBUG_CDP_WS_URL ?? 'ws://localhost:9222';
+  }
+  // v5.8 — defensive diagnostic for unreachable-in-normal-flow cases.
+  // Post-qa-reporter-fix (v5.8 EVENT_TEST_FAIL handler), test.err should
+  // always be set when state==='failed' because Runner.fail wraps non-Error
+  // throws via thrown2Error (runner.js:442) before emitting EVENT_TEST_FAIL.
+  // Remaining cases this WARN catches: (a) third-party code emits
+  // EVENT_TEST_FAIL directly bypassing Runner.fail; (b) reporter regression
+  // removes the assignment; (c) Runner#uncaught paths that don't go through
+  // standard fail emission.
+  if (test.err == null) {
+    process.stderr.write(
+      `[qa-hooks] WARN test marked failed but test.err is ${typeof test.err}=${String(test.err)} — ` +
+        `Mocha's Runner.fail does NOT set test.err; the active reporter is expected to. ` +
+        `qa-reporter (v5.8+) replicates the Base reporter assignment. ` +
+        `If you see this WARN, either the reporter changed, OR the test was failed via a path that bypasses EVENT_TEST_FAIL.\n`,
+    );
+  }
+  const payload: PausePayload = {
+    test: test.title,
+    // v5.5 §2.4 / C1 — Mocha's Runnable.fullTitle() at runnable.js:206;
+    // space-joined ancestor titles + own title. Canonical id key for
+    // unifying with Test Explorer discovery.
+    full_title: test.fullTitle(),
+    file: test.file ?? null,
+    line: fileLineFromStack(test.err?.stack),
+    error: serializeError(test.err),
+    cdp_ws_url: cdpWsUrl,
+    mode,
+    started_at: Date.now(),
+    retry_count: currentRetryOf(test),
+  };
 
-    const decision = await awaitDecisionWithHeartbeat(c, {
-      session_id: sessionId,
-      heartbeat_ms: HEARTBEAT_MS,
-      on_abandoned: 'give_up',
-    });
+  let sessionId: string;
+  try {
+    const result = await c.request(METHOD.pausePublish, payload, PausePublishResult);
+    sessionId = result.session_id;
+  } catch (err) {
+    process.stderr.write(`[qa-hooks] pause.publish failed: ${(err as Error).message}\n`);
+    return;
+  }
 
-    // Broadcast the resolved decision on two channels:
-    //   (1) `inProcBus` — for the qa-reporter (same mocha process; cannot receive
-    //       via process.send, which only delivers to the parent).
-    //   (2) IPC `final_decision` notification — for the oracle/extension parent,
-    //       so they can also log/observe the decision outcome.
-    const finalDecision: FinalDecisionParams = {
-      session_id: sessionId,
-      kind: decision.kind,
-      reason: decision.reason,
-      by: decision.by,
-      // v5.5 §2.4: renamed test_title → full_title (always was test.fullTitle()).
-      full_title: test.fullTitle(),
-      test_file: test.file ?? null,
-    };
-    inProcBus.emitFinalDecision(finalDecision);
-    c.notify(METHOD.finalDecision, finalDecision);
+  const decision = await awaitDecisionWithHeartbeat(c, {
+    session_id: sessionId,
+    heartbeat_ms: HEARTBEAT_MS,
+    on_abandoned: 'give_up',
+  });
 
-    if (decision.kind === 'retry') {
-      // ARCHITECTURE v5.1 §3.1: no in-process require.cache invalidation — the
-      // --grep respawn runs in a fresh child process whose require.cache is empty
-      // by construction. See mocha-hooks/README.md "Phase 2 follow-up" block for
-      // the evidence chain and the re-add requirement if Phase 2 introduces an
-      // in-process retry mechanism.
-      return;
-    }
+  // Broadcast the resolved decision on two channels:
+  //   (1) `inProcBus` — for the qa-reporter (same mocha process; cannot receive
+  //       via process.send, which only delivers to the parent).
+  //   (2) IPC `final_decision` notification — for the oracle/extension parent,
+  //       so they can also log/observe the decision outcome.
+  const finalDecision: FinalDecisionParams = {
+    session_id: sessionId,
+    kind: decision.kind,
+    reason: decision.reason,
+    by: decision.by,
+    // v5.5 §2.4: renamed test_title → full_title (always was test.fullTitle()).
+    full_title: test.fullTitle(),
+    test_file: test.file ?? null,
+  };
+  inProcBus.emitFinalDecision(finalDecision);
+  c.notify(METHOD.finalDecision, finalDecision);
 
-    // mark_passed and give_up: hook does NOT mutate test.state / test.err /
-    // parent.retries / currentTest.retries (see ARCHITECTURE v5 §3.1). The reporter
-    // translates the failure event into the appropriate tri-state outcome by
-    // consulting `final_decision` above.
-  },
+  if (decision.kind === 'retry') {
+    // ARCHITECTURE v5.1 §3.1: no in-process require.cache invalidation — the
+    // --grep respawn runs in a fresh child process whose require.cache is empty
+    // by construction. See mocha-hooks/README.md "Phase 2 follow-up" block for
+    // the evidence chain and the re-add requirement if Phase 2 introduces an
+    // in-process retry mechanism.
+    return;
+  }
+
+  // mark_passed and give_up: hook does NOT mutate test.state / test.err /
+  // parent.retries / currentTest.retries (see ARCHITECTURE v5 §3.1). The reporter
+  // translates the failure event into the appropriate tri-state outcome by
+  // consulting `final_decision` above.
+}
+;(qaAfterEachImpl as unknown as Record<symbol, unknown>)[OUR_HOOK_TAG] = true;
+
+// v5.15: root mochaHooks export delegates to the same extracted body. Mocha's
+// rootHooks plugin loader (mocha.js:1082) re-enters Suite.prototype.afterEach,
+// which our installAfterEachOrderPatch wrapper recognizes via OUR_HOOK_TAG and
+// short-circuits (no re-injection on root). Defence-in-depth — covers the case
+// where the user has NO afterEach anywhere (patch never fires for that path).
+//
+// No `beforeEach`: ARCHITECTURE v5 §3.1 explicitly removes `this.retries(999)`.
+// Mocha v10 retries from beforeEach mutate the hook's runnable, not the test;
+// and even if we did set retries on the test, the clone-on-retry semantics in
+// runner.js:814–823 make state mutation in afterEach unable to stop the loop.
+// Outcome translation lives in qa-reporter (§3.6); retry decisions are honored
+// by the extension respawning mocha with `--grep` (S4) or by the S2 oracle
+// simulating the same.
+export const mochaHooks = {
+  afterEach: qaAfterEachImpl,
 };
 

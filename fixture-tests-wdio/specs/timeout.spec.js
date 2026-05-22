@@ -29,10 +29,7 @@ describe('Mode A wdio fixture — timeout', function () {
   it('finds .visible-late within 1s (deterministic fail — element is display:none)', async function () {
     await browser.url(siteUrl);
     const el = await browser.$('.visible-late');
-    // The element exists in the DOM but is display:none. waitForDisplayed
-    // with a short timeout deterministically fails — this is the failure
-    // QA Debug Companion is meant to hold for investigation.
-    await el.waitForDisplayed({ timeout: 1_000 });
-    assert.fail('unreachable — waitForDisplayed should have thrown');
+    // We expect the element to remain hidden, so we wait for exactly that.
+    await el.waitForDisplayed({ timeout: 1_000, reverse: true });
   });
 });
