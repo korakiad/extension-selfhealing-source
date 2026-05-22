@@ -21,4 +21,4 @@ When a Mocha test fails inside a fixture suite:
 
 ## Status
 
-Phase 1, version 0.0.1 — pre-release for internal QA testing. Not yet on the Marketplace.
+Phase 1, version 0.0.2 — pre-release for internal QA testing. Not yet on the Marketplace.

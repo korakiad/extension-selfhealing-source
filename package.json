@@ -1,6 +1,6 @@
 {
   "name": "qa-debug-companion",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "private": true,
   "description": "VS Code extension + dynamic MCP registration that holds Mocha on test failure for Copilot-driven QA investigation. Phase 1.",
   "engines": {
