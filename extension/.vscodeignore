@@ -1,13 +1,18 @@
 .vscode/**
 .vscode-test/**
 src/**
-node_modules/**
 tsconfig.json
 tsconfig.tsbuildinfo
 esbuild.config.mjs
+tools/**
+_vsix-staging/**
 **/*.map
 **/*.ts
 **/tsconfig*.json
 .gitignore
 .prettierrc
 .prettierignore
+
+# Drop dev-time pnpm symlinks; the prepackage step materializes real files
+# under _vsix-staging/node_modules/@qa-debug/mocha-hooks/.
+node_modules/**

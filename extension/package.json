@@ -232,7 +232,7 @@
     "build:prod": "node esbuild.config.mjs --production",
     "build:check": "tsc -p tsconfig.json --noEmit",
     "clean": "rm -rf dist",
-    "package": "pnpm run clean && pnpm run build:prod && npx --yes @vscode/vsce package --no-dependencies --out qa-debug-companion-${npm_package_version}.vsix"
+    "package": "pnpm run clean && pnpm --filter ../mocha-hooks run build && pnpm run build:prod && node tools/prepare-vsix.mjs && cd _vsix-staging && npx --yes @vscode/vsce package --out ../qa-debug-companion-${npm_package_version}.vsix"
   },
   "dependencies": {
     "@qa-debug/mocha-hooks": "workspace:*",
