@@ -145,7 +145,14 @@ let currentBrowser: WdioBrowserLike | undefined;
 ;(function installAfterEachOrderPatch(): void {
   // Prefer the public re-export over the deep internal path; mocha 10.x has no
   // exports map but a future minor could add one.
-  const { Suite } = require('mocha') as { Suite: typeof Mocha.Suite };
+  // Resolve mocha via require.main so we bind to the SAME instance the user's
+  // mocha bin already loaded — the Suite.prototype._afterEach monkey-patch below
+  // only takes effect if it's the exact class their runner instantiates from.
+  // Bare `require('mocha')` fails in the shipped vsix because this file lives
+  // under ~/.vscode/extensions/qa-debug.../ with no mocha up the parent chain.
+  const { Suite } = (require.main?.require('mocha') ?? require('mocha')) as {
+    Suite: typeof Mocha.Suite;
+  };
 
   if ((Suite.prototype as unknown as Record<symbol, unknown>)[QA_PATCH_INSTALLED]) return;
 

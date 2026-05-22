@@ -10,7 +10,13 @@
 // reporter consumes those notifications via a JsonRpcConnection sharing the same
 // `process` and renders the tri-state outcome at EVENT_TEST_END.
 
-import * as Mocha from 'mocha';
+import type * as Mocha from 'mocha';
+// Resolve mocha via require.main so we bind to the SAME instance the user's
+// mocha bin loaded — same rationale as qa-hooks.ts. Bare `require('mocha')`
+// fails in the shipped vsix because this file lives under the extension dir
+// with no mocha up the parent chain.
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const mocha: typeof Mocha = require.main?.require('mocha') ?? require('mocha');
 import {
   DecisionKind,
   FinalDecisionParams,
@@ -91,7 +97,7 @@ export class QaReporter {
       });
     });
 
-    const C = Mocha.Runner.constants;
+    const C = mocha.Runner.constants;
 
     runner.on(C.EVENT_RUN_BEGIN, () => {
       this.write(`\n${BOLD}qa-reporter${RESET} — v5 tri-state outcome renderer\n\n`);
