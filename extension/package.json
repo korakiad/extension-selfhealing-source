@@ -1,8 +1,12 @@
 {
   "name": "qa-debug-companion",
   "displayName": "QA Debug Companion",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/korakiad/extension-selfhealing-source.git"
+  },
   "description": "Holds Mocha on test failure with browser alive; exposes qa-debug verbs as VS Code Language Model Tools and surfaces playwright-mcp during pause. Phase 1.",
   "publisher": "qa-debug",
   "engines": {
@@ -225,8 +229,10 @@
   },
   "scripts": {
     "build": "node esbuild.config.mjs",
+    "build:prod": "node esbuild.config.mjs --production",
     "build:check": "tsc -p tsconfig.json --noEmit",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "package": "pnpm run clean && pnpm run build:prod && npx --yes @vscode/vsce package --no-dependencies --out qa-debug-companion-${npm_package_version}.vsix"
   },
   "dependencies": {
     "@qa-debug/mocha-hooks": "workspace:*",
