@@ -191,7 +191,16 @@ export function createTestControllerWrapper(
   };
 
   async function populateRoot(): Promise<void> {
-    const uris = await vscode.workspace.findFiles('**/*.spec.{ts,js}', '**/node_modules/**');
+    // v0.0.4 — consumer projects compile TS → build/ or dist/. Mocha runs against
+    // the compiled .js; the .ts sources are not seen by the runner. Scanning .ts
+    // would create duplicate Test Explorer items (one per source, one per build
+    // artifact) that don't share an id with the runtime full-title path. Scope
+    // the glob to compiled-output dirs at the workspace root so only the files
+    // mocha will actually execute show up in the tree.
+    const uris = await vscode.workspace.findFiles(
+      '{build,dist}/**/*.spec.js',
+      '**/node_modules/**',
+    );
     let added = 0;
     for (const uri of uris) {
       const id = itemIdForFile(uri);

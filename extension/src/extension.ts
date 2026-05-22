@@ -119,8 +119,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // sync with on-disk changes. 300ms per-URI debounce absorbs editor save +
   // multi-buffer flush bursts; reparse semantics are id-based replace (NB10)
   // so expand/collapse state survives.
+  // v0.0.4 — match the populateRoot glob (test-controller.ts). Watch only the
+  // compiled-output spec files mocha will actually run; .ts source edits will
+  // re-trigger via the consumer's build watch when build/dist updates.
   const specWatcher = vscode.workspace.createFileSystemWatcher(
-    '**/*.spec.{ts,js}',
+    '{build,dist}/**/*.spec.js',
     /* ignoreCreate */ false,
     /* ignoreChange */ false,
     /* ignoreDelete */ false,
