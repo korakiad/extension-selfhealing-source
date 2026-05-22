@@ -5,7 +5,7 @@
   "private": true,
   "repository": {
     "type": "git",
-    "url": "https://github.com/korakiad/extension-selfhealing-source.git"
+    "url": "https://github.com/korakiad/extension-selfhealing.git"
   },
   "description": "Holds Mocha on test failure with browser alive; exposes qa-debug verbs as VS Code Language Model Tools and surfaces playwright-mcp during pause. Phase 1.",
   "publisher": "qa-debug",
