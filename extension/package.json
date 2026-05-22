@@ -3,7 +3,7 @@
   "displayName": "QA Debug Companion",
   "version": "0.0.0",
   "private": true,
-  "description": "Holds Mocha on test failure with browser alive; surfaces playwright-mcp + qa-debug skill to Copilot. Phase 1.",
+  "description": "Holds Mocha on test failure with browser alive; exposes qa-debug verbs as VS Code Language Model Tools and surfaces playwright-mcp during pause. Phase 1.",
   "publisher": "qa-debug",
   "engines": {
     "vscode": "^1.120.0"
@@ -43,11 +43,170 @@
         ]
       }
     ],
+    "languageModelTools": [
+      {
+        "name": "qa-debug_qa_get_failure_context",
+        "tags": ["qa-debug"],
+        "toolReferenceName": "qaFailureContext",
+        "displayName": "QA Debug: Get Failure Context",
+        "modelDescription": "Returns the currently paused Mocha test failure as a structured payload. Callers should invoke this first when entering a debugging session — the QA describes the failure conversationally, but the ground-truth shape (failing assertion, stack frames, console output, browser CDP URL) lives in the pause record. Idempotent and safe to call multiple times. Returns: { test_title, file, line, failing_assertion, stack_trace: { frames (<=50 inline; concise mode <=10), more_at? }, cdp_ws_url (use with playwright-mcp:browser_* tools to inspect the held browser), screenshot_path?, console_logs: { lines (<=100 inline; concise mode <=20), more_at? }, paused_for_ms, retry_count, max_retries_remaining, last_proposal_status: 'none' | 'awaiting_human' | 'accepted' | 'rejected' for any in-flight qa_propose_* }. Errors: NO_ACTIVE_PAUSE when no Mocha test is currently paused; SESSION_NOT_FOUND when session_id is supplied but does not match the active pause.",
+        "userDescription": "Returns the structured failure context for the currently paused Mocha test.",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(beaker)",
+        "when": "qa-debug.paused",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "session_id": {
+              "type": "string",
+              "description": "The session_id from the pause notification, or omit to target the currently-active pause."
+            },
+            "response_format": {
+              "type": "string",
+              "enum": ["concise", "detailed"],
+              "description": "Defaults to 'concise' (stack <=10 frames, logs <=20 lines). Use 'detailed' only when the concise view is insufficient."
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "qa-debug_qa_request_retry",
+        "tags": ["qa-debug"],
+        "toolReferenceName": "qaRequestRetry",
+        "displayName": "QA Debug: Request Retry",
+        "modelDescription": "Re-runs the currently paused Mocha test. The before-each hook re-runs; the held browser at cdp_ws_url stays alive across the retry. Reversible: a subsequent failure simply re-pauses with a fresh session_id. Callers should invoke this after the test selector, asserted value, or production code under test has been edited to address the failure — not as a generic \"try again\" without a diff. The supplied reason is surfaced verbatim in the chat notification, the Test Explorer annotation, and the audit log; callers should write it for a QA who did not see the conversation (e.g., \"selector .submit-btn renamed to .primary-submit\"). Returns: { decision: 'retry', accepted_at_ms }. Errors: NO_ACTIVE_PAUSE when no pause is active; SESSION_NOT_FOUND when session_id is stale; PAUSE_ALREADY_RESOLVED when another caller (e.g., a UI button click in Test Explorer) committed the verb first.",
+        "userDescription": "Re-runs the paused test after edits.",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(debug-continue)",
+        "when": "qa-debug.paused",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "session_id": {
+              "type": "string",
+              "description": "The session_id from the pause notification."
+            },
+            "reason": {
+              "type": "string",
+              "description": "Free-text rationale (1–2 sentences) surfaced to the QA verbatim. Write specifically what was changed; not \"let us try again\"."
+            }
+          },
+          "required": ["session_id", "reason"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "qa-debug_qa_request_give_up",
+        "tags": ["qa-debug"],
+        "toolReferenceName": "qaRequestGiveUp",
+        "displayName": "QA Debug: Request Give Up",
+        "modelDescription": "Marks the paused Mocha test as a final failure and lets Mocha proceed to the next test. The held browser is released and the MCP gate closes. Reversible only by re-running the suite. Callers should invoke this when the failure is genuine and no retry is warranted (e.g., the asserted product behavior is wrong and requires a fix in source). The supplied reason is surfaced verbatim in the chat notification, the Test Explorer annotation, and the audit log. Returns: { decision: 'give_up', accepted_at_ms }. Errors: NO_ACTIVE_PAUSE when no pause is active; SESSION_NOT_FOUND when session_id is stale; PAUSE_ALREADY_RESOLVED when another caller committed the verb first.",
+        "userDescription": "Marks the paused test as a final failure and proceeds.",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(stop-circle)",
+        "when": "qa-debug.paused",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "session_id": {
+              "type": "string",
+              "description": "The session_id from the pause notification."
+            },
+            "reason": {
+              "type": "string",
+              "description": "Free-text rationale (1–2 sentences) surfaced to the QA verbatim. State the root cause concretely."
+            }
+          },
+          "required": ["session_id", "reason"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "qa-debug_qa_propose_mark_passed",
+        "tags": ["qa-debug"],
+        "toolReferenceName": "qaProposeMarkPassed",
+        "displayName": "QA Debug: Propose Mark Passed",
+        "modelDescription": "Proposes marking the failing test as passed without re-running. Callers should reserve this for environmental flake signals (upstream API hiccup, transient infra error, known-broken staging fixture). Callers MUST NOT invoke when the failing assertion's value is derived from production code paths — that is a real bug and should follow qa_request_give_up or a fix-and-retry. The supplied rationale is what the QA reads when deciding; be specific and falsifiable (e.g., \"intermittent 503 from auth-service at 14:03; subsequent /healthz returns 200\"). VS Code surfaces a Continue/Cancel confirmation chip before this tool's body runs; user Continue commits via DecisionRouter, user Cancel returns status: 'rejected'. Returns: { proposal_id, status: 'accepted' | 'rejected' }. Errors: NO_ACTIVE_PAUSE when no pause is active; SESSION_NOT_FOUND when session_id is stale; PAUSE_ALREADY_RESOLVED when the user (or another caller) committed via the Test Explorer button before the chip Continue landed.",
+        "userDescription": "Marks the failing test as passed (environmental flake).",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(pass)",
+        "when": "qa-debug.paused",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "session_id": {
+              "type": "string",
+              "description": "The session_id from the pause notification."
+            },
+            "rationale": {
+              "type": "string",
+              "description": "Specific, falsifiable rationale the human reads verbatim. Cite concrete signals (timestamps, log lines, observed behavior) — not \"looks flaky\"."
+            }
+          },
+          "required": ["session_id", "rationale"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "qa-debug_qa_propose_close_browser",
+        "tags": ["qa-debug"],
+        "toolReferenceName": "qaProposeCloseBrowser",
+        "displayName": "QA Debug: Propose Close Browser",
+        "modelDescription": "Proposes closing the held debugging browser at the pause's cdp_ws_url. VS Code surfaces a Continue/Cancel confirmation chip before this tool's body runs. Distinct from playwright-mcp:browser_close: that tool ends the agent's Playwright session against the browser; this tool tears down the underlying held-on-failure Chrome process the QA Debug Companion owns. Calling browser_close does NOT close this Chrome. Closing this Chrome destroys the QA's live inspection asset (DOM, console history, network state). Callers should invoke this only when investigation is genuinely complete or the browser is unrecoverable (e.g., crashed renderer). Mode A note (transparent wdio.remote integration, v5.2): when the browser was launched by your test code via webdriverio.remote(), this tool returns { status: 'declined', reason: '...' } immediately (no confirmation chip shown) because the test code owns the browser lifecycle. Close the browser via browser.deleteSession() in your test teardown instead. Returns: { proposal_id, status: 'accepted' | 'rejected' | 'declined' }. Errors: NO_ACTIVE_PAUSE when no pause is active; SESSION_NOT_FOUND when session_id is stale.",
+        "userDescription": "Closes the held debugging browser (destroys live inspection state).",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(close)",
+        "when": "qa-debug.paused",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "session_id": {
+              "type": "string",
+              "description": "The session_id from the pause notification."
+            },
+            "rationale": {
+              "type": "string",
+              "description": "Specific rationale the human reads verbatim (e.g., 'investigation complete; QA confirmed root cause' or 'renderer crashed; CDP unresponsive')."
+            }
+          },
+          "required": ["session_id", "rationale"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "qa-debug_qa_propose_abort_suite",
+        "tags": ["qa-debug"],
+        "toolReferenceName": "qaProposeAbortSuite",
+        "displayName": "QA Debug: Propose Abort Suite",
+        "modelDescription": "Proposes aborting the remaining Mocha suite. VS Code surfaces a Continue/Cancel confirmation chip before this tool's body runs. Destroys remaining test work in the current run. Callers should reserve this for cases where continuing the suite is clearly wasted effort: global misconfiguration (wrong staging URL, missing seed data), license/credential failures that block every downstream test, or catastrophic infra outage. NOT for a single failed assertion. Returns: { proposal_id, status: 'accepted' | 'rejected' }. Errors: NO_ACTIVE_PAUSE when no pause is active; SESSION_NOT_FOUND when session_id is stale.",
+        "userDescription": "Aborts the remaining Mocha suite (destroys remaining test work).",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(debug-stop)",
+        "when": "qa-debug.paused",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "session_id": {
+              "type": "string",
+              "description": "The session_id from the pause notification."
+            },
+            "rationale": {
+              "type": "string",
+              "description": "Specific rationale citing the cross-test signal (e.g., \"all tests fail at fixture seed: pg_connection_refused\")."
+            }
+          },
+          "required": ["session_id", "rationale"],
+          "additionalProperties": false
+        }
+      }
+    ],
     "commands": [
       { "command": "qa-debug.runFixture", "title": "QA Debug: Run Fixture Suite", "category": "QA Debug" },
-      { "command": "qa-debug.retry", "title": "QA Debug: Retry Paused Test", "category": "QA Debug", "enablement": "qa-debug.paused" },
-      { "command": "qa-debug.markPassed", "title": "QA Debug: Mark Paused Test as Passed", "category": "QA Debug", "enablement": "qa-debug.paused" },
-      { "command": "qa-debug.giveUp", "title": "QA Debug: Give Up on Paused Test", "category": "QA Debug", "enablement": "qa-debug.paused" },
+      { "command": "qa-debug.retry", "title": "QA Debug: Retry Paused Test", "category": "QA Debug", "enablement": "qa-debug.paused", "icon": "$(debug-continue)" },
+      { "command": "qa-debug.markPassed", "title": "QA Debug: Mark Paused Test as Passed", "category": "QA Debug", "enablement": "qa-debug.paused", "icon": "$(pass)" },
+      { "command": "qa-debug.giveUp", "title": "QA Debug: Give Up on Paused Test", "category": "QA Debug", "enablement": "qa-debug.paused", "icon": "$(stop-circle)" },
+      { "command": "qa-debug.openChatForPaused", "title": "QA Debug: Ask Copilot About This Failure", "category": "QA Debug", "enablement": "qa-debug.paused", "icon": "$(comment-discussion)" },
       { "command": "qa-debug.smokeTestMessageRetention", "title": "QA Debug: Smoke — TestMessage Retention", "category": "QA Debug" }
     ],
     "menus": {
@@ -55,6 +214,12 @@
         { "command": "qa-debug.retry",       "when": "testMessage == qaDebugPaused" },
         { "command": "qa-debug.markPassed",  "when": "testMessage == qaDebugPaused" },
         { "command": "qa-debug.giveUp",      "when": "testMessage == qaDebugPaused" }
+      ],
+      "testing/item/context": [
+        { "command": "qa-debug.openChatForPaused", "when": "testId in qa-debug.pausedTestIds", "group": "inline@1" },
+        { "command": "qa-debug.retry",             "when": "testId in qa-debug.pausedTestIds", "group": "inline@2" },
+        { "command": "qa-debug.markPassed",        "when": "testId in qa-debug.pausedTestIds", "group": "inline@3" },
+        { "command": "qa-debug.giveUp",            "when": "testId in qa-debug.pausedTestIds", "group": "inline@4" }
       ]
     }
   },
@@ -64,10 +229,9 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
     "@qa-debug/mocha-hooks": "workspace:*",
     "@qa-debug/pause-store-types": "workspace:*",
-    "@qa-debug/qa-debug-mcp": "workspace:*",
+    "@qa-debug/tool-contracts": "workspace:*",
     "zod": "^4.4.3"
   },
   "devDependencies": {

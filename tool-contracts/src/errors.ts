@@ -7,6 +7,12 @@ export class QaToolError extends Error {
   }
 }
 
+/**
+ * MCP-shaped error envelope. Kept here (instead of in the MCP server) because
+ * the stdio CLI in qa-debug-mcp/src/server.ts still wraps tool errors in this
+ * shape for the evals harness. The extension's LM-tool path uses its own
+ * vscode.LanguageModelToolResult wrapper and does not call this helper.
+ */
 export function errorResult(err: unknown) {
   if (err instanceof QaToolError) {
     return {

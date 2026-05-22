@@ -23,7 +23,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 
-import { qaTools } from '../../qa-debug-mcp/src/tools.js';
+import { qaTools } from '@qa-debug/tool-contracts/tools';
 import { PLAYWRIGHT_MCP_TOOLS } from './playwright-mcp-tools.js';
 import { getDecisionScenario } from './decision-tree-scenarios.js';
 

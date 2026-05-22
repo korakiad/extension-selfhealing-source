@@ -26,7 +26,7 @@ import {
   type ProposalKind,
   normalizeStoredPause,
 } from '@qa-debug/pause-store-types';
-import { QaToolError } from '@qa-debug/qa-debug-mcp/pause-store';
+import { QaToolError } from '@qa-debug/tool-contracts/errors';
 
 const KEY_ACTIVE = 'qa-debug.pause.active';
 const KEY_PROPOSAL = 'qa-debug.pause.proposal';

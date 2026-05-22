@@ -26,7 +26,7 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { qaTools } from '../../qa-debug-mcp/src/tools.js';
+import { qaTools } from '@qa-debug/tool-contracts/tools';
 
 import {
   DECISION_SCENARIOS,

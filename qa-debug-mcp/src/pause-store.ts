@@ -14,7 +14,7 @@ import {
   type Proposal,
   type ProposalKind,
 } from '@qa-debug/pause-store-types';
-import { QaToolError } from './errors.js';
+import { QaToolError } from '@qa-debug/tool-contracts/errors';
 
 export {
   type PauseStore,
@@ -26,7 +26,7 @@ export {
   type ResponseFormat,
   toFailureContextView,
 } from '@qa-debug/pause-store-types';
-export { QaToolError, type QaErrorCode } from './errors.js';
+export { QaToolError, type QaErrorCode } from '@qa-debug/tool-contracts/errors';
 
 /** S3 in-memory stub; S4 swaps for `MementoPauseStore` in the extension. */
 export class InMemoryPauseStore implements PauseStore {

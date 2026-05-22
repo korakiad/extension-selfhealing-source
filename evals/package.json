@@ -18,6 +18,7 @@
     "@qa-debug/mocha-hooks": "workspace:*",
     "@qa-debug/pause-store-types": "workspace:*",
     "@qa-debug/qa-debug-mcp": "workspace:*",
+    "@qa-debug/tool-contracts": "workspace:*",
     "mocha": "^10.7.3",
     "zod": "^4.4.3"
   },

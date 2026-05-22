@@ -9,7 +9,7 @@ A Mocha test is currently paused at a failure. The browser that ran the test is 
 
 ## Workflow checklist (copy into your reply and tick as you go)
 
-- [ ] Step 1: Ground via `qa-debug:qa_get_failure_context` (concise)
+- [ ] Step 1: Ground via `qa-debug_qa_get_failure_context` (concise)
 - [ ] Step 2: Investigate via `playwright-mcp:browser_*` against the held browser
 - [ ] Step 3: Classify failure (one of: **code-bug** / **test-bug** / **env-flake** / **structural** / **ambiguous-or-out-of-scope**)
 - [ ] Step 4: Commit decision per Step-3 classification (see "Commit decisions" below)
@@ -17,7 +17,7 @@ A Mocha test is currently paused at a failure. The browser that ran the test is 
 
 ## Step 1 — Ground in the failure
 
-Call `qa-debug:qa_get_failure_context` with `response_format: "concise"` to ground. The returned `failing_assertion`, `stack_trace.frames` (first 10), `cdp_ws_url`, `retry_count`, and `last_proposal_status` are ground truth; the user's natural-language description may be incomplete or speculative. Do not skip this step — without it the investigation has no anchor.
+Call `qa-debug_qa_get_failure_context` with `response_format: "concise"` to ground. The returned `failing_assertion`, `stack_trace.frames` (first 10), `cdp_ws_url`, `retry_count`, and `last_proposal_status` are ground truth; the user's natural-language description may be incomplete or speculative. Do not skip this step — without it the investigation has no anchor.
 
 ## Step 2 — Investigate the held browser
 
@@ -32,8 +32,8 @@ Investigation order is up to you (degrees of freedom: medium). **Do NOT call `pl
 
 **Browser ownership (Mode A vs Mode B):** `qa_get_failure_context.cdp_ws_url` reveals the mode.
 
-- Random ephemeral port (e.g., `ws://localhost:54321`) → **Mode A**. The user's test code launched the browser via `wdio.remote()` and owns its lifecycle via `browser.deleteSession()` in teardown. `qa-debug:qa_propose_close_browser` returns `{ status: 'declined' }` here — do not call it.
-- `:9222` → **Mode B**. The companion launched the browser. `qa-debug:qa_propose_close_browser` may be appropriate after investigation completes; the human commit closes via CDP.
+- Random ephemeral port (e.g., `ws://localhost:54321`) → **Mode A**. The user's test code launched the browser via `wdio.remote()` and owns its lifecycle via `browser.deleteSession()` in teardown. `qa-debug_qa_propose_close_browser` returns `{ status: 'declined' }` here — do not call it.
+- `:9222` → **Mode B**. The companion launched the browser. `qa-debug_qa_propose_close_browser` may be appropriate after investigation completes; the human commit closes via CDP.
 
 ## Step 3 — Classify the failure
 
@@ -80,7 +80,7 @@ turn N:   <chat: "Proposed mark-passed; rationale: ... Click Approve or Reject i
 turn N+1: <new human turn arrives; investigate that turn>
 ```
 
-### Arm 1 — code-bug → `qa-debug:qa_request_retry` after source edit
+### Arm 1 — code-bug → `qa-debug_qa_request_retry` after source edit
 
 **Prerequisite:** Edit the production source file fixing the defect. The retry runs against the freshly-edited code. *"Let's try again"* is NOT a code-bug signal — no diff, no retry.
 
@@ -94,7 +94,7 @@ turn N+1: <new human turn arrives; investigate that turn>
 - `SESSION_NOT_FOUND` → your `session_id` is stale (rare; a fresh pause superseded the one you were investigating). Re-call `qa_get_failure_context` (omit `session_id`) to ground in the current pause, then re-classify.
 - `PAUSE_ALREADY_RESOLVED` → another caller (typically the QA via Test Explorer) committed the verb first; your call had no effect. Call `qa_get_failure_context` (omit `session_id`) to confirm idle vs fresh pause, then re-classify if a new pause arrived. Do NOT re-issue the same verb against the stale session_id.
 
-### Arm 2 — test-bug → `qa-debug:qa_request_retry` after test edit
+### Arm 2 — test-bug → `qa-debug_qa_request_retry` after test edit
 
 **Prerequisite:** Edit the test spec fixing the stale assertion / selector / constant. Same *no diff, no retry* rule.
 
@@ -104,7 +104,7 @@ turn N+1: <new human turn arrives; investigate that turn>
 
 **Named-error paths:** Same as Arm 1.
 
-### Arm 3 — env-flake → `qa-debug:qa_propose_mark_passed`
+### Arm 3 — env-flake → `qa-debug_qa_propose_mark_passed`
 
 **Rationale shape:** A *falsifiable* signal — concrete timestamp, log line, network response, or service-status reference. The rationale is what the human reads when accepting or rejecting the proposal. Examples:
 
@@ -121,7 +121,7 @@ turn N+1: <new human turn arrives; investigate that turn>
 
 **Named-error paths:** Same `NO_ACTIVE_PAUSE` / `SESSION_NOT_FOUND` handling as Arm 1.
 
-### Arm 4 — structural → `qa-debug:qa_propose_abort_suite`
+### Arm 4 — structural → `qa-debug_qa_propose_abort_suite`
 
 **Rationale shape:** Cite the cross-test signal that explains why continuing the suite is wasted. Example: *"All tests will fail at fixture seed: `pg_connection_refused` on `postgres://localhost:5432/staging`; `browser_network_requests` also shows the auth-service unreachable. Continuing the suite produces N more identical failures with no diagnostic value."*
 
@@ -135,7 +135,7 @@ turn N+1: <new human turn arrives; investigate that turn>
 
 **Named-error paths:** Same `NO_ACTIVE_PAUSE` / `SESSION_NOT_FOUND` handling as Arm 1. PAUSE_ALREADY_RESOLVED does NOT apply — propose verbs return a success payload with `status: 'awaiting_human'` (no `isError`), so a lost-race is impossible by construction.
 
-### Arm 5 — ambiguous-or-out-of-scope → `qa-debug:qa_request_give_up`
+### Arm 5 — ambiguous-or-out-of-scope → `qa-debug_qa_request_give_up`
 
 Use when investigation completed but commits in Arms 1–4 are not justified:
 

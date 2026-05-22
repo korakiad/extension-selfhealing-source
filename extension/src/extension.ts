@@ -12,16 +12,15 @@ import { registerQaDebugChatParticipant } from './chat-participant.js';
 import { ChromeProcess } from './chrome.js';
 import { registerCommands } from './commands.js';
 import { DecisionRouter } from './decision-router.js';
+import { registerQaDebugLmTools } from './lm-tools/index.js';
 import { QaDebugMcpProvider } from './mcp-provider.js';
 import { appendInfo, createAuditChannel } from './output-channel.js';
 import { registerPauseStatusBar } from './pause-status-bar.js';
 import { MementoPauseStore } from './pause-store.js';
-import { hostQaDebugMcp, type QaDebugMcpHost } from './qa-debug-server.js';
 import { SessionManager } from './session-manager.js';
 import { smokeTestMessageRetention } from './smoke-test-message.js';
 import { createTestControllerWrapper } from './test-controller.js';
 
-let qaDebugHost: QaDebugMcpHost | undefined;
 let sessionManagerSingleton: SessionManager | undefined;
 // Closure captures pauseStore + decisionRouter + context.globalStorageUri at
 // activate() so deactivate() can synthesize give_up + append audit-file line.
@@ -47,21 +46,23 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const decisionRouter = new DecisionRouter(channel);
   const chrome = new ChromeProcess(channel);
 
-  // Host the qa-debug MCP server in-extension over Streamable HTTP. The
-  // McpProvider returns its URI + token as part of the qa-debug definition
-  // during paused state.
-  qaDebugHost = await hostQaDebugMcp(pauseStore, decisionRouter, channel);
-  context.subscriptions.push({
-    dispose: () => {
-      void qaDebugHost?.dispose();
-    },
-  });
-
-  const mcpProvider = new QaDebugMcpProvider(qaDebugHost.uri, qaDebugHost.token);
+  // CR-v5.14 §3.4 — qa-debug verbs are now first-party Language Model Tools
+  // (extension/src/lm-tools/). The MCP provider survives for playwright-mcp
+  // only; it returns [] at idle, [playwright-mcp(...)] during pause.
+  const mcpProvider = new QaDebugMcpProvider();
   context.subscriptions.push(mcpProvider);
   context.subscriptions.push(
     vscode.lm.registerMcpServerDefinitionProvider('qa-debug.mcp-servers', mcpProvider),
   );
+
+  // CR-v5.14 §3.1 — register the six qa-debug LanguageModelTool classes. The
+  // per-tool `when: "qa-debug.paused"` clause in package.json gates visibility;
+  // these registrations are always live across activations.
+  registerQaDebugLmTools(context, {
+    pauseStore,
+    decisionRouter,
+    auditChannel: channel,
+  });
 
   // TestController needs a startSuiteRun callback that delegates to
   // SessionManager. SessionManager isn't constructed until after the
@@ -232,16 +233,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     ),
   );
 
-  appendInfo(channel, `[activate] ready (qa-debug MCP host at ${qaDebugHost.uri.toString()})`);
+  appendInfo(channel, `[activate] ready (qa-debug LM tools registered; playwright-mcp gate active)`);
 }
 
 export async function deactivate(): Promise<void> {
-  // audit-file flow runs first; sessionMgr/host dispose chain follows. Audit
-  // write is best-effort and bounded under the ~5s VS Code deactivate budget
+  // audit-file flow runs first; sessionMgr dispose follows. Audit write is
+  // best-effort and bounded under the ~5s VS Code deactivate budget
   // (extHostExtensionService Promise.race(timeout(5000))).
   await deactivateHook?.();
   await sessionManagerSingleton?.dispose();
-  await qaDebugHost?.dispose();
 }
 
 function detectWorkspaceRoot(): string | undefined {

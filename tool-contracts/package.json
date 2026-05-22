@@ -1,0 +1,24 @@
+{
+  "name": "@qa-debug/tool-contracts",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Shared spec records + error taxonomy for the six qa_* verbs. Consumed by extension (LM tool host, v5.7+) and qa-debug-mcp (stdio MCP host, evals harness). Zero runtime deps beyond zod.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": { "types": "./src/index.ts", "default": "./dist/index.js" },
+    "./errors": { "types": "./src/errors.ts", "default": "./dist/errors.js" },
+    "./tools": { "types": "./src/tools.ts", "default": "./dist/tools.js" }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "build:check": "tsc -p tsconfig.json --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2"
+  }
+}

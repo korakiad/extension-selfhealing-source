@@ -1,7 +1,12 @@
 /**
  * QaDebugMcpProvider — implements vscode.McpServerDefinitionProvider.
  *
- * S4_DESIGN.md §4. Returns [] at idle, [playwright-mcp, qa-debug] during pause.
+ * CR-v5.14 §2.1 / §3.4 — narrowed to playwright-mcp only. The qa-debug verbs
+ * migrated to the VS Code Language Model Tool API (extension/src/lm-tools/),
+ * so they no longer need provider-side gating; visibility comes from the
+ * `when: "qa-debug.paused"` clause on each `languageModelTools` contribution.
+ *
+ * Returns [] at idle, [playwright-mcp] during pause.
  * Fires onDidChangeMcpServerDefinitions on state transition.
  *
  * vscode.d.ts:20533 — provideMcpServerDefinitions(token: CancellationToken):
@@ -19,11 +24,6 @@ export class QaDebugMcpProvider implements vscode.McpServerDefinitionProvider {
   private state: State = 'idle';
   private readonly emitter = new vscode.EventEmitter<void>();
   readonly onDidChangeMcpServerDefinitions = this.emitter.event;
-
-  constructor(
-    private readonly qaDebugUri: vscode.Uri,
-    private readonly qaDebugToken: string,
-  ) {}
 
   setPaused(cdpHttpEndpoint: string): void {
     this.state = { kind: 'paused', cdpHttpEndpoint };
@@ -43,11 +43,6 @@ export class QaDebugMcpProvider implements vscode.McpServerDefinitionProvider {
         'playwright-mcp',
         'npx',
         ['-y', '@playwright/mcp@latest', '--cdp-endpoint', this.state.cdpHttpEndpoint],
-      ),
-      new vscode.McpHttpServerDefinition(
-        'qa-debug',
-        this.qaDebugUri,
-        { 'X-Qa-Debug-Token': this.qaDebugToken },
       ),
     ];
   }

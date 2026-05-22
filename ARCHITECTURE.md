@@ -1,7 +1,8 @@
-# QA Debug Companion for Mocha + Copilot — Architecture v5
+# QA Debug Companion for Mocha + Copilot — Architecture v5.14
 
-> Status: applies v4→v5 follow-ups from S1+S2 implementation discovery (R4#A–R4#E). v4 was APPROVED on 2026-05-20; v5 was triggered by `ARCHITECTURE-CR-v5.md` after S2 smoke runs surfaced that Mocha v10's `Runner#fail` emits before `afterEach`, making ARCHITECTURE v4 §3.1's state-mutation pattern empirically broken. Reviewer APPROVE-with-polish on 2026-05-20 (iteration #1).
-> Change tags: **[R1#n]** = iteration-1 blockers (preserved). **[R2#n]** = iteration-2 follow-ups (preserved). **[R3#n]** = iteration-3 follow-ups (preserved). **[R4#n]** = v4→v5 follow-ups (this iteration).
+> Status: **v5.14 LANDED 2026-05-22** — qa-debug verbs migrated from in-extension MCP server to VS Code Language Model Tool API per `ARCHITECTURE-CR-v5.14.md` (iter#2 APPROVE-with-polish). Driver: target organization disallows enabling MCP in VS Code; for a single-host single-language single-owner stack the LM Tool API is the right primitive. Affected sections: §2 (architecture decision), §3.2 (tool surface — same verbs, new host), §3.4 (gating model — `when`-clause replaces `onDidChangeMcpServerDefinitions` for qa-debug; playwright-mcp branch survives), §3.5 (audit log prefix), §5 (tech stack). Unchanged: §3.1 qa-hooks IPC, §3.3 chatSkills/SKILL.md mechanism, §3.6 qa-reporter.
+>
+> Change tags: **[R1#n]** = iteration-1 blockers (preserved). **[R2#n]** = iteration-2 follow-ups (preserved). **[R3#n]** = iteration-3 follow-ups (preserved). **[R4#n]** = v4→v5 follow-ups (preserved). **[R5#n]** = v5 polish (preserved). **[R14#n]** = v5.14 LM Tool API migration (this iteration).
 
 ## 0. Engineering rules (standing) [R4#A]
 
@@ -19,20 +20,25 @@ These rules govern how this document evolves across Ralph-loop iterations. Revie
 - **Pain today**: when a test fails, the browser is killed by teardown, so the QA cannot inspect or discuss the failure with the agent. The fallback is a manual repro loop with logging sprinkled around.
 - **Goal**: when a Mocha test fails, hold execution at the failure point, keep the browser alive, and surface a full Playwright toolset attached to that same live browser to the Copilot agent. The QA converses with Copilot until the issue is understood, then chooses **Retry**, **Mark Passed** (human-only commit), or **Give Up**.
 
-## 2. Architecture decision: VS Code Extension + gated dynamic MCP registration
+## 2. Architecture decision: VS Code Extension + Language Model Tools + narrowed MCP gate [R14#A]
 
 The system ships as a single VS Code extension that:
 
 1. Owns the Mocha lifecycle (spawn / observe / hold-on-fail / continue).
 2. Owns the browser lifecycle (launch headed with `--remote-debugging-port=9222`, never closes on fail).
-3. Registers MCP servers conditionally per pause via `vscode.lm.registerMcpServerDefinitionProvider` and `onDidChangeMcpServerDefinitions` — see §3.4 [**R1#5**].
-4. Surfaces a `qa-debug` Skill via the `chatSkills` contribution point, **always loaded**. Engagement is **description-driven** per Anthropic Skills semantics (`platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices`) — the SKILL.md `description` is what Claude matches against the user turn. The `qa-debug.paused` VS Code context key, previously proposed in this architecture as a `chatSkills.when` gate (a field that does not exist in the contribution schema), is **repurposed**: it gates UI command enablement / Test Explorer button visibility only. The VS Code `chatSkills` contribution schema documents only `path` (pointing directly at the SKILL.md file per the page's canonical example); it does not have a `when` field. [**R3#A**]
+3. **Contributes the six `qa_*` verbs as `languageModelTools` in `package.json` and registers them on activation via `vscode.lm.registerTool` (extension/src/lm-tools/). Visibility is gated per-tool by `when: "qa-debug.paused"`. The MCP server boundary previously used for these verbs has been removed.** [R14#A]
+4. **Continues to publish `playwright-mcp` (an external, third-party MCP server we do not own) via `McpServerDefinitionProvider` during pause; the provider's server list is narrowed from v5.6's `[playwright-mcp, qa-debug]` to `[playwright-mcp]` only.** [R14#A]
+5. Surfaces a `qa-debug` Skill via the `chatSkills` contribution point, **always loaded**. Engagement is **description-driven** per Anthropic Skills semantics (`platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices`) — the SKILL.md `description` is what Claude matches against the user turn. The `qa-debug.paused` VS Code context key, previously proposed in this architecture as a `chatSkills.when` gate (a field that does not exist in the contribution schema), is **repurposed**: it gates UI command enablement / Test Explorer button visibility AND `languageModelTools` visibility (since v5.14). The VS Code `chatSkills` contribution schema documents only `path` (pointing directly at the SKILL.md file per the page's canonical example); it does not have a `when` field. [**R3#A**]
 
 ### Why an extension (not a standalone MCP + scaffolded `.vscode/mcp.json`)
 
-- `cdpEndpoint` of the paused browser is known only at runtime; a static config cannot rebind per failure. `registerMcpServerDefinitionProvider` is the only API that supports per-session re-binding.
+- `cdpEndpoint` of the paused browser is known only at runtime; a static config cannot rebind per failure. `registerMcpServerDefinitionProvider` is the only API that supports per-session re-binding for **playwright-mcp** (the remaining MCP server in v5.14+; see §3.4 [R14#A]).
 - LSP-aware edits, Test Explorer UI, and debug session control are first-class only inside an extension.
 - Workspace trust, secret storage, and the `chatSkills` contribution point require extension context.
+
+### Why LM Tool API (not in-extension MCP server) for qa-debug verbs [R14#A]
+
+v5.6 hosted the qa-debug verbs as an in-extension MCP server over Streamable HTTP loopback. v5.14 replaces that with first-party `vscode.lm.registerTool` because qa-debug exercises **none** of MCP's portability-protocol benefits (cross-host, cross-process, cross-runtime, community-installed, uniform capability discovery — see ARCHITECTURE-CR-v5.14.md §1 for the dimension-by-dimension audit). Practical consequences: no HTTP transport, no bearer token, no `@modelcontextprotocol/sdk` dependency in the extension bundle, and policy-clean for organizations that disallow enabling MCP in VS Code.
 
 ### Phase 1 scope explicitly excludes
 
@@ -243,13 +249,25 @@ Content (frontmatter description in third person per R2#NB1; body in imperative 
 - Output style: agents should produce a one-line conclusion first, then evidence.
 - After calling any `qa_propose_*` tool, the agent should pause and report in chat; verdicts surface via `qa-debug:qa_get_failure_context.last_proposal_status`.
 
-### 3.4 MCP gating & lifecycle
+### 3.4 Tool gating & lifecycle [R14#A — split between LM Tool API and MCP provider]
+
+**qa-debug verbs (LM Tool API):**
+
+- On extension activation: `registerQaDebugLmTools` registers the six tool classes via `vscode.lm.registerTool` (extension/src/lm-tools/index.ts). The registrations are always live across activations.
+- Visibility is per-tool, controlled by the `when: "qa-debug.paused"` clause on each `languageModelTools` contribution in `extension/package.json`. VS Code re-evaluates the when-clause against current context keys when building the agent-mode tool list each request.
+- `LanguageModelToolInformation` carries `{ name, description, inputSchema, tags }` only (vscode.d.ts:21126-21146); no `when` field reaches the model. The clause is a discovery filter, never a runtime gate. Once `invoke` is dispatched, the call runs to completion regardless of subsequent context-key changes; the tool body returns `NO_ACTIVE_PAUSE` via `pauseStore.getActivePause()` if the pause was cleared between dispatch and execution.
+- No `lm.onDidInvokeTool` event exists (vscode.d.ts:20779-20813); per-tool audit logging happens via `appendInfo` from inside each tool's `invoke` (extension/src/lm-tools/base.ts).
+
+**playwright-mcp (MCP provider — preserved from v5.6):**
 
 - On extension activation: the `McpServerDefinitionProvider` is registered with an empty server list.
-- On pause publish: provider returns `[playwright-mcp(cdpEndpoint=ws://:9222), qa-debug]`; `onDidChangeMcpServerDefinitions` fires.
-- On release: provider returns `[]`; change event fires again. Tool surface returns to 0 at idle.
-- Tool count cap during pause: ~25 (playwright) + 6 (qa-debug) = ~31. Zero at idle. (Reduced from v3's ~32 after `qa_wait_for_pause` removal — see [**R3#C**] / §3.2.) The combined surface hits **three of four** Tool Search Tool triggers published in `anthropic.com/engineering/advanced-tool-use` (Nov 24 2025): (a) >10K tokens of tool definitions (estimated 12K–18K), (b) MCP-powered systems with multiple servers (qa-debug + playwright-mcp), and (c) 10+ tools available. The fourth trigger ("tool selection accuracy issues") is exactly what the S3 engagement evals measure empirically. Phase 1 defers Tool Search Tool because (i) the SKILL.md decision tree disambiguates among playwright tools, (ii) the surface is registered only during paused windows (seconds-to-minutes, not the whole session), and (iii) S3 engagement evals empirically verify the agent picks the right first tool ≥ 4/5 on golden scenarios and 5/5 on negative scenarios. **If S3 evals miss the bar, Tool Search becomes a blocking Phase 1 add.** [**R3#A** companion note, **R3#C**]
-- The `qa-debug` SKILL itself is *not* gated through MCP. Skill engagement is **description-driven** per Anthropic Skills semantics (see §3.3); the `qa-debug.paused` VS Code context key gates UI affordances only. [**R3#A**, replaces R2#Q2 framing]
+- On pause publish: provider returns `[playwright-mcp(cdpEndpoint=ws://:9222)]`; `onDidChangeMcpServerDefinitions` fires.
+- On release: provider returns `[]`; change event fires again.
+
+**Combined surface:**
+
+- Tool count cap during pause: ~25 (playwright) + 6 (qa-debug) = ~31. Zero at idle. The Tool Search Tool threshold analysis from v5.6 is preserved verbatim — total during-pause tool count is unchanged, token-budget triggers unchanged, deferral to Phase 2 unchanged. [**R3#A** companion note, **R3#C**]
+- The `qa-debug` SKILL itself is *not* gated through MCP. Skill engagement is **description-driven** per Anthropic Skills semantics (see §3.3); the `qa-debug.paused` VS Code context key gates UI affordances AND `languageModelTools` visibility (since v5.14). [**R3#A**, **R14#A**, replaces R2#Q2 framing]
 
 ### 3.5 IPC, pause-store, and observability
 
@@ -304,16 +322,20 @@ The `qa-reporter` is a Mocha reporter packaged alongside the hook (`@qa-debug/mo
    - For mark-passed / close-browser / abort-suite: agent calls the `qa_propose_*` variant; a button appears in Test Explorer + chat; the human commits or rejects.
 8. On decision: hook's `decision.await` returns; hook publishes a `final_decision` IPC notification to the reporter; extension closes the MCP gate; provider returns `[]`. The reporter renders the tri-state outcome (passed / failed / marked-passed) at `EVENT_TEST_END`. For `retry` decisions, the extension re-invokes mocha against the same test file via `--grep <title>` in a fresh child while Chrome `:9222` stays held; the reporter aggregates retries into a single test entry in the final tally.
 
-## 5. Concrete tech stack
+## 5. Concrete tech stack [R14#A]
 
-- **Language**: TypeScript (extension + qa-debug MCP).
-- **MCP SDK**: `@modelcontextprotocol/sdk` (stdio transport).
+- **Language**: TypeScript (extension + qa-debug-mcp stdio CLI for evals + new shared @qa-debug/tool-contracts package).
+- **MCP SDK**: `@modelcontextprotocol/sdk` — present only in `qa-debug-mcp/` (stdio CLI for evals harness) and `evals/` (consumer). **Removed from `extension/`** as of v5.14.
 - **VS Code APIs**:
-  - `vscode.lm.registerMcpServerDefinitionProvider` + `onDidChangeMcpServerDefinitions`
+  - `vscode.lm.registerTool` + `contributes.languageModelTools` — qa-debug verbs (new in v5.14)
+  - `vscode.lm.registerMcpServerDefinitionProvider` + `onDidChangeMcpServerDefinitions` — playwright-mcp branch only (since v5.14)
   - `chatSkills` contribution point (schema: `{ path: "<path-to-SKILL.md>" }` only — no `when`, no `id`; engagement is description-driven, see §3.3) [**R3#A**]
   - `vscode.tests.*` (Test Controller)
   - `vscode.tasks.*` or raw `child_process.spawn`
   - `vscode.debug.*` (phase 2)
+- **Workspace packages:**
+  - `@qa-debug/tool-contracts` — shared spec records + error taxonomy. Consumed by extension (LM tool classes) and qa-debug-mcp (stdio MCP CLI). New in v5.14 — extracted from `qa-debug-mcp/src/{errors,tools}.ts`.
+  - `@qa-debug/qa-debug-mcp` — stdio MCP CLI for evals harness. No longer consumed by `extension/` since v5.14.
 - **Mocha**: `^10.7` (verified against `mocha@10.8.2` runner.js capabilities per [R4#A] rule). `--require` for root hooks, `--reporter @qa-debug/mocha-hooks/qa-reporter` for tri-state outcome rendering (§3.6). [R4#B]
 - **Playwright MCP**: `@playwright/mcp` configured via JSON with `browser.cdpEndpoint`.
 
@@ -339,3 +361,7 @@ v2 was APPROVED by Reviewer #2. v3 applied R2#NB1, R2#NB2, and answers to R2#Q1�
 **v5.1 APPROVED by Ralph-loop reviewer #6 on 2026-05-21** (`ARCHITECTURE-CR-v5.1.md`). Scope: §3.1 retry branch only — removed the `invalidateRequireCache(file)` call after S2 implementation found it is a no-op in the v5 `--grep` respawn retry flow (mocha-hooks/README.md "Phase 2 follow-up" block carries the evidence chain). Iteration #1 returned APPROVE-with-polish (4 non-blocking items addressing SLICE_PLAN bidirectional cross-reference, README evidence retention, citation swap to Skills "Old patterns" idiom, and §3.1 addressable-target prose); iteration #2 returned APPROVE clean. Mandatory Phase 2 follow-up tracked in SLICE_PLAN §4 — restoring cache invalidation is a hard prerequisite for any future in-process retry mechanism.
 
 - **R5#A** — Removed `invalidateRequireCache(this.currentTest.file)` from §3.1 retry branch (pseudocode + qa-hooks.ts). Added the "Why no `require.cache` invalidation in the retry branch?" paragraph in §3.1 documenting the addressable-target framing and pointing to the Phase 2 follow-up.
+
+**v5.14 APPROVED by Ralph-loop reviewer on 2026-05-22** (`ARCHITECTURE-CR-v5.14.md` iter#2). Scope: §2, §3.2 host (verb contracts unchanged), §3.4, §3.5 audit prefix, §5 tech stack. Driver: target organization disallows enabling MCP in VS Code; LM Tool API is the right primitive for a single-host, single-language, single-owner verb set. Iteration #1 reviewer returned REVISE-with-blockers (B1 unenumerated `QaToolError` production import; B2 `qa-debug:` occurrence miscount + missed `commands.ts:171` + `playwright-mcp:` colon-form survival unclarity; B3 propose/commit→`prepareInvocation` collapse lacked canonical-surface decision + lost-race semantics). Iteration #2 reviewer returned APPROVE-with-polish (4 cosmetic items, all swept inline). Q-A through Q-H resolved (see CR-v5.14 §6); Q-G (`qa-debug-mcp` package rename) deferred to v5.8.
+
+- **R14#A** — qa-debug verbs migrated from in-extension MCP server (HTTP loopback, `@modelcontextprotocol/sdk`) to VS Code Language Model Tool API (`vscode.lm.registerTool` + `contributes.languageModelTools`). New workspace package `@qa-debug/tool-contracts` carries shared spec/errors. `extension/src/qa-debug-server.ts` deleted; `mcp-provider.ts` narrowed to playwright-mcp only; six `extension/src/lm-tools/*.ts` classes added. propose/commit split collapsed to `prepareInvocation` confirmation chips for the three asset-destructive verbs, with the Test Explorer commit button preserved as the canonical human-initiated surface (dual-surface, both writing through `DecisionRouter.commit`; lost-race inherits v5.6 `PAUSE_ALREADY_RESOLVED`). Audit log prefix changed from `[qa-debug-mcp]` to `[qa-debug-lm]` for the in-extension path; the stdio MCP CLI keeps the old prefix on its own audit surface.

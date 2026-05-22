@@ -26,7 +26,7 @@ Add optional `onDecision(sessionId, kind: 'retry' | 'give_up', reason): boolean`
 4. **`extension/src/qa-debug-server.ts`** —
    - Add `decisionRouter: DecisionRouter` parameter to `hostQaDebugMcp` (positional, second arg).
    - Pass `onDecision: (sid, kind, reason) => decisionRouter.commit(sid, kind, reason, 'agent')` into `createQaDebugServer`.
-   - One `appendInfo` audit line per call: `[qa-debug-mcp] onDecision sessionId=... kind=... committed=...`.
+   - One `appendInfo` audit line per call: `[qa-debug-lm] onDecision sessionId=... kind=... committed=...`.
 
 5. **`extension/src/extension.ts`** — at line 48, pass `decisionRouter` as the second arg to `hostQaDebugMcp`. `decisionRouter` already in scope.
 
@@ -50,7 +50,7 @@ Add optional `onDecision(sessionId, kind: 'retry' | 'give_up', reason): boolean`
    - InMemoryPauseStore active pause persists after both calls (session-manager retains sole ownership of clearing).
    - Add `"race-test": "tsx src/race-test.ts"` to evals/package.json. **Hard gate: must exit 0.**
 2. **F5 retry round-trip:** agent calls `qa_request_retry` in real Extension Host →
-   - Output Channel "QA Debug Companion" shows `[qa-debug-mcp] qa_request_retry called` + `[qa-debug-mcp] onDecision sessionId=... kind=retry committed=true`.
+   - Output Channel "QA Debug Companion" shows `[qa-debug-lm] qa_request_retry called` + `[qa-debug-lm] onDecision sessionId=... kind=retry committed=true`.
    - **[R#B2]** Output Channel shows `[decision-router] commit ... by=agent` (NOT `by=human`) — proves the agent-attribution path is wired, not silently falling back to UI semantics.
    - Status-bar hides within 500ms; new mocha child spawns; respawn log line lands.
 3. **F5 give_up round-trip:** agent calls `qa_request_give_up` →

@@ -19,7 +19,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { PauseStore } from '@qa-debug/pause-store-types';
 import { toFailureContextView } from '@qa-debug/pause-store-types';
 
-import { errorResult, QaToolError } from './errors.js';
+import { errorResult, QaToolError } from '@qa-debug/tool-contracts/errors';
 import {
   qa_get_failure_context,
   qa_propose_abort_suite,
@@ -27,7 +27,7 @@ import {
   qa_propose_mark_passed,
   qa_request_give_up,
   qa_request_retry,
-} from './tools.js';
+} from '@qa-debug/tool-contracts/tools';
 
 export interface CreateQaDebugServerOptions {
   pauseStore: PauseStore;

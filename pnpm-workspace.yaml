@@ -3,6 +3,7 @@ packages:
   - qa-debug-mcp
   - mocha-hooks
   - pause-store-types
+  - tool-contracts
   - fixture-tests
   - fixture-tests-wdio
   - evals
