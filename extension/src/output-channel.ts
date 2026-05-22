@@ -24,11 +24,19 @@ export function createAuditChannel(context: vscode.ExtensionContext): vscode.Out
   return channel;
 }
 
+// v5.13 — extension-side synthetic outcomes that are NOT wire decisions but
+// belong on the same human-readable audit row as the explicit decisions, so the
+// QA-facing trail of record is unbroken (transparency principle, Anthropic
+// "Building effective agents"). DecisionKind/DecisionBy stay strict zod enums
+// for wire validation; this widening is local to the audit log writer.
+export type AuditDecisionKind = DecisionKind | 'retry_passed' | 'crash_cleared';
+export type AuditDecisionBy = DecisionBy | 'env';
+
 export interface DecisionRow {
   sessionId: string;
   testTitle: string;
-  decision: DecisionKind;
-  by: DecisionBy;
+  decision: AuditDecisionKind;
+  by: AuditDecisionBy;
   reasonOrRationale: string;
 }
 

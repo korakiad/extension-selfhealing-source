@@ -39,6 +39,19 @@ export interface TestRunHandle {
   recordPause(pause: PausePayload): void;
   /** Apply tri-state outcome from a final_decision notification. */
   recordDecision(decision: FinalDecisionParams, pause: PausePayload | undefined): void;
+  /**
+   * v5.13 — close the loop when a retry respawn passes: mark the TestItem green,
+   * clear the pause-time busy spinner + description. Invoked from session-manager
+   * when the child's `test.passed` request matches the active pause's full_title.
+   * See PLAN-retry-pass-recovery.md.
+   */
+  recordRetryPassed(pause: PausePayload): void;
+  /**
+   * v5.13 — synthesize a give-up-shaped UI transition when mocha crashes after a
+   * retry commit (the original decision callback was consumed, so no agent/human
+   * can resolve the stranded pause). Mirrors `give_up` but with `by: 'env'`.
+   */
+  recordCrashCleared(pause: PausePayload): void;
   /** Mocha exited; flush the run. */
   end(): void;
 }
@@ -67,6 +80,13 @@ export interface TestControllerWrapper {
 
 const TAG_SKIP = new vscode.TestTag('qa-debug.skip');
 const TAG_ONLY = new vscode.TestTag('qa-debug.only');
+
+// CR-v5.6 §3.5.1 — short summary for TestItem.description (inline next to label).
+const PAUSE_SUMMARY_MAX = 80;
+function truncatePauseSummary(s: string): string {
+  const oneLine = s.replace(/\s+/g, ' ').trim();
+  return oneLine.length > PAUSE_SUMMARY_MAX ? `${oneLine.slice(0, PAUSE_SUMMARY_MAX - 1)}…` : oneLine;
+}
 
 function itemIdForFile(fileUri: vscode.Uri): string {
   return fileUri.toString();
@@ -554,8 +574,26 @@ export function createTestControllerWrapper(
           msgs.push(msg);
           failureMessages.set(item.id, msgs);
 
+          // CR-v5.6 §3.5.1 (R6#A) — keep the item in `started` state during
+          // pause; surface pause cue via description + busy. Defer
+          // `run.failed()` until decision commit (give_up or mark_passed) so
+          // Copilot Chat's ✨ inline-icon (gated on testResultState == failed
+          // per copilot/package.json) does NOT render alongside our four
+          // inline icons (contributed via testing/item/context, gated on
+          // testId in qa-debug.pausedTestIds). The TestMessage[] is
+          // accumulated in `failureMessages` for attachment at decision time.
           run.started(item);
-          run.failed(item, msgs);
+          item.description = `⏸ paused — ${truncatePauseSummary(pause.failing_assertion)}`;
+          item.busy = true;
+
+          // Mirror stack to terminal panel so the QA still has the full trace
+          // at hand (the inline-peek hover that previously surfaced via the
+          // attached TestMessage is deferred until give-up commit).
+          run.appendOutput(
+            `⏸️ paused at ${pause.file}:${pause.line ?? '?'}\r\n${pause.failing_assertion}\r\n`,
+            undefined,
+            item,
+          );
         },
 
         recordDecision: (decision, pause): void => {
@@ -601,14 +639,25 @@ export function createTestControllerWrapper(
                 undefined,
                 item,
               );
+              // CR-v5.6 §3.5.1 — clear pause-time busy. F-v5.6-b verifies
+              // the failed→passed transition produces no perceptible flash
+              // > 1 frame at 60Hz; if observed, re-sequence per I2#D.
+              item.busy = false;
               break;
             }
             case 'give_up': {
+              // CR-v5.6 §3.5.1 (R6#A) — first-and-only `run.failed()` call
+              // in this path; pause-publish no longer reports failed. ✨
+              // appears here in its correct bibliographic context.
+              const giveUpMsgs = failureMessages.get(item.id) ?? [];
+              run.failed(item, giveUpMsgs);
               run.appendOutput(
                 `✗ give-up by ${decision.by}: ${reasonOrRationale}\r\n`,
                 undefined,
                 item,
               );
+              item.description = undefined;
+              item.busy = false;
               break;
             }
             case 'retry': {
@@ -617,10 +666,66 @@ export function createTestControllerWrapper(
                 undefined,
                 item,
               );
-              run.started(item);
+              // CR-v5.6 §3.5.1 — item never left `started` state under the
+              // new model; no revival call needed. Clear description; keep
+              // busy true (mocha will respawn and either re-pause or pass).
+              // v5.13: the "pass" half of this bargain is now wired via
+              // recordRetryPassed below; the "re-pause" half re-enters
+              // recordPause naturally on the respawn's pause.publish.
+              item.description = undefined;
               break;
             }
           }
+        },
+
+        recordRetryPassed: (pause): void => {
+          const fileUri = vscode.Uri.file(pause.file);
+          const item =
+            items.get(itemIdForTest(fileUri, pause.full_title)) ||
+            Array.from(items.values()).find((it) => it.id.endsWith(`::it::${pause.full_title}`));
+          if (!item) {
+            appendInfo(channel, `[test-controller] no TestItem for retry-pass "${pause.full_title}"`);
+            return;
+          }
+          const durationMs = Date.now() - pause.paused_at_ms;
+          appendDecision(channel, {
+            sessionId: pause.session_id,
+            testTitle: pause.full_title,
+            decision: 'retry_passed',
+            by: 'env',
+            reasonOrRationale: `respawn passed after ${durationMs}ms`,
+          });
+          run.passed(item, durationMs);
+          item.busy = false;
+          item.description = undefined;
+          run.appendOutput(`✓ retry passed after ${durationMs}ms\r\n`, undefined, item);
+        },
+
+        recordCrashCleared: (pause): void => {
+          const fileUri = vscode.Uri.file(pause.file);
+          const item =
+            items.get(itemIdForTest(fileUri, pause.full_title)) ||
+            Array.from(items.values()).find((it) => it.id.endsWith(`::it::${pause.full_title}`));
+          if (!item) {
+            appendInfo(channel, `[test-controller] no TestItem for crash-cleared "${pause.full_title}"`);
+            return;
+          }
+          const reason = 'mocha crashed during retry respawn';
+          appendDecision(channel, {
+            sessionId: pause.session_id,
+            testTitle: pause.full_title,
+            decision: 'crash_cleared',
+            by: 'env',
+            reasonOrRationale: reason,
+          });
+          const msgs = failureMessages.get(item.id) ?? [];
+          const crashMd = new vscode.MarkdownString(`## Cleared by environment\n\n${reason}`);
+          crashMd.isTrusted = false;
+          msgs.push(new vscode.TestMessage(crashMd));
+          run.failed(item, msgs);
+          run.appendOutput(`✗ ${reason}\r\n`, undefined, item);
+          item.description = undefined;
+          item.busy = false;
         },
 
         end: (): void => {

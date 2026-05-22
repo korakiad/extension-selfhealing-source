@@ -13,6 +13,7 @@ import {
   PausePayload,
   PausePublishResult,
   SerializedError,
+  TestPassedResult,
   inProcBus,
   nodeIpcTransport,
 } from './protocol';
@@ -240,13 +241,41 @@ export const mochaHooks = {
 
   async afterEach(this: Mocha.Context): Promise<void> {
     const test = this.currentTest;
-    if (!test || test.state !== 'failed') return;
+    if (!test) return;
 
     const c = getConnection();
     if (!c) {
-      // No IPC parent — let mocha + the built-in reporter handle the failure normally.
+      // No IPC parent — let mocha + the built-in reporter handle the outcome normally.
       return;
     }
+
+    // v5.13 — pass branch: fire test.passed as a REQUEST (awaited) before mocha
+    // advances. Mocha's runnable.js:367 `result.then(done, …)` blocks the hook
+    // completion callback until this Promise resolves, which only happens after
+    // the parent has read AND replied. This structurally closes the IPC exit-race
+    // (Node provides no 'message'-before-'exit' invariant; mocha's exitMochaLater
+    // + qa-hooks' channel.unref let the loop drain in a few ticks otherwise).
+    // The parent's handler returns AFTER it has cleaned up paused-test state, so
+    // there is no observable window where the extension still thinks the test
+    // is paused at the moment afterEach returns. See PLAN-retry-pass-recovery.md.
+    if (test.state === 'passed') {
+      try {
+        await c.request(METHOD.testPassed, {
+          full_title: test.fullTitle(),
+          test_file: test.file ?? null,
+        }, TestPassedResult);
+      } catch (err) {
+        // Parent disconnect or malformed reply: log and let mocha continue.
+        // The cleanup gap re-emerges only if the parent crashed, in which case
+        // the extension lifecycle has bigger problems than a stuck spinner.
+        process.stderr.write(
+          `[qa-hooks] test.passed request failed: ${(err as Error).message}\n`,
+        );
+      }
+      return;
+    }
+
+    if (test.state !== 'failed') return;
 
     // Disable Mocha's runnable timeout for this hook. pause.publish + decision.await
     // is a blocking, human-paced flow (engineer inspects browser via CDP, decides

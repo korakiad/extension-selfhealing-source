@@ -37,6 +37,7 @@ import {
   METHOD,
   PausePayload as WirePausePayload,
   PausePublishResult,
+  TestPassedParams,
   nodeIpcTransport,
 } from '@qa-debug/mocha-hooks/protocol';
 import type { PausePayload } from '@qa-debug/pause-store-types';
@@ -48,6 +49,19 @@ import { appendInfo } from './output-channel.js';
 import type { PauseStatusBar } from './pause-status-bar.js';
 import type { MementoPauseStore } from './pause-store.js';
 import type { TestControllerWrapper, TestRunHandle } from './test-controller.js';
+
+// CR-v5.6 §3.8 / I2#A — v5.5 unified-id formula `file::it::full_title`. Must
+// match test-controller's lookupOrCreateTestItem so the context-key array set
+// here intersects with the testId VS Code passes through testing/item/context.
+function computeTestItemId(pause: PausePayload): string {
+  return `${vscode.Uri.file(pause.file).toString()}::it::${pause.full_title}`;
+}
+
+async function refreshPausedTestIdsContext(pauseStore: MementoPauseStore): Promise<void> {
+  const active = pauseStore.peekActivePause();
+  const ids = active ? [computeTestItemId(active)] : [];
+  await vscode.commands.executeCommand('setContext', 'qa-debug.pausedTestIds', ids);
+}
 
 const HEARTBEAT_MS = Number(process.env.QA_DEBUG_HEARTBEAT_MS ?? 5_000);
 
@@ -266,6 +280,7 @@ export class SessionManager {
       const stored = wireToStored(wire, sessionId);
       await this.deps.pauseStore.setActivePause(stored);
       await vscode.commands.executeCommand('setContext', 'qa-debug.paused', true);
+      await refreshPausedTestIdsContext(this.deps.pauseStore);
       const mcpEndpoint = cdpWsUrlToHttpRoot(wire.cdp_ws_url);
       this.deps.mcpProvider.setPaused(mcpEndpoint);
       appendInfo(
@@ -334,7 +349,38 @@ export class SessionManager {
 
       await this.deps.pauseStore.clearActivePause();
       await vscode.commands.executeCommand('setContext', 'qa-debug.paused', false);
+      await refreshPausedTestIdsContext(this.deps.pauseStore);
       this.deps.mcpProvider.setIdle();
+    });
+
+    // v5.13 — test.passed REQUEST handler. Fires from qa-hooks afterEach on every
+    // passing test. We correlate by full_title against the active pause; if a
+    // match exists, the prior retry's respawn just passed and we run the
+    // commit-path cleanup that the retry branch's early return above skipped.
+    // Reply (empty ack) is sent ONLY after cleanup completes so the child-side
+    // `await c.request(...)` resolves with cleanup observable in the same tick.
+    // See PLAN-retry-pass-recovery.md "Why request, not notification".
+    connection.handle(METHOD.testPassed, async (raw) => {
+      const params = TestPassedParams.parse(raw);
+      const active = this.deps.pauseStore.peekActivePause();
+      if (!active || active.full_title !== params.full_title) {
+        // Non-retry pass — no stored pause to clean up. Ack immediately.
+        return {};
+      }
+
+      appendInfo(
+        this.deps.channel,
+        `[session-manager] retry-pass recovery for "${params.full_title}" session=${active.session_id}`,
+      );
+
+      run.testHandle.recordRetryPassed(active);
+      this.deps.pauseStatusBar.hide(active.session_id);
+      await this.deps.pauseStore.clearActivePause();
+      await vscode.commands.executeCommand('setContext', 'qa-debug.paused', false);
+      await refreshPausedTestIdsContext(this.deps.pauseStore);
+      this.deps.mcpProvider.setIdle();
+
+      return {};
     });
   }
 
@@ -396,6 +442,24 @@ export class SessionManager {
 
     const stalePause = this.deps.pauseStore.peekActivePause();
     if (!stalePause) {
+      await this.deps.chrome.dispose();
+    } else if (!this.deps.decisionRouter.hasPending(stalePause.session_id)) {
+      // v5.13 — crash-after-retry cleanup. The pause survived a retry commit
+      // (decisionRouter callback was consumed when the retry was committed) and
+      // mocha then crashed during the respawn without emitting pause.publish or
+      // test.passed. No agent/human can resolve this session — synthesize a
+      // give-up-shaped UI transition so the TestItem doesn't strand in the
+      // paused state with a stuck spinner. See PLAN-retry-pass-recovery.md.
+      appendInfo(
+        this.deps.channel,
+        `[session-manager] mocha crashed after retry; clearing stale pause session=${stalePause.session_id}`,
+      );
+      run.testHandle.recordCrashCleared(stalePause);
+      await this.deps.pauseStore.clearActivePause();
+      await vscode.commands.executeCommand('setContext', 'qa-debug.paused', false);
+      await refreshPausedTestIdsContext(this.deps.pauseStore);
+      this.deps.mcpProvider.setIdle();
+      this.deps.pauseStatusBar.hide(stalePause.session_id);
       await this.deps.chrome.dispose();
     } else {
       appendInfo(

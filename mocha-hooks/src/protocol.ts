@@ -98,6 +98,22 @@ export const FinalDecisionParams = z.object({
 });
 export type FinalDecisionParams = z.infer<typeof FinalDecisionParams>;
 
+// v5.13 — test.passed is a REQUEST (not notification) fired from qa-hooks
+// afterEach when test.state === 'passed'. Request shape exploits Mocha's
+// runnable.js:367 `result.then(done, …)` Promise-await contract to block
+// EVENT_RUN_END until the parent has read AND acked the message — the only
+// structurally safe IPC shape under Mocha's default exitMochaLater + qa-hooks'
+// channel.unref() combination (Node provides no 'message'-before-'exit'
+// invariant). See PLAN-retry-pass-recovery.md "Why request, not notification".
+export const TestPassedParams = z.object({
+  full_title: z.string(),
+  test_file: z.string().nullable(),
+});
+export type TestPassedParams = z.infer<typeof TestPassedParams>;
+
+export const TestPassedResult = z.object({});
+export type TestPassedResult = z.infer<typeof TestPassedResult>;
+
 // ---------- Method registry ----------
 
 export const METHOD = {
@@ -105,6 +121,7 @@ export const METHOD = {
   decisionAwait: 'decision.await',
   heartbeat: 'heartbeat',
   finalDecision: 'final_decision',
+  testPassed: 'test.passed',
 } as const;
 
 // ---------- JSON-RPC 2.0 envelopes ----------
