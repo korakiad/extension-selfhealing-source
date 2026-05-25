@@ -34,6 +34,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     `[activate] qa-debug-companion ${context.extension.packageJSON.version}`,
   );
 
+  // v5.16 PLAN-cdp-port-discovery — QA_DEBUG_CDP_WS_URL no longer flows to
+  // mocha child; per-pause CDP discovery happens in qa-hooks. One-time warning
+  // if the user still has it set in their environment.
+  if (process.env.QA_DEBUG_CDP_WS_URL) {
+    appendInfo(
+      channel,
+      `[activate] WARN QA_DEBUG_CDP_WS_URL is set but no longer honored — set QA_DEBUG_CDP_PORTS (comma-separated) to override Mode C discovery ports instead`,
+    );
+  }
+
   const workspaceRoot = detectWorkspaceRoot();
   if (!workspaceRoot) {
     appendInfo(

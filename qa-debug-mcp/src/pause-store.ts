@@ -108,11 +108,11 @@ export class InMemoryPauseStore implements PauseStore {
     source: ChromeSelectionSource,
   ): Promise<ChromeSelection> {
     const active = this.getActivePause(sessionId)!;
-    const candidate = (active.available_chromes ?? []).find((c) => c.port === port);
+    const candidate = active.available_chromes.find((c) => c.port === port);
     if (!candidate) {
       throw new QaToolError(
         'INVALID_PORT',
-        `Port ${port} is not in available_chromes (have: ${(active.available_chromes ?? [])
+        `Port ${port} is not in available_chromes (have: ${active.available_chromes
           .map((c) => c.port)
           .join(', ') || '<empty>'}). Call qa_discover_chromes first if framework ports changed.`,
       );
@@ -120,7 +120,6 @@ export class InMemoryPauseStore implements PauseStore {
     this.active = {
       ...active,
       selected_cdp_port: port,
-      cdp_ws_url: candidate.ws_url,
     };
     const selection: ChromeSelection = {
       session_id: active.session_id,
@@ -138,7 +137,7 @@ export class InMemoryPauseStore implements PauseStore {
     chromes: AvailableChrome[],
   ): Promise<{ cleared: boolean }> {
     const active = this.getActivePause(sessionId)!;
-    const priorPort = active.selected_cdp_port ?? null;
+    const priorPort = active.selected_cdp_port;
     const priorInNewList =
       priorPort != null && chromes.some((c) => c.port === priorPort);
     const cleared = priorPort != null && !priorInNewList;
@@ -146,9 +145,6 @@ export class InMemoryPauseStore implements PauseStore {
       ...active,
       available_chromes: chromes,
       selected_cdp_port: cleared ? null : priorPort,
-      cdp_ws_url: cleared
-        ? chromes[0]?.ws_url ?? active.cdp_ws_url
-        : active.cdp_ws_url,
     };
     if (cleared) {
       this.chromeEvents.emit('deselected', active.session_id);

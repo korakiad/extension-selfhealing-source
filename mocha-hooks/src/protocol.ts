@@ -16,12 +16,6 @@ export const SerializedError = z.object({
 });
 export type SerializedError = z.infer<typeof SerializedError>;
 
-/**
- * @deprecated v5.16 transitional. Will be replaced by ChromeOwner ('framework'|'companion').
- */
-export const BrowserOwnershipMode = z.enum(['A', 'B']);
-export type BrowserOwnershipMode = z.infer<typeof BrowserOwnershipMode>;
-
 // v5.16 PLAN-cdp-port-discovery — chrome lifecycle ownership.
 export const ChromeOwner = z.enum(['framework', 'companion']);
 export type ChromeOwner = z.infer<typeof ChromeOwner>;
@@ -41,20 +35,9 @@ export const PausePayload = z.object({
   file: z.string().nullable(),
   line: z.number().int().nullable(),
   error: SerializedError,
-  // @deprecated v5.16 transitional — derive from available_chromes/selected_cdp_port instead.
-  // qa-hooks v5.16 still populates this (with available_chromes[0]?.ws_url) to keep
-  // existing consumers compiling during migration.
-  cdp_ws_url: z.string().url().refine((s) => s.startsWith('ws://') || s.startsWith('wss://'), {
-    message: 'cdp_ws_url must use ws:// or wss:// scheme',
-  }),
-  // @deprecated v5.16 transitional — maps to chrome_owner.
-  mode: BrowserOwnershipMode.optional().default('B'),
-  // v5.16 — discovered chromes per pause via /json/version probe. Optional during migration.
-  available_chromes: z.array(AvailableChrome).optional(),
-  // v5.16 — null on publish; mutated post-publish via qa_select_chrome / extension UI.
-  selected_cdp_port: z.number().int().nullable().optional(),
-  // v5.16 — lifecycle owner. Always 'framework' on Mode C publish.
-  chrome_owner: ChromeOwner.optional(),
+  available_chromes: z.array(AvailableChrome),
+  selected_cdp_port: z.number().int().nullable(),
+  chrome_owner: ChromeOwner,
   started_at: z.number().int(),
   retry_count: z.number().int().nonnegative(),
 });

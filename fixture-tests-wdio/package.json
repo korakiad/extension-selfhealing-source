@@ -4,13 +4,18 @@
   "private": true,
   "description": "Fixture suite for verifying v5.2 Mode A (transparent webdriverio.remote() integration). Mirrors fixture-tests/ structure but uses mocha + wdio v8 standalone instead of bare mocha.",
   "scripts": {
-    "test": "mocha"
+    "test": "mocha",
+    "spike": "mocha spike/cdp-coexistence.spec.js --timeout 60000",
+    "build": "rm -rf build && mkdir -p build && cp specs/*.spec.js build/",
+    "clean": "rm -rf build"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",
     "@types/node": "^22.10.0",
+    "chrome-launcher": "^1.1.2",
     "chromedriver": "^148.0.4",
     "mocha": "^10.7.3",
+    "puppeteer-core": "^23.0.0",
     "webdriverio": "^8.40.6"
   }
 }

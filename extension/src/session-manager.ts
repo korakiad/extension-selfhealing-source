@@ -240,10 +240,9 @@ export class SessionManager {
       args.push(...opts.specFiles);
     }
 
-    const env: NodeJS.ProcessEnv = {
-      ...process.env,
-      QA_DEBUG_CDP_WS_URL: this.deps.chrome.cdpWsEndpoint,
-    };
+    // v5.16 PLAN-cdp-port-discovery — QA_DEBUG_CDP_WS_URL is gone. qa-hooks
+    // probes effectiveCdpPorts() per pause; ports override via QA_DEBUG_CDP_PORTS.
+    const env: NodeJS.ProcessEnv = { ...process.env };
 
     appendInfo(
       this.deps.channel,
@@ -521,12 +520,10 @@ function wireToStored(wire: WirePausePayload, sessionId: string): PausePayload {
     line: wire.line ?? undefined,
     failing_assertion: wire.error.message,
     stack_trace: { frames: stackFrames },
-    cdp_ws_url: wire.cdp_ws_url,
-    mode: wire.mode, // v5.2 §2.4 — legacy field; kept transitional, see pause-store-types ChromeOwner
-    // v5.16 — propagate Mode C discovery fields to store for agent + UI consumers.
-    available_chromes: wire.available_chromes ?? [],
-    selected_cdp_port: wire.selected_cdp_port ?? null,
-    chrome_owner: wire.chrome_owner ?? (wire.mode === 'A' ? 'framework' : 'companion'),
+    // v5.16 — Mode C discovery fields are the only browser-state surface.
+    available_chromes: wire.available_chromes,
+    selected_cdp_port: wire.selected_cdp_port,
+    chrome_owner: wire.chrome_owner,
     console_logs: { lines: [], bytes: 0 },
     paused_at_ms: wire.started_at,
     retry_count: wire.retry_count,

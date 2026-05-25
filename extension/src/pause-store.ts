@@ -28,7 +28,7 @@ import {
   type AvailableChrome,
   type ChromeSelection,
   type ChromeSelectionSource,
-  normalizeStoredPause,
+  normalizePausePayload,
 } from '@qa-debug/pause-store-types';
 import { QaToolError } from '@qa-debug/tool-contracts/errors';
 
@@ -54,14 +54,20 @@ export class MementoPauseStore implements PauseStore {
 
   /** Returns the active pause without throwing, for boot-time stale-pause detection (§11). */
   peekActivePause(): PausePayload | undefined {
-    // v5.5 §2.4 / NB5 — pre-v5.5 stored pauses lack `full_title`; normalize at
-    // the read site so chat-participant + decision-router never see the
-    // pre-rename shape.
-    return normalizeStoredPause(this.globalState.get(KEY_ACTIVE));
+    // v5.16 PLAN-cdp-port-discovery §3.7 (H4) — normalize at the read site so
+    // chat-participant + decision-router never see pre-v5.16 shapes (legacy
+    // mode='A'/'B' pauses are migrated forward with available_chromes). Caller
+    // discards diagnostics in the peek path; the throwing reader logs them.
+    return normalizePausePayload(this.globalState.get(KEY_ACTIVE)).payload;
   }
 
   getActivePause(sessionId?: string): PausePayload | undefined {
-    const active = normalizeStoredPause(this.globalState.get(KEY_ACTIVE));
+    const { payload: active, diagnostics } = normalizePausePayload(
+      this.globalState.get(KEY_ACTIVE),
+    );
+    if (diagnostics.length > 0) {
+      console.warn(`[pause-store] normalize: ${diagnostics.join('; ')}`);
+    }
     if (!active) {
       throw new QaToolError('NO_ACTIVE_PAUSE', 'No Mocha test is currently paused.');
     }
@@ -119,11 +125,11 @@ export class MementoPauseStore implements PauseStore {
     source: ChromeSelectionSource,
   ): Promise<ChromeSelection> {
     const active = this.getActivePause(sessionId)!;
-    const candidate = (active.available_chromes ?? []).find((c) => c.port === port);
+    const candidate = active.available_chromes.find((c) => c.port === port);
     if (!candidate) {
       throw new QaToolError(
         'INVALID_PORT',
-        `Port ${port} is not in available_chromes (have: ${(active.available_chromes ?? [])
+        `Port ${port} is not in available_chromes (have: ${active.available_chromes
           .map((c) => c.port)
           .join(', ') || '<empty>'}). Call qa_discover_chromes first if framework ports changed.`,
       );
@@ -131,9 +137,6 @@ export class MementoPauseStore implements PauseStore {
     const updated: PausePayload = {
       ...active,
       selected_cdp_port: port,
-      // Keep legacy cdp_ws_url synced for transitional consumers that still
-      // read the field directly off PausePayload.
-      cdp_ws_url: candidate.ws_url,
     };
     await this.globalState.update(KEY_ACTIVE, updated);
     const selection: ChromeSelection = {
@@ -154,7 +157,7 @@ export class MementoPauseStore implements PauseStore {
     chromes: AvailableChrome[],
   ): Promise<{ cleared: boolean }> {
     const active = this.getActivePause(sessionId)!;
-    const priorPort = active.selected_cdp_port ?? null;
+    const priorPort = active.selected_cdp_port;
     const priorInNewList =
       priorPort != null && chromes.some((c) => c.port === priorPort);
     const cleared = priorPort != null && !priorInNewList;
@@ -162,9 +165,6 @@ export class MementoPauseStore implements PauseStore {
       ...active,
       available_chromes: chromes,
       selected_cdp_port: cleared ? null : priorPort,
-      cdp_ws_url: cleared
-        ? chromes[0]?.ws_url ?? active.cdp_ws_url
-        : active.cdp_ws_url,
     };
     await this.globalState.update(KEY_ACTIVE, updated);
     if (cleared) {

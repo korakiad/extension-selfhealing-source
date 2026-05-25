@@ -1,4 +1,11 @@
-export type QaErrorCode = 'NO_ACTIVE_PAUSE' | 'SESSION_NOT_FOUND' | 'PAUSE_ALREADY_RESOLVED';
+export type QaErrorCode =
+  | 'NO_ACTIVE_PAUSE'
+  | 'SESSION_NOT_FOUND'
+  | 'PAUSE_ALREADY_RESOLVED'
+  // v5.16 PLAN-cdp-port-discovery
+  | 'INVALID_PORT'
+  | 'NO_CHROMES_FOUND'
+  | 'BROWSER_NOT_SELECTED';
 
 export class QaToolError extends Error {
   constructor(public readonly code: QaErrorCode, message: string) {

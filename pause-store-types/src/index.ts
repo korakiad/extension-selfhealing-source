@@ -42,14 +42,6 @@ export interface ChromeSelection {
   source: ChromeSelectionSource;
 }
 
-/**
- * @deprecated v5.16 transitional — will be removed once all readers migrate to
- * `selected_cdp_port`/`available_chromes`. Maps to `ChromeOwner` going forward:
- *   'A' → 'framework' (Mode A pauses are user-test-code-owned)
- *   'B' → 'companion' (Mode B pauses are companion-owned)
- */
-export type BrowserOwnershipMode = 'A' | 'B';
-
 export interface PausePayload {
   session_id: string;
   /** It()-only title (kept for Output Channel + UI label friendliness). */
@@ -62,20 +54,12 @@ export interface PausePayload {
   line?: number;
   failing_assertion: string;
   stack_trace: { frames: string[]; more_at?: string };
-  /**
-   * v5.16 transitional — primary chrome's ws_url, populated EITHER from legacy
-   * Mode A/B publish OR from `available_chromes[0]?.ws_url` during the migration.
-   * @deprecated callers should migrate to deriving from `available_chromes` + `selected_cdp_port`.
-   */
-  cdp_ws_url: string;
-  /** @deprecated v5.2 transitional. Maps to `chrome_owner`. */
-  mode?: BrowserOwnershipMode;
-  /** v5.16 — discovered chromes via /json/version probe. Optional during migration; required post-v5.16. */
-  available_chromes?: AvailableChrome[];
-  /** v5.16 — null until qa_select_chrome / extension UI commits. Optional during migration. */
-  selected_cdp_port?: number | null;
-  /** v5.16 — lifecycle ownership. Optional during migration; derives from `mode` legacy field if absent. */
-  chrome_owner?: ChromeOwner;
+  /** v5.16 — discovered chromes via /json/version probe. */
+  available_chromes: AvailableChrome[];
+  /** v5.16 — null until qa_select_chrome / extension UI commits. */
+  selected_cdp_port: number | null;
+  /** v5.16 — lifecycle ownership. Always 'framework' on Mode C publish. */
+  chrome_owner: ChromeOwner;
   screenshot_path?: string;
   console_logs: { lines: string[]; bytes: number; more_at?: string };
   paused_at_ms: number;
@@ -193,18 +177,16 @@ export function toFailureContextView(
   proposal: Proposal | undefined,
   format: ResponseFormat,
 ): FailureContextView {
-  // v5.16 — derive cdp_ws_url from selection state (PLAN §3.2). The
-  // selected port wins; otherwise fall back to the legacy `cdp_ws_url`
-  // field still populated by qa-hooks for the transition period. Mode C
-  // pauses with no selection committed surface `null` so the agent's
-  // 3-branch picker in qa_get_failure_context can ask the user.
-  const selectedPort = active.selected_cdp_port ?? null;
+  // v5.16 — derive cdp_ws_url from selection state (PLAN §3.2). Null until
+  // qa_select_chrome / extension UI commits a selection. The agent's
+  // 3-branch picker in qa_get_failure_context reads available_chromes +
+  // selected_cdp_port to drive the askUser flow.
+  const selectedPort = active.selected_cdp_port;
   const selected =
     selectedPort != null
-      ? active.available_chromes?.find((c) => c.port === selectedPort)
+      ? active.available_chromes.find((c) => c.port === selectedPort)
       : undefined;
-  const derivedCdpWsUrl =
-    selected?.ws_url ?? (active.available_chromes && active.available_chromes.length > 0 ? null : active.cdp_ws_url ?? null);
+  const derivedCdpWsUrl = selected?.ws_url ?? null;
   const view: FailureContextView = {
     session_id: active.session_id,
     test_title: active.test_title,
@@ -240,19 +222,78 @@ export function toFailureContextView(
 }
 
 /**
- * v5.5 §2.4 / NB5 / Q4 — defensive normalization for `PausePayload` blobs
- * read from untrusted-by-design storage (e.g., MementoPauseStore over
- * `ExtensionContext.globalState`). Pre-v5.5 stored pauses lack `full_title`;
- * fall back to `test_title` so stale-resume + Give Up flows do not crash on
- * the version bump. Returns undefined for non-object input (defaults the
- * `peekActivePause()` empty case).
+ * v5.16 PLAN-cdp-port-discovery §3.2 + §3.7 (H4) — pure normalization for
+ * stored `PausePayload` blobs read from untrusted-by-design storage (Memento
+ * or in-memory). Returns `{payload, diagnostics}`; caller logs diagnostics.
+ *
+ * Migration table:
+ *  - `available_chromes` present → no migration.
+ *  - legacy `mode='A'`/`'B'` or bare `cdp_ws_url` → parse port from URL,
+ *    rebuild as single-entry `available_chromes` with `selected_cdp_port`
+ *    set; `chrome_owner='framework'` for A, `'companion'` otherwise.
+ *  - none of the above → empty `available_chromes`, no selection.
+ * v5.5 fallback: missing `full_title` → use `test_title` so stale-resume
+ * doesn't crash on the version bump.
  */
-export function normalizeStoredPause(raw: unknown): PausePayload | undefined {
-  if (!raw || typeof raw !== 'object') return undefined;
-  const obj = raw as Record<string, unknown>;
-  if (typeof obj.full_title === 'string') {
-    return obj as unknown as PausePayload;
+export function normalizePausePayload(raw: unknown): {
+  payload?: PausePayload;
+  diagnostics: string[];
+} {
+  if (raw == null) return { diagnostics: [] };
+  if (typeof raw !== 'object') {
+    return { diagnostics: ['stored pause was non-object; treating as no active pause'] };
   }
-  const test_title = typeof obj.test_title === 'string' ? obj.test_title : '';
-  return { ...obj, full_title: test_title } as unknown as PausePayload;
+  const obj = raw as Record<string, unknown>;
+  const diagnostics: string[] = [];
+
+  let available_chromes: AvailableChrome[] | undefined;
+  let selected_cdp_port: number | null | undefined;
+  let chrome_owner: ChromeOwner | undefined;
+
+  if (Array.isArray(obj.available_chromes)) {
+    available_chromes = obj.available_chromes as AvailableChrome[];
+    selected_cdp_port =
+      typeof obj.selected_cdp_port === 'number' ? (obj.selected_cdp_port as number) : null;
+    chrome_owner = (obj.chrome_owner as ChromeOwner | undefined) ?? 'framework';
+  } else if (typeof obj.cdp_ws_url === 'string') {
+    const match = obj.cdp_ws_url.match(/ws:\/\/[^:/]+:(\d+)\//);
+    if (match) {
+      const port = Number(match[1]);
+      available_chromes = [{ port, ws_url: obj.cdp_ws_url, page_titles: [] }];
+      selected_cdp_port = port;
+      chrome_owner = obj.mode === 'A' ? 'framework' : 'companion';
+      diagnostics.push(
+        `migrated legacy pause (mode=${obj.mode ?? 'unset'}) → port=${port}, chrome_owner=${chrome_owner}`,
+      );
+    } else {
+      available_chromes = [];
+      selected_cdp_port = null;
+      chrome_owner = 'framework';
+      diagnostics.push(`legacy cdp_ws_url did not parse a port; cleared selection`);
+    }
+  } else {
+    available_chromes = [];
+    selected_cdp_port = null;
+    chrome_owner = 'framework';
+  }
+
+  const full_title =
+    typeof obj.full_title === 'string'
+      ? (obj.full_title as string)
+      : typeof obj.test_title === 'string'
+        ? (obj.test_title as string)
+        : '';
+
+  const payload: PausePayload = {
+    ...(obj as unknown as PausePayload),
+    full_title,
+    available_chromes,
+    selected_cdp_port: selected_cdp_port ?? null,
+    chrome_owner,
+  };
+  // Strip legacy keys so downstream readers never see them.
+  delete (payload as unknown as Record<string, unknown>).cdp_ws_url;
+  delete (payload as unknown as Record<string, unknown>).mode;
+
+  return { payload, diagnostics };
 }

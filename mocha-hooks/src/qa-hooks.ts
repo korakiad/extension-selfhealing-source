@@ -100,91 +100,6 @@ const OUR_HOOK_TAG: unique symbol = Symbol('qa-hooks.afterEach');
 const QA_PATCH_INSTALLED: unique symbol = Symbol('qa-hooks.patchInstalled');
 const pausedTests = new WeakSet<Mocha.Test>();
 
-// ---------- v5.2 Mode A: wdio.remote() monkey-patch + CDP discovery ----------
-// Per ARCHITECTURE-CR-v5.2 §2.2: at --require time, probe for webdriverio
-// cheaply via require.resolve (no module execution per nodejs.org/api/modules.html).
-// If found, require() the package and install an Object.defineProperty getter
-// on `remote` that wraps the original and captures the returned browser in a
-// module-scope singleton. afterEach then discovers the CDP WS URL via
-// browser.getPuppeteer().wsEndpoint(), wrapped in try/catch because getPuppeteer
-// has a four-branch capability dispatch and throws when none match (cloud grids,
-// non-Chromium, etc.) per webdriverio/v8.40.6/.../getPuppeteer.ts.
-//
-// Known Phase 1 limitations (per CR §2.5 + §3.4.1):
-//  - Destructured `import { remote } from 'webdriverio'` at module top-level
-//    captures the pre-patch value. Mode B silently engages with audit-log line.
-//  - Native-ESM (no transpiler) bypasses CJS require.cache; Mode B engages.
-//  - Cloud grids / non-Chromium hit the getPuppeteer throw; Mode B engages.
-
-interface WdioBrowserLike {
-  getPuppeteer?: () => Promise<{ wsEndpoint?: () => string }>;
-}
-
-let currentBrowser: WdioBrowserLike | undefined;
-
-(function installWdioPatch(): void {
-  // B3 cheap probe — resolves filename without executing the module.
-  let wdioPath: string | undefined;
-  try {
-    wdioPath = require.resolve('webdriverio');
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code;
-    if (code !== 'MODULE_NOT_FOUND') throw err;
-    return; // wdio not installed — Mode B fallback engages later
-  }
-
-  // Eager load is acceptable here: cheap probe confirmed wdio is a real dep,
-  // so the 50–150ms cold-start tax is paid by users who actually want Mode A.
-  let wdio: { remote?: unknown } & Record<string, unknown>;
-  try {
-    wdio = require(wdioPath) as { remote?: unknown } & Record<string, unknown>;
-  } catch (err) {
-    process.stderr.write(`[qa-hooks] wdio probe loaded but require() threw: ${(err as Error).message}\n`);
-    return;
-  }
-
-  const originalRemote = wdio.remote;
-  if (typeof originalRemote !== 'function') {
-    process.stderr.write(`[qa-hooks] wdio.remote is not a function (got ${typeof originalRemote}); Mode A skipped\n`);
-    return;
-  }
-
-  const patchedRemote = async function patchedRemote(this: unknown, ...args: unknown[]): Promise<unknown> {
-    const browser = await (originalRemote as Function).apply(this, args);
-    currentBrowser = browser as WdioBrowserLike;
-    return browser;
-  };
-
-  // B5 defensive: Object.defineProperty with getter keeps the binding live
-  // through esbuild/tsc-generated CJS export descriptors. Strict-mode naked
-  // assignment on a read-only data property throws; sloppy-mode silently
-  // no-ops. The post-write equality check catches the sloppy-mode silent-
-  // failure path and falls back to Mode B with an audit log line.
-  try {
-    Object.defineProperty(wdio, 'remote', {
-      configurable: true,
-      get: () => patchedRemote,
-    });
-  } catch {
-    try {
-      (wdio as { remote: unknown }).remote = patchedRemote;
-    } catch (err) {
-      process.stderr.write(`[qa-hooks] could not patch wdio.remote: ${(err as Error).message}; Mode B fallback engages\n`);
-      return;
-    }
-  }
-  // Sloppy-mode silent-failure equality re-check per CR §5.
-  if ((wdio as { remote: unknown }).remote !== patchedRemote) {
-    process.stderr.write(
-      `[qa-hooks] wdio.remote patch silently failed (sloppy-mode no-op); Mode B fallback engages\n`,
-    );
-    return;
-  }
-  // v5.3 §2.6 positive logging: confirms Mode A patch installed; lets engineers
-  // verify from Output Channel without re-running with custom instrumentation.
-  process.stderr.write(`[qa-hooks] wdio.remote patch installed (path=${wdioPath})\n`);
-})();
-
 // ---------- v5.15 Suite.prototype.afterEach monkey-patch ----------
 // Per PLAN-hook-order-injection.md §3. Mocha's hookUp (runner.js:610-619)
 // runs afterEach innermost-first → root last. If a user has an afterEach in
@@ -270,11 +185,6 @@ let currentBrowser: WdioBrowserLike | undefined;
   (Suite.prototype as unknown as Record<symbol, unknown>)[QA_PATCH_INSTALLED] = true;
   process.stderr.write('[qa-hooks] Suite#afterEach patched for first-position injection\n');
 })();
-
-// Note: discoverCdpWsUrl was inlined into afterEach in sub-phase 14c so the
-// mode-detection result (Mode A vs Mode B) can be captured alongside the URL
-// for the PausePayload.mode field. The capability-branch try/catch logic
-// remains structurally identical.
 
 function getConnection(): JsonRpcConnection | undefined {
   if (conn) return conn;
@@ -438,15 +348,6 @@ async function qaAfterEachImpl(this: Mocha.Context): Promise<void> {
       `[qa-hooks] CDP discovery: WARN no chromes responded — extension and agent must askUser for ports\n`,
     );
   }
-  // Transitional: populate legacy cdp_ws_url field from primary (available_chromes[0])
-  // until all downstream callers migrate to selected_cdp_port + available_chromes.
-  // Fallback to QA_DEBUG_CDP_WS_URL only for legacy compat — Mode C is the primary path.
-  const primaryWsUrl =
-    availableChromes[0]?.ws_url ??
-    process.env.QA_DEBUG_CDP_WS_URL ??
-    'ws://localhost:9222';
-  const cdpWsUrl = primaryWsUrl;
-  const mode: 'A' | 'B' = 'B'; // legacy field; chrome_owner is the v5.16 truth
   // v5.8 — defensive diagnostic for unreachable-in-normal-flow cases.
   // Post-qa-reporter-fix (v5.8 EVENT_TEST_FAIL handler), test.err should
   // always be set when state==='failed' because Runner.fail wraps non-Error
@@ -469,9 +370,6 @@ async function qaAfterEachImpl(this: Mocha.Context): Promise<void> {
     file: test.file ?? null,
     line: fileLineFromStack(test.err?.stack),
     error: serializeError(test.err),
-    cdp_ws_url: cdpWsUrl,
-    mode,
-    // v5.16 Mode C — runtime-gated selection state.
     available_chromes: availableChromes,
     selected_cdp_port: null,
     chrome_owner: 'framework',

@@ -553,10 +553,20 @@ export function createTestControllerWrapper(
           }
           appendInfo(channel, `[test-controller] paused on id=${item.id}`);
 
+          const selectedPort = pause.selected_cdp_port;
+          const selectedWsUrl =
+            selectedPort != null
+              ? pause.available_chromes.find((c) => c.port === selectedPort)?.ws_url
+              : undefined;
+          const browserLine = selectedWsUrl
+            ? `_Browser held at \`${selectedWsUrl}\` — ask Copilot to investigate._`
+            : pause.available_chromes.length > 0
+              ? `_${pause.available_chromes.length} Chrome(s) discovered — pick one in the status bar._`
+              : `_No Chrome found at default debug ports — use the status-bar action to enter the framework's port(s)._`;
           const md = new vscode.MarkdownString(
             `**${pause.test_title}** failed at \`${path.basename(pause.file)}:${pause.line ?? '?'}\`.\n\n` +
               `${pause.failing_assertion}\n\n` +
-              `_Browser held at \`${pause.cdp_ws_url}\` — ask Copilot to investigate._`,
+              browserLine,
           );
           md.isTrusted = false;
           const msg = new vscode.TestMessage(md);

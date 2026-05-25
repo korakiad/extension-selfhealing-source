@@ -35,6 +35,18 @@ export class QaDebugMcpProvider implements vscode.McpServerDefinitionProvider {
     this.emitter.fire();
   }
 
+  /**
+   * v5.16 PLAN-cdp-port-discovery §3.18 — clear playwright-mcp registration
+   * mid-pause without ending the pause itself (used when
+   * `onChromeDeselected` fires because qa_discover_chromes invalidated the
+   * prior selection). Re-selection via `onChromeSelected` will re-register.
+   */
+  clearPaused(): void {
+    if (this.state === 'idle') return;
+    this.state = 'idle';
+    this.emitter.fire();
+  }
+
   // Signature matches vscode.d.ts:20533 verbatim — CancellationToken required.
   provideMcpServerDefinitions(_token: vscode.CancellationToken): vscode.McpServerDefinition[] {
     if (this.state === 'idle') return [];

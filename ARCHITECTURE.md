@@ -93,12 +93,19 @@ afterEach(async function () {
   // the real liveness watchdog. See "Why disable the hook timeout?" paragraph.
   this.timeout(0);
 
+  // v5.16 PLAN-cdp-port-discovery — Mode C. Probe effectiveCdpPorts()
+  // ([22135, 22136] default, overridable via QA_DEBUG_CDP_PORTS) per pause
+  // via GET /json/version + /json/list. The pause publishes available_chromes
+  // + selected_cdp_port: null + chrome_owner: 'framework'; cdp_ws_url is a
+  // derived view-side field after qa_select_chrome / extension UI commits.
   const sessionId = await ipc.publishPause({
     test: this.currentTest.title,
     file: this.currentTest.file,
     line: this.currentTest.err?.stack?.match(/:(\d+):/)?.[1],
     error: serializeError(this.currentTest.err),
-    cdp_ws_url: process.env.QA_DEBUG_CDP_WS_URL ?? 'ws://localhost:9222',
+    available_chromes: await probeChromePorts(effectiveCdpPorts()),
+    selected_cdp_port: null,
+    chrome_owner: 'framework',
     started_at: Date.now(),
     retry_count: this.currentTest.currentRetry(),
   });
