@@ -85,9 +85,9 @@ export interface FailureContextView {
   failing_assertion: string;
   stack_trace: { frames: string[]; more_at?: string };
   /**
-   * v5.16 — derived from selected_cdp_port + available_chromes; falls back to legacy
-   * `PausePayload.cdp_ws_url` during migration. Optional in interface; consumers
-   * pre-v5.16 may not project this field.
+   * v5.16 — derived from selected_cdp_port + available_chromes (PLAN §3.2).
+   * Null until qa_select_chrome / extension UI commits a selection. Optional
+   * in interface; consumers pre-v5.16 may not project this field.
    */
   cdp_ws_url?: string | null;
   /** v5.16 — exposed to agent so qa_get_failure_context can guide 3-branch picking. */

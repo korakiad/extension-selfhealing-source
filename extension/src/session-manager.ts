@@ -492,16 +492,15 @@ export class SessionManager {
  * to the HTTP root form (`http://host:port`) that `mcpProvider.setPaused` expects.
  *
  * Playwright `connectOverCDP` accepts BOTH ws-with-path and http-root forms
- * (class-browsertype.md), but canonicalizing to http-root keeps the wire-bound
- * value aligned with `chrome.cdpHttpEndpoint` (chrome.ts:138) — single shape
- * across Mode A (wire-discovered random/locked port) and Mode B (extension's
- * own 9222 chrome). http-root also lets Playwright re-discover the active
- * target via `/json/version` if the devtools UUID rotates between discovery
- * and connect.
+ * (class-browsertype.md), but canonicalizing to http-root lets Playwright
+ * re-discover the active target via `/json/version` if the devtools UUID
+ * rotates between discovery and connect.
  *
- * Assumes the input uses `ws://` scheme (validated by `PausePayload.cdp_ws_url`
- * zod schema in mocha-hooks/protocol.ts). If remote-chrome `wss://` support is
- * ever added, preserve scheme via `wsUrl.startsWith('wss:') ? 'https' : 'http'`.
+ * Assumes the input uses `ws://` scheme — v5.16 ChromeSelection.cdp_ws_url
+ * comes from qa-hooks' /json/version probe (mocha-hooks/qa-hooks.ts), which
+ * normalizes via normalizeCdpWsUrl and keeps the scheme as published by
+ * Chrome itself. If remote-chrome `wss://` support is ever added, preserve
+ * scheme via `wsUrl.startsWith('wss:') ? 'https' : 'http'`.
  */
 function cdpWsUrlToHttpRoot(wsUrl: string): string {
   const u = new URL(wsUrl);
