@@ -138,7 +138,7 @@ export const PLAYWRIGHT_MCP_TOOLS: Anthropic.Tool[] = [
   {
     name: 'browser_close',
     description:
-      "Closes the agent's Playwright session against the held browser. Does NOT tear down the underlying held-on-failure Chrome process that the QA Debug Companion owns — that requires qa_propose_close_browser.",
+      "Closes the agent's Playwright session against the held browser. Does NOT tear down the underlying held-on-failure Chrome process — that is owned by the test framework (Mode C) and disposed by the framework's teardown.",
     input_schema: obj({}),
   },
   {

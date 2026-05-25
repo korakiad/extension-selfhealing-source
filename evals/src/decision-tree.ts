@@ -43,10 +43,8 @@ const MCP_CFG_DIR = '/tmp';
 const SKILL_PATH = join(here, '../../extension/skills/qa-debug/SKILL.md');
 
 const QA_DECISION_VERBS = new Set<QaVerb>([
-  'qa_request_retry',
   'qa_request_give_up',
   'qa_propose_mark_passed',
-  'qa_propose_close_browser',
   'qa_propose_abort_suite',
 ]);
 

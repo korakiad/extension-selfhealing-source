@@ -11,7 +11,7 @@ Companion to SLICE_PLAN.md §S3 exit criterion (c) + §4 Phase-1-exclusion list.
 
 ## Surface measured
 
-- `qa-debug` MCP server: 6 tools (`qa_get_failure_context`, `qa_request_retry`, `qa_request_give_up`, `qa_propose_mark_passed`, `qa_propose_close_browser`, `qa_propose_abort_suite`).
+- `qa-debug` MCP server: 4 commit/inspect tools (`qa_get_failure_context`, `qa_request_give_up`, `qa_propose_mark_passed`, `qa_propose_abort_suite`) plus 2 Mode-C discovery tools (`qa_discover_chromes`, `qa_select_chrome`). `qa_request_retry` and `qa_propose_close_browser` were removed when retry was dropped — re-running happens via Test Explorer ▶, and Chrome is owned by the test framework under Mode C.
 - `playwright-mcp` curated subset for evals: 14 tools (see "Why curated, not full ~25" below).
 - `qa-debug` SKILL.md frontmatter `description` only (body lands in S5 per SLICE_PLAN §S5; not part of this S3 budget).
 
