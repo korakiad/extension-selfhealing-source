@@ -1,5 +1,9 @@
 # ARCHITECTURE v5.4 — Change Request: chat-flow refinement (drop chat-driven suite-running; status-bar augments notification; MCP tool annotations for Agent-mode auto-invocation)
 
+> **NOTE (post-drop-retry):** Sections of this CR referencing `qa_request_retry`, the `--grep` respawn, retry-pass recovery, or `qa_propose_close_browser` describe behavior that has been removed. See `/Users/kiattikhun/.claude/plans/robust-marinating-whistle.md` for the deletion record. This CR survives as historical context.
+
+
+
 > Status: **Iteration #1 (file)** drafted 2026-05-21. An *in-conversation* iter-#1 design sketch was reviewed earlier the same day and returned **REVISE** with 4 blockers (**B1** drop chat-driven suite-running entirely per reviewer option (ii); **B2** no confirmation-dialog-as-safety-net; **B3** reword "Primary canonical" → "Primary surface (project choice)"; **B4** reword "status bar replaces notification" → "augments") + 1 resolved non-blocker (**NB1** `LanguageModelToolInformation.tags` exists at vscode.d.ts:21146). This file incorporates B1–B4 inline from inception so the next iter#2 reviewer audits the converged design directly. Change tags: **[Bn]** = in-conversation iter-#1 blockers applied here.
 >
 > Scope: §3.3 (chat-participant + SKILL coexistence retained; `qa_run_suite` and `#qaRunSuite` explicitly NOT added — **[B1]**), §3.4 (MCP gating gains §3.4.3 annotations), §3.5 (notification reverts to two-button form — removes v5.3 "Ask Copilot"), §3.7 NEW (status-bar entry — **[B4]** augments, does not replace), §4 step 5.5 (revised: no Ask-Copilot click; status-bar augments toast), and SLICE_PLAN §4 (Phase-2 follow-ups appended).

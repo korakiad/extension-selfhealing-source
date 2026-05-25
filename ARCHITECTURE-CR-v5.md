@@ -1,5 +1,9 @@
 # ARCHITECTURE v5 Change Request — Mocha state-mutation pattern is empirically broken
 
+> **NOTE (post-drop-retry):** Sections of this CR referencing `qa_request_retry`, the `--grep` respawn, retry-pass recovery, or `qa_propose_close_browser` describe behavior that has been removed. See `/Users/kiattikhun/.claude/plans/robust-marinating-whistle.md` for the deletion record. This CR survives as historical context.
+
+
+
 > **Status:** OPEN. Filed during S2 implementation on 2026-05-20.
 > Source files referenced: `ARCHITECTURE.md` v4 §3.1, `SLICE_PLAN.md` v4 S2.
 > Filed by: implementation pass; awaiting Ralph-loop reviewer.

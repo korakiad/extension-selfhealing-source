@@ -88,10 +88,12 @@ Each slice must produce a **runnable, demoable artifact** with explicit exit cri
 
 **(a) MCP server.** `qa-debug-mcp/` over stdio (`@modelcontextprotocol/sdk`), capabilities = `tools`. Self-identifies as server `qa-debug` (lowercase, hyphenated — see §0.1).
 
-Tools (6 total — `qa_wait_for_pause` removed per [**Q3**]):
+Tools (4 commit/inspect — retry and close-browser dropped post-Mode-C):
 - `qa_get_failure_context` (read; `response_format` enum).
-- `qa_request_retry`, `qa_request_give_up` (commit-by-MCP for reversible verbs).
-- `qa_propose_mark_passed`, `qa_propose_close_browser`, `qa_propose_abort_suite` (propose-only).
+- `qa_request_give_up` (commit-by-MCP for the give-up verb).
+- `qa_propose_mark_passed`, `qa_propose_abort_suite` (propose-only).
+
+Re-running after a fix is the user's action via Test Explorer ▶ Run, not an agent-callable verb. Chrome is framework-owned (Mode C), so no `qa_propose_close_browser`.
 
 All tool input schemas declared with strict JSON Schema; error codes per ARCHITECTURE §3.2 (`NO_ACTIVE_PAUSE`, `SESSION_NOT_FOUND`).
 
@@ -100,7 +102,7 @@ Internal `PauseStore` interface (read + propose-set + verdict-poll); S3 ships an
 **(b) Authoring.** Every MCP tool description is written to:
 - include (i) when to call it, (ii) what it returns, (iii) at least one named error condition — per `https://www.anthropic.com/engineering/writing-tools-for-agents` "describe to a new hire" guidance; [**NB4**]
 - use third-person voice (per Skills best-practices, same convention applied here); [**NB1**]
-- avoid semantic overlap with playwright-mcp tools (e.g., `qa_propose_close_browser` description must distinguish itself from `browser_close`).
+- avoid semantic overlap with playwright-mcp tools when verb descriptions could collide.
 
 **(c) Skill SKILL.md frontmatter (file: `extension/skills/qa-debug/SKILL.md`).** Write the **frontmatter only** — `name: qa-debug`, `description: <one paragraph>`. Do NOT write the body yet (the body lands in S5). Required frontmatter fields per `platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices` are `name` and `description` only (no `when`). Description text must satisfy the engagement evals below.
 
@@ -141,10 +143,10 @@ Run the evals against a Claude API session with: a stub MCP serving canned `qa_g
     - **flip `qa-debug.paused` context key — this controls UI command enablement and Test Explorer button visibility, NOT Skill engagement;** [**B5**]
     - provider re-emits `onDidChangeMcpServerDefinitions` with `[playwright-mcp(cdpEndpoint=ws://localhost:9222), qa-debug]`.
   - On any commit: clear pause; flip context key off; provider re-emits with `[]`.
-- **UI surface [Q1]:** VS Code notification + Test Explorer failure annotation + three inline command links (`qa-debug.retry`, `qa-debug.markPassed`, `qa-debug.giveUp`). The Test Explorer annotation is the **only** commit path for `mark_passed` / `close_browser` / `abort_suite`. **No `vscode.chat.createChatParticipant`** in Phase 1.
+- **UI surface [Q1]:** VS Code notification + Test Explorer failure annotation + two inline command links (`qa-debug.markPassed`, `qa-debug.giveUp`). The Test Explorer annotation is the **only** commit path for `mark_passed` / `abort_suite`. **No `vscode.chat.createChatParticipant`** in Phase 1. Re-running after a fix is via Test Explorer ▶ — there is no inline retry icon.
   - Inline `reason`/`rationale` rendering per ARCHITECTURE §3.5.
 - Wire `qa_propose_*` MCP calls → PauseStore proposal → UI button → on click → IPC `decision.await` returns the matching kind.
-- Wire `qa_request_retry` / `qa_request_give_up` → PauseStore → IPC immediately (no UI commit step).
+- Wire `qa_request_give_up` → PauseStore → IPC immediately (no UI commit step).
 - **Skill engagement comes from the SKILL.md `description` matching the user's chat turn (per Anthropic Skills semantics)**, not from a VS Code context-key gate. The `qa-debug.paused` context key only gates *UI affordances*, not Skill loading. [**B5**]
 
 **Exit criteria.**
@@ -231,7 +233,7 @@ All five v4→v5 follow-ups have been applied to ARCHITECTURE v5 (APPROVE-with-p
 - **A.** `chatSkills.when` claim dropped; engagement description-driven; `qa-debug.paused` context key gates UI affordances only. Iteration #3 fix: `path` points at SKILL.md file (not directory).
 - **B.** MCP FQN form switched to `server:tool`.
 - **C.** `qa_wait_for_pause` removed; tool count cap dropped from ~32 to ~31.
-- **D.** `qa_propose_close_browser` UI commit gate preserved with asset-destruction-asymmetry defense paragraph.
+- **D.** Historical: `qa_propose_close_browser` UI commit gate was preserved with the asset-destruction-asymmetry defense paragraph. Verb was dropped entirely post-drop-retry (Chrome is framework-owned under Mode C); the defense no longer applies.
 
 ## 4. Out of phase 1 (binding)
 

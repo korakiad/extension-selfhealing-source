@@ -1,5 +1,9 @@
 # ARCHITECTURE v5.2 — Change Request: transparent browser ownership + transparent mocha config injection
 
+> **NOTE (post-drop-retry):** Sections of this CR referencing `qa_request_retry`, the `--grep` respawn, retry-pass recovery, or `qa_propose_close_browser` describe behavior that has been removed. See `/Users/kiattikhun/.claude/plans/robust-marinating-whistle.md` for the deletion record. This CR survives as historical context.
+
+
+
 > Status: **Iteration #3 draft 2026-05-21**, applies reviewer #2 polish items + Q2 answer. Iteration #2 applied reviewer #1's 5 blockers + 9 non-blockers + closed Q1–Q5. Change tags: **[R#2-Bn]** / **[R#2-NBn]** = iter-2 fixes (preserved); **[R#3-NBn]** = iter-3 polish (this iteration).
 >
 > Scope: §2 (Architecture decision), §3.1 (hook), §3.2 (tool surface — small Mode-A adjustment), §3.4 (MCP gating & Chrome lifecycle), §3.5 (Pause-store), §4 (Failure-pause loop). No change to §3.3 (SKILL.md), §3.6 (qa-reporter).

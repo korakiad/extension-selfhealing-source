@@ -1,5 +1,9 @@
 # ARCHITECTURE v5.6 — Change Request: Test Explorer inline action surface + prefilled-chat command + delayed-failed reporting model
 
+> **NOTE (post-drop-retry):** Sections of this CR referencing `qa_request_retry`, the `--grep` respawn, retry-pass recovery, or `qa_propose_close_browser` describe behavior that has been removed. See `/Users/kiattikhun/.claude/plans/robust-marinating-whistle.md` for the deletion record. This CR survives as historical context.
+
+
+
 > Status: **Iteration #2 (file)** drafted 2026-05-22. Iter#1 reviewer returned **REVISE-with-blockers** (5 blockers: Probe F empirical, context-key namespace, invented PauseStore API, multi-pause invariant, missing §3 edits, 2 polish items). All blockers addressed inline below; tag **[I2#n]** marks iter#2 changes. Iter#1 status block preserved at §8. Two user-feedback drivers from the post-v5.5 session on 2026-05-22:
 >
 > 1. **Ergonomics gap on the pause surface.** User feedback: *"ตอนนี้มันดูใช้ยากไปหน่อย"* (current pause-engagement is awkward) — even with v5.4's status-bar + notification, there is no per-test affordance in Test Explorer to (a) commit a decision (Resume/Mark-Passed/Give-Up) without leaving the Testing view, and (b) drop the user into Copilot Chat with the pause context already filled in. v5.4 §2.5 declared Test Explorer the "canonical decision-button host on failed items" but Phase 1 never made those buttons concrete; this CR does.

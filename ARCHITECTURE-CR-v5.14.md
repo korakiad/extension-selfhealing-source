@@ -1,5 +1,9 @@
 # ARCHITECTURE v5.14 — Change Request: replace gated dynamic MCP registration with VS Code Language Model Tool API
 
+> **NOTE (post-drop-retry):** Sections of this CR referencing `qa_request_retry`, the `--grep` respawn, retry-pass recovery, or `qa_propose_close_browser` describe behavior that has been removed. See `/Users/kiattikhun/.claude/plans/robust-marinating-whistle.md` for the deletion record. This CR survives as historical context.
+
+
+
 > Status: **Iteration #2 (file)** 2026-05-22. Iter#1 reviewer returned **REVISE-with-blockers** (3 blockers: B1 unenumerated `QaToolError` production import from `extension/src/pause-store.ts:29`; B2 `qa-debug:` occurrence-count miscount in §3.3 + missed `commands.ts:171` prefilled-chat string + ambiguity about `playwright-mcp:` colon-form survival; B3 propose/commit→`prepareInvocation` collapse lacked an explicit canonical-surface decision and lost-race semantics). All three blockers addressed inline below; tag **[I2#n]** marks iter#2 changes. Iter#1 polish items P1–P4 also folded (Q-D, Q-F, Q-H resolved → dropped from open list; Q-E resolved by extraction commitment in §3.1/§5). Iter#1 reviewer notes preserved at §8.
 >
 > **Driver.** Two user-stated concerns from the 2026-05-22 session that compound:

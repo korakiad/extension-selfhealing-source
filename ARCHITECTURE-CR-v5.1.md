@@ -1,5 +1,9 @@
 # ARCHITECTURE v5.1 — Change Request: remove `invalidateRequireCache(file)` no-op from §3.1 retry branch
 
+> **NOTE (post-drop-retry):** Sections of this CR referencing `qa_request_retry`, the `--grep` respawn, retry-pass recovery, or `qa_propose_close_browser` describe behavior that has been removed. See `/Users/kiattikhun/.claude/plans/robust-marinating-whistle.md` for the deletion record. This CR survives as historical context.
+
+
+
 > Status: Ralph-loop iteration #1 APPROVE-with-polish (2026-05-21); polish applied below; iteration #2 pending for final sign-off.
 >
 > Scope: §3.1 retry branch only. No other architectural change.

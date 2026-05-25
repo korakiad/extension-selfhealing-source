@@ -1,5 +1,9 @@
 # ARCHITECTURE v5.5 — Change Request: pre-pause test discovery + selective run via Test Explorer
 
+> **NOTE (post-drop-retry):** Sections of this CR referencing `qa_request_retry`, the `--grep` respawn, retry-pass recovery, or `qa_propose_close_browser` describe behavior that has been removed. See `/Users/kiattikhun/.claude/plans/robust-marinating-whistle.md` for the deletion record. This CR survives as historical context.
+
+
+
 > Status: **Iteration #1 (file)** drafted 2026-05-21. Closes the structural gap surfaced post-S4/v5.4: `TestController` only lazy-creates `TestItem`s at pause-time, so a QA who opens Test Explorer BEFORE running anything sees an empty tree and cannot pick a specific describe/it to run. v5.5 introduces AST-driven discovery + `resolveHandler` + File→Describe→It hierarchy + `FileSystemWatcher` + selective-run via anchored `--grep`. Also adds **`full_title`** to PausePayload so discovery-time TestItem id matches pause-time TestItem id (without it the two paths produce different ids and the tree forks).
 >
 > Scope: §2 component list (`test-discovery.ts` new + extended `test-controller.ts`), §3.1 qa-hooks `afterEach` payload (adds `full_title`), §3.6 reporter unchanged, §3.7 (v5.4) status-bar unchanged, §3.8 NEW (Test Explorer discovery model), §4 failure-pause loop unchanged. Wire IPC: `PausePayload` schema gains `full_title: string`. Stored `PausePayload` (pause-store-types) gains `full_title: string`.

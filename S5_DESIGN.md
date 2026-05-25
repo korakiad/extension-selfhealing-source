@@ -1,5 +1,7 @@
 # S5 — SKILL.md body: full per-failure-mode decision tree
 
+> **SUPERSEDED in part by drop-retry (see `/Users/kiattikhun/.claude/plans/robust-marinating-whistle.md`):** Arms 1 and 2 in this doc cite `qa_request_retry`, which no longer exists. The live `extension/skills/qa-debug/SKILL.md` is the canonical surface — under the new model, Arms 1 and 2 propose a fix and hand back to the user (no autonomous verb commit), and the user re-runs via Test Explorer ▶. Retry-exit conditions are also obsolete (no retry verb to exit from). This file's other arms (env-flake / structural / ambiguous-or-out-of-scope) are unaffected.
+>
 > Status: **Iteration #1** drafted 2026-05-21. Subject of the [[feedback-ralph-loop]] adversarial review (cap=3 per CR-v5.1 / v5.2 / v5.3 / v5.4 / v5.5 precedent). Replaces the S4-shipped stub body at `extension/skills/qa-debug/SKILL.md:6–29` while preserving the S3-APPROVED frontmatter (30/30 engagement evals PASS on 2026-05-21; see [[project-qa-companion]] S3 entry).
 >
 > Scope: SKILL.md body content + per-decision rationale + named-error handling + Mode A/B awareness + retry exit conditions + escalation paths. NO MCP tool changes; NO architectural changes; NO chat-participant or status-bar changes.

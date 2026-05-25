@@ -1,5 +1,9 @@
 # ARCHITECTURE v5.3 — Change Request: chat-participant integration for seamless pause-to-investigation handoff
 
+> **NOTE (post-drop-retry):** Sections of this CR referencing `qa_request_retry`, the `--grep` respawn, retry-pass recovery, or `qa_propose_close_browser` describe behavior that has been removed. See `/Users/kiattikhun/.claude/plans/robust-marinating-whistle.md` for the deletion record. This CR survives as historical context.
+
+
+
 > Status: **Iteration #3 draft 2026-05-21** — APPROVED by reviewer #2 with explicit waiver of iter#4. Iter-#1 applied 6 blockers + 9 non-blockers; iter-#2 reviewer returned APPROVE-with-polish with 9 polish items; iter-#3 (this draft) applies all 9 polish items inline. Change tags: **[R#2-Bn]** / **[R#2-NBn]** = iter-2 fixes (preserved); **[R#3-NBn]** = iter-3 polish. Iter-#1 surfaced from user feedback against the v5.2 F5 smoke output (screenshot 2026-05-21): pause-publish + Test Explorer + MCP gate all worked correctly, but the Sessions / Copilot chat panel did NOT auto-engage the qa-debug Skill — user had to manually open chat and type a query, leaving an "experience seam" the [[feedback-transparent-use]] mandate doesn't cover but [[feedback-chat-panel-engagement]] now formalizes.
 >
 > Scope: §2 (Architecture decision — chat-participant added to component list), §3.3 (SKILL.md retained but augmented with chat-participant invocation path), §3.4 (gating — context-key flips now also fire the chat-participant availability event), §3.5 (notification UX gains "Ask Copilot" button), §4 (failure-pause loop adds chat-open step), and SLICE_PLAN.md §4 (chat-participant promoted from Phase 2 to Phase 1 must-have).

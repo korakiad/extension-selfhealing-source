@@ -161,17 +161,6 @@ All tools are prefixed `qa_` under server `qa-debug`. **Agent-facing FQN is `qa-
     NO_ACTIVE_PAUSE — no test is currently paused
     SESSION_NOT_FOUND — sessionId does not match any pause
 
-- name: qa_request_retry
-  description: |
-    Requests that Mocha re-runs the currently paused test. beforeEach
-    re-runs. Callers should invoke this after the test or source code
-    has been edited to address the failure. Reversible: a subsequent
-    failure simply pauses again. `reason` is surfaced inline in the
-    chat notification and Test Explorer annotation.                      # [R2#Q4]
-  params:
-    session_id: string
-    reason: string
-
 - name: qa_request_give_up
   description: |
     Stops retrying the paused test, marking it as a final failure. Mocha
@@ -195,17 +184,6 @@ All tools are prefixed `qa_` under server `qa-debug`. **Agent-facing FQN is `qa-
   returns:
     proposal_id, status: 'awaiting_human'
 
-- name: qa_propose_close_browser
-  description: |
-    Proposes closing the held browser at :9222. Does NOT commit — surfaces  # [R2#Q5]
-    a confirmation button to the human. Destroys all live inspection
-    state and ends the investigation session.
-  params:
-    session_id: string
-    rationale: string
-  returns:
-    proposal_id, status: 'awaiting_human'
-
 - name: qa_propose_abort_suite
   description: |
     Proposes aborting the remaining mocha suite. Does NOT commit —          # [R2#Q5]
@@ -218,9 +196,11 @@ All tools are prefixed `qa_` under server `qa-debug`. **Agent-facing FQN is `qa-
     proposal_id, status: 'awaiting_human'
 ```
 
-The committing verbs `qa_commit_mark_passed`, `qa_commit_close_browser`, `qa_commit_abort_suite` exist in IPC and are wired **only** to UI buttons. They are **not** exposed as MCP tools [**R1#1, R2#Q5**].
+The committing verbs `qa_commit_mark_passed`, `qa_commit_abort_suite` exist in IPC and are wired **only** to UI buttons. They are **not** exposed as MCP tools [**R1#1, R2#Q5**].
 
-**On `qa_propose_close_browser` reversibility [R3#D].** `https://www.anthropic.com/research/measuring-agent-autonomy` (Feb 18, 2026) cautions that "oversight requirements that prescribe specific interaction patterns, such as requiring humans to approve every action, will create friction without necessarily producing safety benefits." `qa_propose_close_browser` is kept behind a UI commit anyway because closing the browser destroys **the human's own investigation context** — live DOM, console history, network state — which is the whole asset the system is preserving. The human is not approving an agent action against an external system; they are approving destruction of their debugging surface. This asymmetry is consistent with the gating principles published in `https://www.anthropic.com/news/our-framework-for-developing-safe-and-trustworthy-agents` (Aug 4, 2025), which frames approval by **impact severity** and **modification vs. read-only**, and with the Plan Mode pattern in `https://www.anthropic.com/research/trustworthy-agents` (Apr 9, 2026) — gates positioned as plan review before execution. The gate is therefore a novel framing consistent with published principles, not blanket per-action approval.
+**On the absence of a retry verb (post-drop-retry).** Re-running after a fix is the user's action via Test Explorer ▶ Run, not an agent-callable verb. The pause + MCP gate stay attached after a proposed fix so the user can use playwright-mcp freely to verify, then commits a terminal verb (`mark_passed`, `give_up`) or re-runs the test row directly. See `/Users/kiattikhun/.claude/plans/robust-marinating-whistle.md` for the rationale and the deletion record.
+
+**On the absence of a close-browser verb.** Chrome is owned by the test framework (Mode C — `chrome_owner === 'framework'`). The companion does not destroy a Chrome it does not own; framework teardown (e.g., `browser.deleteSession()` for wdio) handles disposal at end-of-suite.
 
 playwright-mcp tools (`browser_snapshot`, `browser_click`, `browser_evaluate`, etc., ~25 of them) are loaded as-is from `@playwright/mcp`. They register only while a pause is active — see §3.4.
 
@@ -300,7 +280,7 @@ The `qa-reporter` is a Mocha reporter packaged alongside the hook (`@qa-debug/mo
 
 **Why the reporter and not state mutation?** See §3.1's "Why no state mutation?" paragraph — the reporter is the architecturally clean alternative because it consumes Mocha's documented event surface rather than mutating internal state that `Runner#fail` has already broadcast to all subscribers.
 
-**Reporter does not bypass propose/commit gates.** The reporter only renders outcomes that have *already* been committed (or rejected) through the §3.2 propose/commit verbs. The reporter is read-only with respect to PauseStore. The asset-destruction asymmetry defense for `qa_propose_close_browser` (§3.2) is unaffected.
+**Reporter does not bypass propose/commit gates.** The reporter only renders outcomes that have *already* been committed (or rejected) through the §3.2 propose/commit verbs. The reporter is read-only with respect to PauseStore.
 
 **Reporter is for humans, not for the agent.** Verdicts back to the agent flow through `qa-debug:qa_get_failure_context.last_proposal_status` (§3.2) — high-signal structured data per `anthropic.com/engineering/writing-tools-for-agents`. The reporter's stdout is human-facing noise the agent must not poll. [R4#D]
 
@@ -317,10 +297,10 @@ The `qa-reporter` is a Mocha reporter packaged alongside the hook (`@qa-debug/mo
    - Call `qa_get_failure_context` (concise) to ground.
    - Use `browser_snapshot`, `browser_evaluate`, etc., to investigate.
    - Edit files via Copilot's built-in edit tools when warranted.
-7. Decision verbs:
-   - Agent calls `qa_request_retry` / `qa_request_give_up` autonomously with a `reason`.
-   - For mark-passed / close-browser / abort-suite: agent calls the `qa_propose_*` variant; a button appears in Test Explorer + chat; the human commits or rejects.
-8. On decision: hook's `decision.await` returns; hook publishes a `final_decision` IPC notification to the reporter; extension closes the MCP gate; provider returns `[]`. The reporter renders the tri-state outcome (passed / failed / marked-passed) at `EVENT_TEST_END`. For `retry` decisions, the extension re-invokes mocha against the same test file via `--grep <title>` in a fresh child while Chrome `:9222` stays held; the reporter aggregates retries into a single test entry in the final tally.
+7. Closing turn:
+   - For code-bug / test-bug: agent proposes the fix in chat and hands back — the user re-runs via Test Explorer ▶ Run after applying the edit. No agent-callable retry verb.
+   - For env-flake / structural / cross-repo ambiguity: agent calls `qa_propose_mark_passed` / `qa_propose_abort_suite` / `qa_request_give_up` with a rationale.
+8. On decision: hook's `decision.await` returns; hook publishes a `final_decision` IPC notification to the reporter; extension closes the MCP gate; provider returns `[]`. The reporter renders the tri-state outcome (passed / failed / marked-passed) at `EVENT_TEST_END`.
 
 ## 5. Concrete tech stack [R14#A]
 
@@ -346,7 +326,7 @@ v2 was APPROVED by Reviewer #2. v3 applied R2#NB1, R2#NB2, and answers to R2#Q1�
 - **R3#A** — VS Code `chatSkills` schema has no `when` field; engagement is description-driven per Anthropic Skills semantics. §1, §3.3, §3.4, §5 updated; `qa-debug.paused` context key repurposed to UI-affordance gating only.
 - **R3#B** — MCP FQN form in §3.3 switched from `mcp__server__tool` (Claude-Code-internal) to `server:tool` (Skills best-practices format).
 - **R3#C** — `qa_wait_for_pause` removed from §3.2; description-driven engagement makes the long-poll redundant. Tool count cap in §3.4 dropped from ~32 to ~31.
-- **R3#D** — `qa_propose_close_browser` retains its UI commit gate; defense paragraph added in §3.2 citing the asset-destruction asymmetry.
+- **R3#D** — historical: `qa_propose_close_browser` was kept behind a UI commit gate; the verb was dropped entirely when retry was removed (Chrome is framework-owned under Mode C), so the defense no longer applies.
 
 **v4 APPROVED by Ralph-loop reviewer #4 on 2026-05-20.** v5 was triggered by `ARCHITECTURE-CR-v5.md` during S2 implementation when mocha v10's `Runner#fail` event-emission order was empirically verified against runner.js source — making §3.1's state-mutation pattern unworkable. Reviewer iteration #1 returned APPROVE-with-polish (recommending Option A custom reporter) on 2026-05-20:
 
