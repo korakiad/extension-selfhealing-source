@@ -1,39 +1,55 @@
 ---
 name: qa-debug
-description: Investigates a paused Mocha test failure through the QA Debug Companion. The failing browser is held alive at a Chrome DevTools endpoint so the agent can inspect the live DOM, console, network, and asserted values via playwright-mcp tools, then propose a retry, give-up, or marked-passed decision. Engages when a Mocha test is currently paused — a QA Debug Companion notification such as "Test <title> failed at <file>:<line>, browser held at ws://localhost:9222" is present in the chat context and the user is engaging with that pause (asking why the test failed, what the held browser shows, requesting retry, give-up, or marked-passed, or describing what they changed before retrying). Does NOT engage when no Mocha test is currently paused — past CI failures, generic test-writing questions, non-Mocha runners, or unrelated programming questions asked during a pause window route through normal Copilot tools, not qa-debug.
+description: Investigates a paused Mocha test failure through the QA Debug Companion. The failing browser is held alive at a Chrome DevTools endpoint so the agent can inspect the live DOM, console, network, and asserted values via playwright-mcp tools, then propose a fix in source, propose marked-passed (env flake), or commit give-up. Engages when a Mocha test is currently paused — a QA Debug Companion notification such as "Test <title> failed at <file>:<line>, browser held for investigation" is present in the chat context and the user is engaging with that pause (asking why the test failed, what the held browser shows, requesting give-up, mark-passed, or describing what they changed). Does NOT engage when no Mocha test is currently paused — past CI failures, generic test-writing questions, non-Mocha runners, or unrelated programming questions asked during a pause window route through normal Copilot tools, not qa-debug.
 ---
 
 # QA Debug Companion — debugging a paused failure
 
-A Mocha test is currently paused at a failure. The browser that ran the test is held alive at a Chrome DevTools endpoint so you can inspect the live DOM, console, network, and asserted values via `playwright-mcp:browser_*` tools. After investigation, commit a decision per the tree below; the QA reviews any irreversible proposals via Test Explorer buttons.
+A Mocha test is currently paused at a failure. The browser that ran the test is held alive at a Chrome DevTools endpoint so you can inspect the live DOM, console, network, and asserted values via `playwright-mcp:browser_*` tools. After investigation, either propose a source/spec fix (for code-bug / test-bug) and let the user re-run via Test Explorer ▶, or commit one of the three terminal verbs: `qa_propose_mark_passed`, `qa_propose_abort_suite`, `qa_request_give_up`.
+
+There is no `qa_request_retry`. Re-running after a fix is the user's action via Test Explorer ▶ Run; the pause + MCP gate stay attached up to that point so the user can use `playwright-mcp:browser_*` tools freely to verify or extend their investigation before re-running.
 
 ## Workflow checklist (copy into your reply and tick as you go)
 
 - [ ] Step 1: Ground via `qa-debug_qa_get_failure_context` (concise)
-- [ ] Step 2: Investigate via `playwright-mcp:browser_*` against the held browser
+- [ ] Step 1b: Select a chrome (auto / `qa-debug_qa_select_chrome` / `qa-debug_qa_discover_chromes`) so `cdp_ws_url` becomes non-null
+- [ ] Step 2: Investigate via `playwright-mcp:browser_*` against the held browser — **do not shortcut by reading page source**
 - [ ] Step 3: Classify failure (one of: **code-bug** / **test-bug** / **env-flake** / **structural** / **ambiguous-or-out-of-scope**)
-- [ ] Step 4: Commit decision per Step-3 classification (see "Commit decisions" below)
-- [ ] Step 5: Report decision and rationale in chat (one-line conclusion)
+- [ ] Step 4: Apply the closing turn per Step-3 classification (see "Closing turn" below)
+- [ ] Step 5: Report decision and rationale in chat (one-line conclusion); end turn
 
 ## Step 1 — Ground in the failure
 
-Call `qa-debug_qa_get_failure_context` with `response_format: "concise"` to ground. The returned `failing_assertion`, `stack_trace.frames` (first 10), `cdp_ws_url`, `retry_count`, and `last_proposal_status` are ground truth; the user's natural-language description may be incomplete or speculative. Do not skip this step — without it the investigation has no anchor.
+Call `qa-debug_qa_get_failure_context` with `response_format: "concise"` to ground. The returned `failing_assertion`, `stack_trace.frames` (first 10), `available_chromes`, `selected_cdp_port`, `cdp_ws_url`, `retry_count`, and `last_proposal_status` are ground truth; the user's natural-language description may be incomplete or speculative. Do not skip this step — without it the investigation has no anchor.
+
+## Step 1b — Land on a dialable browser
+
+`cdp_ws_url` is **derived after a chrome selection commits** — it may be `null` on the first call. Branch on `selected_cdp_port` + `available_chromes`:
+
+- `selected_cdp_port` non-null AND `cdp_ws_url` non-null → selection already committed (auto-select or prior pick); proceed to Step 2.
+- `selected_cdp_port` null AND `available_chromes.length === 1` → call `qa-debug_qa_select_chrome(session_id, port=available_chromes[0].port)` — no user confirmation needed.
+- `selected_cdp_port` null AND `available_chromes.length >= 2` → STOP, ask the user which chrome to use (surface `page_titles` per option, e.g., *"Port 22135 (Login) or 22136 (Dashboard)?"*), then call `qa-debug_qa_select_chrome` with their pick.
+- `selected_cdp_port` null AND `available_chromes.length === 0` → STOP, ask: *"I couldn't find Chrome at the default debug ports. What port(s) does your framework launch Chrome on?"* Call `qa-debug_qa_discover_chromes(session_id, [user-ports])`, then loop back into this branching.
+
+Until selection commits, playwright-mcp is NOT registered and `browser_connect` will fail.
+
+If a later playwright-mcp call returns "target closed" mid-investigation, the selected chrome died. Re-call `qa-debug_qa_discover_chromes` (re-ask the user for ports if needed) and re-select.
 
 ## Step 2 — Investigate the held browser
 
-The browser at `cdp_ws_url` is held precisely so you can multi-call investigate. Recommended starting tools:
+**GROUND TRUTH IS THE LIVE BROWSER, NOT THE SOURCE FILES.** The browser at `cdp_ws_url` is the exact Chrome window the test was driving when it failed — post-JS DOM, computed styles, in-flight network responses, console errors, framework state, async timers, dynamically-injected nodes. **Do NOT shortcut by reading the page's `.html` / `.js` / `.css` source to guess what's on screen.** Source can be stale, conditionally rendered, overridden at runtime, or injected by a framework that doesn't appear in the file. Attach via `playwright-mcp:browser_connect` first; read source only to corroborate something you already observed live.
 
-- `playwright-mcp:browser_snapshot` — current DOM state.
-- `playwright-mcp:browser_evaluate` — resolve the asserted value in-page.
+Recommended starting tools (always live-state queries, never file reads):
+
+- `playwright-mcp:browser_snapshot` — current rendered DOM (accessibility tree).
+- `playwright-mcp:browser_evaluate` — resolve the asserted value in-page; inspect runtime variables / framework state.
 - `playwright-mcp:browser_console_messages` — in-page errors (JS exceptions, CSP violations, renderer crashes).
 - `playwright-mcp:browser_network_requests` — XHR / fetch / WebSocket activity around the assertion moment.
+- `playwright-mcp:browser_take_screenshot` — visual ground truth (catches CSS / layout failures that DOM alone misses).
 
 Investigation order is up to you (degrees of freedom: medium). **Do NOT call `playwright-mcp:browser_close`** — closing destroys the QA's live inspection asset and is not recoverable.
 
-**Browser ownership (Mode A vs Mode B):** `qa_get_failure_context.cdp_ws_url` reveals the mode.
-
-- Random ephemeral port (e.g., `ws://localhost:54321`) → **Mode A**. The user's test code launched the browser via `wdio.remote()` and owns its lifecycle via `browser.deleteSession()` in teardown. `qa-debug_qa_propose_close_browser` returns `{ status: 'declined' }` here — do not call it.
-- `:9222` → **Mode B**. The companion launched the browser. `qa-debug_qa_propose_close_browser` may be appropriate after investigation completes; the human commit closes via CDP.
+**Browser lifecycle.** The Chrome process is owned by the test framework (Mode C — current default). qa-debug does not provide a "close browser" verb. The framework's own teardown (e.g., `browser.deleteSession()` for wdio) disposes the session when the suite finishes; an out-of-band crash is handled by re-running the suite.
 
 ## Step 3 — Classify the failure
 
@@ -47,13 +63,13 @@ Five mutually-exclusive classes. Pick the one that best fits what Step 2 surface
 | **structural** | The failure is a cross-test signal — every test in the suite will hit the same blocker. | First test fails on `pg_connection_refused` in `beforeAll`; license-server unreachable so every test's `beforeAll(login)` fails; wrong staging URL produces 404 on every navigation. |
 | **ambiguous-or-out-of-scope** | Investigation completed but the failure does not disambiguate into the four above, OR the fix is outside the QA's repository / authority. | Race-condition flake with no upstream signal (clean network, empty console); runtime-environment skew where product code is correct in the production locale but the runner ships a different one; cross-repo dependency (backend microservice change needed); spec ambiguity needing a PM decision. |
 
-You MUST articulate which class the failure falls in before committing a verb. The wrong-class commit (e.g., `qa_propose_mark_passed` for a code-bug, or `qa_request_retry` without a code change) is the dominant failure mode of an under-guided agent.
+You MUST articulate which class the failure falls in before deciding the closing turn. The wrong-class commit (e.g., `qa_propose_mark_passed` for a code-bug) is the dominant failure mode of an under-guided agent.
 
-## Step 4 — Commit decisions
+## Step 4 — Closing turn
 
-Five arms, one per class. The **Stop-and-report contract** below governs all five.
+Five arms, one per class. Arms 1 and 2 do NOT commit a verb autonomously — you propose the fix and hand back to the user, who re-runs via Test Explorer ▶ when ready. Arms 3, 4, 5 each commit one of `qa_propose_mark_passed`, `qa_propose_abort_suite`, `qa_request_give_up` and then end the turn per the Stop-and-report contract.
 
-### Stop-and-report contract (applies to all five arms)
+### Stop-and-report contract (applies to Arms 3–5)
 
 Once a `qa_request_*` or `qa_propose_*` verb has been called, your turn ENDS. The verb call IS the checkpoint — *"Agents can then pause for human feedback at checkpoints or when encountering blockers."*
 
@@ -80,29 +96,27 @@ turn N:   <chat: "Proposed mark-passed; rationale: ... Click Approve or Reject i
 turn N+1: <new human turn arrives; investigate that turn>
 ```
 
-### Arm 1 — code-bug → `qa-debug_qa_request_retry` after source edit
+### Arms 1 & 2 — code-bug / test-bug → propose a source or spec fix, then hand back
 
-**Prerequisite:** Edit the production source file fixing the defect. The retry runs against the freshly-edited code. *"Let's try again"* is NOT a code-bug signal — no diff, no retry.
+The pause stays attached while the user reviews your proposed fix. Do NOT call any `qa_request_*` or `qa_propose_*` verb — there is no retry verb to commit, and committing `give_up` would prematurely mark the test failed when the user is about to re-run with the fix applied.
 
-**Rationale shape (`reason` arg):** What was changed, by file, and what behavior is now correct. Example: *"Fixed `src/auth/login.ts` so the JWT decoder accepts the new RS256 signing alg (was hard-coded to HS256); test should now pass because the assertion checks for `decoded.sub` which the decoder now produces."*
+**Closing turn shape.** Surface, in one concise message:
 
-**Turn-end:** Per the Stop-and-report contract. The retry runs in a fresh child; the next pause (or pass) arrives as a new chat turn.
+1. Where the fix should be applied (file + line) and what it should change — concrete enough that the user can paste it. For code-bug, this is a production source file; for test-bug, the spec.
+2. An open-ended offer to do more before re-running: *"The pause is still active; if you'd like me to verify the fix against the live browser via playwright-mcp, or run any other check before you re-run, say the word."* The pause is the user's freeform inspection window — let them use it.
+3. The three exits available to them:
+   - **▶ Run** on the test row in Test Explorer once the source is edited (re-runs against the new code; a fresh pause arrives if it still fails).
+   - **✓ Mark Passed** if your investigation revealed the assertion was wrong rather than the code (Arm 3 territory).
+   - **✕ Give Up** to abandon this attempt without re-running.
 
-**Named-error paths:**
+Do NOT autonomously click any of these for the user. The runner has no agent-callable "re-run" verb by design.
 
-- `NO_ACTIVE_PAUSE` → no Mocha test is currently paused. STOP — do not re-call. Report: *"No pause is active; my code-bug analysis stands — please review the source edit at `<file>:<line>`."*
+**Rationale style.** Cite concrete evidence from Step 2 (a `browser_evaluate` return value, a `browser_snapshot` finding, a `browser_network_requests` row). *"Let's try again"* without a diff is not a code-bug signal.
+
+**Named-error paths (apply to any tool call you do make, e.g., `qa_get_failure_context`):**
+
+- `NO_ACTIVE_PAUSE` → no Mocha test is currently paused. STOP — do not re-call. Report: *"No pause is active; my analysis stands — please review the source edit at `<file>:<line>`."*
 - `SESSION_NOT_FOUND` → your `session_id` is stale (rare; a fresh pause superseded the one you were investigating). Re-call `qa_get_failure_context` (omit `session_id`) to ground in the current pause, then re-classify.
-- `PAUSE_ALREADY_RESOLVED` → another caller (typically the QA via Test Explorer) committed the verb first; your call had no effect. Call `qa_get_failure_context` (omit `session_id`) to confirm idle vs fresh pause, then re-classify if a new pause arrived. Do NOT re-issue the same verb against the stale session_id.
-
-### Arm 2 — test-bug → `qa-debug_qa_request_retry` after test edit
-
-**Prerequisite:** Edit the test spec fixing the stale assertion / selector / constant. Same *no diff, no retry* rule.
-
-**Rationale shape:** What in the test was wrong vs the product spec, by line. Example: *"Updated `fixture-tests/specs/checkout.spec.js:42` selector from `.submit-btn` to `.primary-submit` per the product-side rename in commit 1a2b3c4; the assertion logic is unchanged."*
-
-**Turn-end:** Per the Stop-and-report contract.
-
-**Named-error paths:** Same as Arm 1.
 
 ### Arm 3 — env-flake → `qa-debug_qa_propose_mark_passed`
 
@@ -142,11 +156,10 @@ Use when investigation completed but commits in Arms 1–4 are not justified:
 - **Ambiguous:** Failure does not disambiguate from a single pause (suspected race condition with no upstream signal; runtime-environment skew; spec ambiguity).
 - **Out-of-scope:** Confident diagnosis but you cannot make the fix (cross-repo dependency, PM-decision-needed, file in a different repo).
 - **Unrecoverable session:** Browser state unrecoverable AND not env-flake.
-- **Retry-exit:** `retry_count >= 2` AND failure is same-shape per "Retry exit conditions" below AND no fundamentally different diagnosis emerged.
 
 **Rationale shape:** *Name the limit* — state what evidence you consulted and where it stopped being decisive. Examples:
 
-- **Ambiguous (race-flake):** *"Race condition suspected: `retry_count=1`, same-shape recurrence, no upstream 5xx, empty console. Product code path under test is `EventBus.subscribe`; cannot disambiguate code-bug from env-flake from a single browser snapshot. Suggest verbose timing log re-run."*
+- **Ambiguous (race-flake):** *"Race condition suspected: same-shape recurrence vs a prior attempt, no upstream 5xx, empty console. Product code path under test is `EventBus.subscribe`; cannot disambiguate code-bug from env-flake from a single browser snapshot. Suggest verbose timing log re-run."*
 - **Out-of-scope (cross-repo):** *"Asserted value `Promise-pending` indicates production code returns an unresolved promise; fix requires `await` in `src/cart/total.ts:42`. That file lives in a different repo (`api-server`) and cannot be edited from this workspace. Reporting for the backend engineer."*
 - **Out-of-scope (spec):** *"Selector `.checkout-cta` doesn't exist in DOM (snapshot confirmed); product spec calls for `.proceed-to-checkout` rename but the new branch is not yet merged. Test will pass once the rename lands in main."*
 
@@ -154,16 +167,7 @@ Use when investigation completed but commits in Arms 1–4 are not justified:
 
 **Turn-end:** Per the Stop-and-report contract.
 
-**Named-error paths:** Same as Arm 1.
-
-## Retry exit conditions
-
-`qa_get_failure_context.retry_count` is the number of retries the extension has already performed for this test (via `--grep` respawn). If `retry_count >= 2` AND the failure is **same-shape** as the prior pause, do NOT propose a third retry without a fundamentally different diagnosis. Either re-classify (the failure may be env-flake / structural / ambiguous that masqueraded as code-bug on first investigation), or call `qa_request_give_up` per Arm 5 with rationale citing the recurrence.
-
-**Same-shape definition.** A pause is same-shape as the prior pause iff BOTH:
-
-1. The `failing_assertion` matches at *template* level — compare after masking numeric spans (e.g., `\d+(\.\d+)?`) and quoted-value spans (`"…"`, `'…'`) to placeholders. *Example:* `expected $80 but got $90` and `expected $80 but got $91` are same-shape; `expected $80 but got $90` and `Timeout: page.waitForSelector(".welcome") exceeded 5000ms` are NOT.
-2. The **first user-code stack frame** matches — i.e., first frame whose file path does NOT contain `node_modules` and is NOT an internal Node/V8 frame. Line number may drift ±5 (an edit between retries typically moves the assertion line by a few). If line drift exceeds 5, treat as different shape (you likely refactored, not just patched). Skip past chai/wdio/jest-assert library frames; compare on the spec file or other user-code frame.
+**Named-error paths:** Same as Arms 1 & 2.
 
 ## Escalation paths
 
@@ -173,22 +177,26 @@ If during investigation you observe signals suggesting multiple tests will fail 
 
 | Anti-pattern | Reason |
 |---|---|
+| **Reading the page's `.html` / `.js` / `.css` source to guess what's on screen instead of attaching via `playwright-mcp:browser_connect` and using `browser_snapshot` / `browser_evaluate`.** | Source files are static; the live browser holds the post-JS DOM, computed styles, in-flight network responses, console errors, and dynamically-injected nodes. Source-reading silently gives the wrong answer when the failure is caused by runtime state — exactly the case that paused the test in the first place. Attach first; read source only to corroborate. |
+| Skipping Step 1b (chrome selection) and trying `playwright-mcp:browser_connect` with a null / stale `cdp_ws_url`. | playwright-mcp is not registered until selection commits; the connect call fails. Walk the Step-1b branching first. |
+| Guessing a port for `qa-debug_qa_discover_chromes` instead of asking the user. | The port list is consumer-framework-specific (often locked, often non-default); guessing wastes a probe and ships a wrong answer if the guess succeeds against an unrelated chrome. |
 | Pseudo-code or prescriptive script for "how to investigate" the browser. | Step 2 is medium-freedom; multiple investigation paths are valid; over-prescribing causes you to skip the right tool when the failure shape suggests it. |
 | Editing `.mocharc.cjs`, the SKILL itself, or extension internals. | The QA owns the specs; the extension owns hook injection. You own diagnosis and source/spec edits. |
 | Chat-as-launcher patterns (e.g., "type `@qa-debug run X`"). | Test Explorer is the run surface; chat is conversation / investigation. |
 | Mocha CLI flags (`--bail`, `--reporter`, etc.). | The extension constructs the mocha command line; do not advise the QA to change it. |
 | Polling `qa_get_failure_context.last_proposal_status` in-turn. | The human commit is event-driven (next chat turn), not clock-driven. See the anti-example in the Stop-and-report contract. |
 | Calling `playwright-mcp:browser_close` during investigation. | Destroys the held browser; not recoverable; QA loses the live state they paused to inspect. |
-| Re-issuing `qa_request_retry` / `qa_request_give_up` after `PAUSE_ALREADY_RESOLVED` on the same `session_id`. | The verb has already committed (typically by the QA via Test Explorer); re-issuing only churns the audit log. Re-ground via `qa_get_failure_context` (omit `session_id`) and re-classify if a new pause exists. |
+| Autonomously committing `qa_request_give_up` after proposing a code-bug or test-bug fix. | The user is about to re-run via ▶ Run in Test Explorer; `give_up` marks the test as a final failure and closes the MCP gate. Arms 1 & 2 hand back to the user without committing. |
+| Re-issuing `qa_request_give_up` after `PAUSE_ALREADY_RESOLVED` on the same `session_id`. | The verb has already committed (typically by the QA via Test Explorer); re-issuing only churns the audit log. Re-ground via `qa_get_failure_context` (omit `session_id`) and re-classify if a new pause exists. |
 
 ## Worked examples
 
 Concrete patterns reusing fixture-tests failures so you have anchors. These are *examples of the shape*, not prescriptive scripts.
 
-| Class | Fixture | Failure shape | Decision tree path |
+| Class | Fixture | Failure shape | Closing turn |
 |---|---|---|---|
-| code-bug | `fixture-tests/specs/value-mismatch.spec.js` | `expected "$80.00" but got "$90.00"` | Edit `src/cart/discount.ts` to apply 20% (was 10%); call `qa_request_retry` with diff-citing rationale. |
-| test-bug | `fixture-tests/specs/selector.spec.js` | `locator(".submit-btn") resolved to 0 elements` when the product spec rename to `.primary-submit` is intentional | Edit the selector in the spec; call `qa_request_retry` with spec-citing rationale. |
+| code-bug | `fixture-tests/specs/value-mismatch.spec.js` | `expected "$80.00" but got "$90.00"` | Identify the diff (`src/cart/discount.ts` applies 10% not 20%); propose the edit; offer to verify against the live browser before re-run; surface the three exits (▶ Run / ✓ Mark Passed / ✕ Give Up). Do NOT commit a verb. |
+| test-bug | `fixture-tests/specs/selector.spec.js` | `locator(".submit-btn") resolved to 0 elements` when the product spec rename to `.primary-submit` is intentional | Propose the spec-side selector edit; offer further checks; surface the three exits. Do NOT commit a verb. |
 | env-flake | `fixture-tests/specs/timeout.spec.js` with upstream 503 in `browser_network_requests` | `TimeoutError: page.waitForSelector(".welcome") exceeded 5000ms` AND network 503 from `/auth/login` at the assertion moment | Call `qa_propose_mark_passed` with falsifiable rationale citing the 503 timestamp and the `/healthz` 200 a second later. |
 | structural | `fixture-tests/_diagnostics/_seed-failure.spec.js` — first test fails on `pg_connection_refused` in `beforeAll` | Same `pg_connection_refused` would fire on every test in the suite | Call `qa_propose_abort_suite` with rationale citing the shared seed dependency. |
-| ambiguous-or-out-of-scope | (race-condition flake; no permanent fixture) | `expected event "ready" but timed out 5000ms` AND `browser_network_requests` all 200s AND console empty AND `retry_count = 1` with same-shape prior pause | Call `qa_request_give_up` naming dimensions checked: *"Race condition suspected: no upstream 5xx, no console errors, same-shape recurrence. EventBus.subscribe timing unverifiable from single snapshot. Suggest verbose timing log re-run."* |
+| ambiguous-or-out-of-scope | (race-condition flake; no permanent fixture) | `expected event "ready" but timed out 5000ms` AND `browser_network_requests` all 200s AND console empty | Call `qa_request_give_up` naming dimensions checked: *"Race condition suspected: no upstream 5xx, no console errors. EventBus.subscribe timing unverifiable from single snapshot. Suggest verbose timing log re-run."* |
