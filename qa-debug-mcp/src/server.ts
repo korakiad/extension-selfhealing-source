@@ -21,13 +21,15 @@ import { toFailureContextView } from '@qa-debug/pause-store-types';
 
 import { errorResult, QaToolError } from '@qa-debug/tool-contracts/errors';
 import {
+  qa_discover_chromes,
   qa_get_failure_context,
   qa_propose_abort_suite,
-  qa_propose_close_browser,
   qa_propose_mark_passed,
   qa_request_give_up,
-  qa_request_retry,
+  qa_select_chrome,
 } from '@qa-debug/tool-contracts/tools';
+
+import { probePorts } from './probe-ports.js';
 
 export interface CreateQaDebugServerOptions {
   pauseStore: PauseStore;
@@ -40,9 +42,9 @@ export interface CreateQaDebugServerOptions {
    */
   onInvocation?: (toolName: string, sessionId: string) => void;
   /**
-   * v5.6 — commits a request-verb decision (retry / give_up) through the
-   * live DecisionRouter so the mocha child's pending `decision.await` IPC
-   * resolves and the extension's pause-status-bar + Test Explorer hide.
+   * Commits a request-verb decision (give_up) through the live DecisionRouter
+   * so the mocha child's pending `decision.await` IPC resolves and the
+   * extension's pause-status-bar + Test Explorer hide.
    *
    * Returns `true` when a pending callback was found and resolved; `false`
    * when the pause was already committed by another caller (UI-button race
@@ -55,7 +57,7 @@ export interface CreateQaDebugServerOptions {
    */
   onDecision?: (
     sessionId: string,
-    kind: 'retry' | 'give_up',
+    kind: 'give_up',
     reason: string,
   ) => boolean;
 }
@@ -112,43 +114,6 @@ export function createQaDebugServer(options: CreateQaDebugServerOptions): McpSer
   );
 
   server.registerTool(
-    qa_request_retry.name,
-    {
-      description: qa_request_retry.description,
-      inputSchema: qa_request_retry.inputSchemaZod,
-      annotations: qa_request_retry.annotations,
-    },
-    async (args) => {
-      logInvocation(qa_request_retry.name, args);
-      try {
-        const input = qa_request_retry.inputSchemaZod.parse(args);
-        // v5.6 — store-first ordering: validate session_id + clear proposal slot
-        // before reaching for live runtime state. Inverted order would commit
-        // through DecisionRouter then fail the agent with SESSION_NOT_FOUND
-        // after the mocha child already respawned (strictly worse).
-        const result = store.recordDecision(input.session_id, 'retry', input.reason);
-        if (options.onDecision) {
-          const committed = options.onDecision(input.session_id, 'retry', input.reason);
-          if (!committed) {
-            throw new QaToolError(
-              'PAUSE_ALREADY_RESOLVED',
-              'Pause already resolved by another caller; no respawn was triggered. ' +
-                'Call qa_get_failure_context (omit session_id) to ground in current state, ' +
-                'then re-classify if a new pause arrived. Do NOT re-issue against the stale session_id.',
-            );
-          }
-        }
-        return {
-          content: [{ type: 'text' as const, text: JSON.stringify(result) }],
-          structuredContent: result as unknown as { [key: string]: unknown },
-        };
-      } catch (err) {
-        return errorResult(err);
-      }
-    },
-  );
-
-  server.registerTool(
     qa_request_give_up.name,
     {
       description: qa_request_give_up.description,
@@ -159,7 +124,8 @@ export function createQaDebugServer(options: CreateQaDebugServerOptions): McpSer
       logInvocation(qa_request_give_up.name, args);
       try {
         const input = qa_request_give_up.inputSchemaZod.parse(args);
-        // v5.6 — same store-first ordering as qa_request_retry above.
+        // v5.6 — store-first ordering: validate session_id + clear proposal
+        // slot before reaching for live runtime state.
         const result = store.recordDecision(input.session_id, 'give_up', input.reason);
         if (options.onDecision) {
           const committed = options.onDecision(input.session_id, 'give_up', input.reason);
@@ -184,15 +150,10 @@ export function createQaDebugServer(options: CreateQaDebugServerOptions): McpSer
 
   for (const tool of [
     qa_propose_mark_passed,
-    qa_propose_close_browser,
     qa_propose_abort_suite,
   ] as const) {
-    const kind =
-      tool === qa_propose_mark_passed
-        ? 'mark_passed'
-        : tool === qa_propose_close_browser
-          ? 'close_browser'
-          : 'abort_suite';
+    const kind: 'mark_passed' | 'abort_suite' =
+      tool === qa_propose_mark_passed ? 'mark_passed' : 'abort_suite';
     server.registerTool(
       tool.name,
       {
@@ -204,28 +165,6 @@ export function createQaDebugServer(options: CreateQaDebugServerOptions): McpSer
         logInvocation(tool.name, args);
         try {
           const input = tool.inputSchemaZod.parse(args);
-          // v5.2 §2.6 [R#3-Q1]: qa_propose_close_browser declines in Mode A
-          // because the user's test code owns the browser lifecycle via
-          // `browser.deleteSession()`. Decline-with-reason per Anthropic
-          // "high signal information back to agents" guidance — lets the
-          // agent update its plan instead of waiting on a no-op.
-          if (kind === 'close_browser') {
-            const active = store.getActivePause(input.session_id)!;
-            if (active.mode === 'A') {
-              const payload = {
-                proposal_id: '',
-                status: 'declined' as const,
-                reason:
-                  'browser is owned by your test code (Mode A); close it via ' +
-                  'browser.deleteSession() in your test teardown. The QA Debug Companion ' +
-                  'does not close a browser it does not own. See ARCHITECTURE-CR-v5.2 §2.6.',
-              };
-              return {
-                content: [{ type: 'text' as const, text: JSON.stringify(payload) }],
-                structuredContent: payload,
-              };
-            }
-          }
           const proposal = store.proposeAction(input.session_id, kind, input.rationale);
           const payload = { proposal_id: proposal.proposal_id, status: proposal.status };
           return {
@@ -238,6 +177,70 @@ export function createQaDebugServer(options: CreateQaDebugServerOptions): McpSer
       },
     );
   }
+
+  // ---- v5.16 PLAN-cdp-port-discovery — Mode C discovery + selection ----
+
+  server.registerTool(
+    qa_discover_chromes.name,
+    {
+      description: qa_discover_chromes.description,
+      inputSchema: qa_discover_chromes.inputSchemaZod,
+      annotations: qa_discover_chromes.annotations,
+    },
+    async (args) => {
+      logInvocation(qa_discover_chromes.name, args);
+      try {
+        const input = qa_discover_chromes.inputSchemaZod.parse(args);
+        // Validate session-id BEFORE the network probe so a stale session
+        // surfaces synchronously as NO_ACTIVE_PAUSE / SESSION_NOT_FOUND
+        // rather than after a 2.5s parallel timeout.
+        store.getActivePause(input.session_id);
+        const chromes = await probePorts(input.ports);
+        if (chromes.length === 0) {
+          throw new QaToolError(
+            'NO_CHROMES_FOUND',
+            `None of the supplied ports [${input.ports.join(', ')}] responded to /json/version. ` +
+              'Re-ask the user, or surface the framework launch failure.',
+          );
+        }
+        const { cleared } = await store.replaceAvailableChromes(input.session_id, chromes);
+        const payload = { available_chromes: chromes, selection_cleared: cleared };
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify(payload) }],
+          structuredContent: payload as unknown as { [key: string]: unknown },
+        };
+      } catch (err) {
+        return errorResult(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    qa_select_chrome.name,
+    {
+      description: qa_select_chrome.description,
+      inputSchema: qa_select_chrome.inputSchemaZod,
+      annotations: qa_select_chrome.annotations,
+    },
+    async (args) => {
+      logInvocation(qa_select_chrome.name, args);
+      try {
+        const input = qa_select_chrome.inputSchemaZod.parse(args);
+        const selection = await store.recordChromeSelection(input.session_id, input.port, 'agent');
+        const payload = {
+          cdp_ws_url: selection.cdp_ws_url,
+          port: selection.port,
+          page_titles: selection.page_titles,
+        };
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify(payload) }],
+          structuredContent: payload,
+        };
+      } catch (err) {
+        return errorResult(err);
+      }
+    },
+  );
 
   return server;
 }

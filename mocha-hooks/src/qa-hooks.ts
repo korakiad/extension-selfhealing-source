@@ -4,6 +4,7 @@
 // See ARCHITECTURE.md §3.1 / §3.5 and mocha-hooks/README.md.
 
 import {
+  AvailableChrome,
   DecisionAwaitParams,
   DecisionResult,
   FinalDecisionParams,
@@ -13,10 +14,67 @@ import {
   PausePayload,
   PausePublishResult,
   SerializedError,
-  TestPassedResult,
   inProcBus,
   nodeIpcTransport,
 } from './protocol';
+
+// ---------- v5.16 PLAN-cdp-port-discovery — Mode C discovery ----------
+// Hard-coded defaults match consumer org's framework launch convention. Overridable
+// via QA_DEBUG_CDP_PORTS env (comma-separated). Hard-code accepted as transitional
+// trade-off per PLAN Q7 — promote to workspace setting before external distribution.
+const DEFAULT_CDP_PORTS: readonly number[] = [22135, 22136] as const;
+const PROBE_TIMEOUT_MS = 500;
+
+function effectiveCdpPorts(): readonly number[] {
+  const env = process.env.QA_DEBUG_CDP_PORTS?.trim();
+  if (!env) return DEFAULT_CDP_PORTS;
+  const tokens = env.split(',').map((s) => s.trim()).filter(Boolean);
+  const valid: number[] = [];
+  const invalid: string[] = [];
+  for (const t of tokens) {
+    const n = Number(t);
+    if (Number.isInteger(n) && n >= 1024 && n <= 65535) valid.push(n);
+    else invalid.push(t);
+  }
+  if (invalid.length > 0) {
+    process.stderr.write(
+      `[qa-hooks] WARN QA_DEBUG_CDP_PORTS contained invalid entries [${invalid.join(', ')}]; using valid subset [${valid.join(', ')}]\n`,
+    );
+  }
+  return valid.length > 0 ? valid : DEFAULT_CDP_PORTS;
+}
+
+async function probeChromePort(port: number): Promise<AvailableChrome | null> {
+  try {
+    const versionRes = await fetch(`http://localhost:${port}/json/version`, {
+      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+    });
+    if (!versionRes.ok) return null;
+    const versionJson = (await versionRes.json()) as { webSocketDebuggerUrl?: string };
+    const wsRaw = versionJson.webSocketDebuggerUrl;
+    if (!wsRaw || typeof wsRaw !== 'string') return null;
+    const wsUrl = normalizeCdpWsUrl(wsRaw);
+    // /json/list for page_titles — best-effort; empty array on failure.
+    let pageTitles: string[] = [];
+    try {
+      const listRes = await fetch(`http://localhost:${port}/json/list`, {
+        signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+      });
+      if (listRes.ok) {
+        const listJson = (await listRes.json()) as Array<{ title?: string; type?: string }>;
+        pageTitles = listJson
+          .filter((p) => p.type === 'page' && typeof p.title === 'string')
+          .map((p) => p.title as string)
+          .slice(0, 5);
+      }
+    } catch {
+      // /json/list optional; missing titles is not fatal.
+    }
+    return { port, ws_url: wsUrl, page_titles: pageTitles };
+  } catch {
+    return null;
+  }
+}
 
 // Heartbeat interval expected from the parent (extension / oracle). Parent should
 // send a `heartbeat` notification every HEARTBEAT_MS while it's still alive holding
@@ -34,15 +92,13 @@ let connDisabledReason: string | undefined;
 // re-enters the patched Suite.prototype.afterEach via rootHooks (mocha.js:1082).
 // QA_PATCH_INSTALLED on Suite.prototype guards against double --require of
 // qa-hooks (the IIFE no-ops on the second pass).
-// WeakSets dedupe pause.publish / test.passed across the multiple suite levels
-// our injected hook fires from (Mocha walks innermost-first per runner.js:610,
-// AND hookErr re-enters hookUp from errSuite.parent per runner.js:695-718).
-// Identity is stable within one attempt (runner.js:494) and fresh on retry via
-// test.clone() (test.js:71-83) — so retries naturally get a fresh pause.
+// WeakSet dedupes pause.publish across the multiple suite levels our injected
+// hook fires from (Mocha walks innermost-first per runner.js:610, AND hookErr
+// re-enters hookUp from errSuite.parent per runner.js:695-718). Identity is
+// stable within one attempt (runner.js:494).
 const OUR_HOOK_TAG: unique symbol = Symbol('qa-hooks.afterEach');
 const QA_PATCH_INSTALLED: unique symbol = Symbol('qa-hooks.patchInstalled');
 const pausedTests = new WeakSet<Mocha.Test>();
-const passedTests = new WeakSet<Mocha.Test>();
 
 // ---------- v5.2 Mode A: wdio.remote() monkey-patch + CDP discovery ----------
 // Per ARCHITECTURE-CR-v5.2 §2.2: at --require time, probe for webdriverio
@@ -346,40 +402,6 @@ async function qaAfterEachImpl(this: Mocha.Context): Promise<void> {
     return;
   }
 
-  // v5.13 — pass branch: fire test.passed as a REQUEST (awaited) before mocha
-  // advances. Mocha's runnable.js:367 `result.then(done, …)` blocks the hook
-  // completion callback until this Promise resolves, which only happens after
-  // the parent has read AND replied. This structurally closes the IPC exit-race
-  // (Node provides no 'message'-before-'exit' invariant; mocha's exitMochaLater
-  // + qa-hooks' channel.unref let the loop drain in a few ticks otherwise).
-  // The parent's handler returns AFTER it has cleaned up paused-test state, so
-  // there is no observable window where the extension still thinks the test
-  // is paused at the moment afterEach returns. See PLAN-retry-pass-recovery.md.
-  if (test.state === 'passed') {
-    // v5.15 dedupe — innermost-first walk + injected hook at every suite level
-    // means ancestor suites re-fire us within one attempt. WeakSet keyed on Test
-    // (stable per attempt via runner.js:494; fresh per retry via test.js:71-83
-    // → retries naturally get a fresh test.passed call).
-    // Add BEFORE the await so a re-entry during the in-flight request returns
-    // early instead of stacking duplicate requests.
-    if (passedTests.has(test)) return;
-    passedTests.add(test);
-    try {
-      await c.request(METHOD.testPassed, {
-        full_title: test.fullTitle(),
-        test_file: test.file ?? null,
-      }, TestPassedResult);
-    } catch (err) {
-      // Parent disconnect or malformed reply: log and let mocha continue.
-      // The cleanup gap re-emerges only if the parent crashed, in which case
-      // the extension lifecycle has bigger problems than a stuck spinner.
-      process.stderr.write(
-        `[qa-hooks] test.passed request failed: ${(err as Error).message}\n`,
-      );
-    }
-    return;
-  }
-
   if (test.state !== 'failed') return;
 
   // v5.15 dedupe — load-bearing for two re-entry paths:
@@ -400,30 +422,31 @@ async function qaAfterEachImpl(this: Mocha.Context): Promise<void> {
   // See Mocha docs: https://mochajs.org/#timeouts ("To disable timeouts ... pass 0").
   this.timeout(0);
 
-  // v5.2 §3.1: discover via wdio singleton (Mode A) or fall back to env (Mode B).
-  // Mode is determined by whether currentBrowser AND getPuppeteer succeeded.
-  let cdpWsUrl: string;
-  let mode: 'A' | 'B' = 'B';
-  if (currentBrowser?.getPuppeteer) {
-    try {
-      const pup = await currentBrowser.getPuppeteer();
-      if (pup?.wsEndpoint) {
-        cdpWsUrl = normalizeCdpWsUrl(pup.wsEndpoint());
-        mode = 'A';
-        // v5.3 §2.6 positive logging for Mode A engagement.
-        process.stderr.write(`[qa-hooks] Mode A engaged for test="${test.title}" cdp=${cdpWsUrl}\n`);
-      } else {
-        cdpWsUrl = process.env.QA_DEBUG_CDP_WS_URL ?? 'ws://localhost:9222';
-      }
-    } catch (err) {
-      process.stderr.write(
-        `[qa-hooks] wdio getPuppeteer() failed: ${(err as Error).message}; falling back to QA_DEBUG_CDP_WS_URL\n`,
-      );
-      cdpWsUrl = process.env.QA_DEBUG_CDP_WS_URL ?? 'ws://localhost:9222';
-    }
-  } else {
-    cdpWsUrl = process.env.QA_DEBUG_CDP_WS_URL ?? 'ws://localhost:9222';
+  // v5.16 Mode C — parallel probe effectiveCdpPorts() per pause.
+  const ports = effectiveCdpPorts();
+  const probeResults = await Promise.all(ports.map((p) => probeChromePort(p)));
+  const availableChromes: AvailableChrome[] = probeResults.filter(
+    (r): r is AvailableChrome => r !== null,
+  );
+  const foundPorts = availableChromes.map((c) => c.port);
+  const failedPorts = ports.filter((p) => !foundPorts.includes(p));
+  process.stderr.write(
+    `[qa-hooks] CDP discovery: effective ports [${ports.join(', ')}], found [${foundPorts.join(', ')}], failed [${failedPorts.join(', ')}]\n`,
+  );
+  if (availableChromes.length === 0) {
+    process.stderr.write(
+      `[qa-hooks] CDP discovery: WARN no chromes responded — extension and agent must askUser for ports\n`,
+    );
   }
+  // Transitional: populate legacy cdp_ws_url field from primary (available_chromes[0])
+  // until all downstream callers migrate to selected_cdp_port + available_chromes.
+  // Fallback to QA_DEBUG_CDP_WS_URL only for legacy compat — Mode C is the primary path.
+  const primaryWsUrl =
+    availableChromes[0]?.ws_url ??
+    process.env.QA_DEBUG_CDP_WS_URL ??
+    'ws://localhost:9222';
+  const cdpWsUrl = primaryWsUrl;
+  const mode: 'A' | 'B' = 'B'; // legacy field; chrome_owner is the v5.16 truth
   // v5.8 — defensive diagnostic for unreachable-in-normal-flow cases.
   // Post-qa-reporter-fix (v5.8 EVENT_TEST_FAIL handler), test.err should
   // always be set when state==='failed' because Runner.fail wraps non-Error
@@ -442,15 +465,16 @@ async function qaAfterEachImpl(this: Mocha.Context): Promise<void> {
   }
   const payload: PausePayload = {
     test: test.title,
-    // v5.5 §2.4 / C1 — Mocha's Runnable.fullTitle() at runnable.js:206;
-    // space-joined ancestor titles + own title. Canonical id key for
-    // unifying with Test Explorer discovery.
     full_title: test.fullTitle(),
     file: test.file ?? null,
     line: fileLineFromStack(test.err?.stack),
     error: serializeError(test.err),
     cdp_ws_url: cdpWsUrl,
     mode,
+    // v5.16 Mode C — runtime-gated selection state.
+    available_chromes: availableChromes,
+    selected_cdp_port: null,
+    chrome_owner: 'framework',
     started_at: Date.now(),
     retry_count: currentRetryOf(test),
   };
@@ -486,15 +510,6 @@ async function qaAfterEachImpl(this: Mocha.Context): Promise<void> {
   };
   inProcBus.emitFinalDecision(finalDecision);
   c.notify(METHOD.finalDecision, finalDecision);
-
-  if (decision.kind === 'retry') {
-    // ARCHITECTURE v5.1 §3.1: no in-process require.cache invalidation — the
-    // --grep respawn runs in a fresh child process whose require.cache is empty
-    // by construction. See mocha-hooks/README.md "Phase 2 follow-up" block for
-    // the evidence chain and the re-add requirement if Phase 2 introduces an
-    // in-process retry mechanism.
-    return;
-  }
 
   // mark_passed and give_up: hook does NOT mutate test.state / test.err /
   // parent.retries / currentTest.retries (see ARCHITECTURE v5 §3.1). The reporter

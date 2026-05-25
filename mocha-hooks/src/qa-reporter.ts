@@ -30,7 +30,7 @@ const YELLOW = '\x1b[33m';
 const DIM = '\x1b[2m';
 const BOLD = '\x1b[1m';
 
-type Outcome = 'passed' | 'failed' | 'marked-passed' | 'retry-pending';
+type Outcome = 'passed' | 'failed' | 'marked-passed';
 
 interface RecordedDecision {
   kind: DecisionKind;
@@ -76,7 +76,6 @@ export class QaReporter {
   private passed = 0;
   private failed = 0;
   private markedPassed = 0;
-  private retryPending = 0;
 
   constructor(runner: Mocha.Runner, opts?: unknown) {
     this.options = parseOptions(opts);
@@ -174,7 +173,6 @@ export class QaReporter {
     if (test.state === 'passed') outcome = 'passed';
     else if (test.state === 'failed') {
       if (decision?.kind === 'mark_passed') outcome = 'marked-passed';
-      else if (decision?.kind === 'retry') outcome = 'retry-pending';
       else outcome = 'failed';
     }
 
@@ -208,18 +206,6 @@ export class QaReporter {
       }
       return;
     }
-    if (outcome === 'retry-pending') {
-      this.retryPending++;
-      const by = decision?.by ?? 'agent';
-      const reason = decision?.reason ?? '<no rationale>';
-      this.write(
-        `    ${YELLOW}↻ retry-pending${RESET} ${test.title}${retrySuffix} ${DIM}— by ${by}: ${reason} (extension respawns mocha via --grep in S4)${RESET}\n`,
-      );
-      if (errMessage) {
-        this.write(`      ${DIM}(original failure: ${errMessage})${RESET}\n`);
-      }
-      return;
-    }
     // failed
     this.failed++;
     const reasonStr = decision ? ` ${DIM}— ${decision.kind} by ${decision.by}: ${decision.reason}${RESET}` : '';
@@ -235,29 +221,18 @@ export class QaReporter {
       `${RED}${this.failed} failing${RESET}`,
       `${YELLOW}${this.markedPassed} marked-passed${RESET}`,
     ];
-    if (this.retryPending > 0) {
-      parts.push(`${YELLOW}${this.retryPending} retry-pending${RESET}`);
-    }
     this.write(`\n${BOLD}Tally:${RESET} ${parts.join(', ')}\n`);
     if (this.markedPassed > 0 && !this.options.treatMarkedAsPassing) {
       this.write(
         `${DIM}(marked-passed tests do NOT relax the CI exit code; pass --reporter-options qa-treat-marked-as-passing=true to opt in)${RESET}\n`,
       );
     }
-    if (this.retryPending > 0) {
-      this.write(
-        `${DIM}(retry-pending tests await the extension's mocha --grep respawn; S2 oracle does not simulate the respawn)${RESET}\n`,
-      );
-    }
   }
 
   private setExitCode(): void {
-    // CI-conservative: any non-pass outcome (failed, marked-passed, retry-pending) is a break,
-    // unless `--qa-treat-marked-as-passing` is set (which still counts retry-pending as breaking,
-    // because retry-pending is "we don't know yet — go look at S4's respawn outcome").
     const breakingFailures = this.options.treatMarkedAsPassing
-      ? this.failed + this.retryPending
-      : this.failed + this.markedPassed + this.retryPending;
+      ? this.failed
+      : this.failed + this.markedPassed;
     if (breakingFailures > 0) {
       process.exitCode = 1;
     }

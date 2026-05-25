@@ -16,34 +16,45 @@ export const SerializedError = z.object({
 });
 export type SerializedError = z.infer<typeof SerializedError>;
 
+/**
+ * @deprecated v5.16 transitional. Will be replaced by ChromeOwner ('framework'|'companion').
+ */
 export const BrowserOwnershipMode = z.enum(['A', 'B']);
 export type BrowserOwnershipMode = z.infer<typeof BrowserOwnershipMode>;
 
+// v5.16 PLAN-cdp-port-discovery — chrome lifecycle ownership.
+export const ChromeOwner = z.enum(['framework', 'companion']);
+export type ChromeOwner = z.infer<typeof ChromeOwner>;
+
+export const AvailableChrome = z.object({
+  port: z.number().int().min(1024).max(65535),
+  ws_url: z.string().refine((s) => s.startsWith('ws://') || s.startsWith('wss://'), {
+    message: 'ws_url must use ws:// or wss:// scheme',
+  }),
+  page_titles: z.array(z.string()).max(5),
+});
+export type AvailableChrome = z.infer<typeof AvailableChrome>;
+
 export const PausePayload = z.object({
   test: z.string(),
-  // v5.5 §2.4: Mocha's currentTest.fullTitle() — space-joined ancestor titles
-  // + own title (runnable.js:206). This is the canonical id key for unifying
-  // discovery-time TestItems with pause-time TestItems (CR §3.8.1). Required;
-  // Phase 1 has no released consumers outside the in-repo qa-hooks/oracle/extension.
   full_title: z.string(),
   file: z.string().nullable(),
   line: z.number().int().nullable(),
   error: SerializedError,
-  // CDP WebSocket URL the hook discovered (Mode A: `getPuppeteer().wsEndpoint()`;
-  // Mode B: env-injected fallback). Must be `ws://` or `wss://` — the extension's
-  // URL-parser conversion to HTTP root form depends on a valid ws scheme; rejecting
-  // malformed input here surfaces a structured zod error at parse time instead of
-  // a raw `ERR_INVALID_URL` deep inside the pausePublish handler.
+  // @deprecated v5.16 transitional — derive from available_chromes/selected_cdp_port instead.
+  // qa-hooks v5.16 still populates this (with available_chromes[0]?.ws_url) to keep
+  // existing consumers compiling during migration.
   cdp_ws_url: z.string().url().refine((s) => s.startsWith('ws://') || s.startsWith('wss://'), {
     message: 'cdp_ws_url must use ws:// or wss:// scheme',
   }),
-  // v5.2 §2.4: which mode owns the browser this pause is investigating.
-  // Mode A = wdio.remote() in user test code (user owns lifecycle; qa_propose_
-  // close_browser declines per §2.6). Mode B = companion-launched :9222
-  // (companion owns lifecycle; commit semantics unchanged). Defaults to 'B'
-  // for backward compatibility with pre-v5.2 oracles / hooks that don't set
-  // it explicitly (the field is optional on the wire, normalized to 'B').
+  // @deprecated v5.16 transitional — maps to chrome_owner.
   mode: BrowserOwnershipMode.optional().default('B'),
+  // v5.16 — discovered chromes per pause via /json/version probe. Optional during migration.
+  available_chromes: z.array(AvailableChrome).optional(),
+  // v5.16 — null on publish; mutated post-publish via qa_select_chrome / extension UI.
+  selected_cdp_port: z.number().int().nullable().optional(),
+  // v5.16 — lifecycle owner. Always 'framework' on Mode C publish.
+  chrome_owner: ChromeOwner.optional(),
   started_at: z.number().int(),
   retry_count: z.number().int().nonnegative(),
 });
@@ -54,7 +65,7 @@ export const PausePublishResult = z.object({
 });
 export type PausePublishResult = z.infer<typeof PausePublishResult>;
 
-export const DecisionKind = z.enum(['retry', 'mark_passed', 'give_up']);
+export const DecisionKind = z.enum(['mark_passed', 'give_up']);
 export type DecisionKind = z.infer<typeof DecisionKind>;
 
 export const DecisionBy = z.enum(['agent', 'human', 'hook']);
@@ -98,22 +109,6 @@ export const FinalDecisionParams = z.object({
 });
 export type FinalDecisionParams = z.infer<typeof FinalDecisionParams>;
 
-// v5.13 — test.passed is a REQUEST (not notification) fired from qa-hooks
-// afterEach when test.state === 'passed'. Request shape exploits Mocha's
-// runnable.js:367 `result.then(done, …)` Promise-await contract to block
-// EVENT_RUN_END until the parent has read AND acked the message — the only
-// structurally safe IPC shape under Mocha's default exitMochaLater + qa-hooks'
-// channel.unref() combination (Node provides no 'message'-before-'exit'
-// invariant). See PLAN-retry-pass-recovery.md "Why request, not notification".
-export const TestPassedParams = z.object({
-  full_title: z.string(),
-  test_file: z.string().nullable(),
-});
-export type TestPassedParams = z.infer<typeof TestPassedParams>;
-
-export const TestPassedResult = z.object({});
-export type TestPassedResult = z.infer<typeof TestPassedResult>;
-
 // ---------- Method registry ----------
 
 export const METHOD = {
@@ -121,7 +116,6 @@ export const METHOD = {
   decisionAwait: 'decision.await',
   heartbeat: 'heartbeat',
   finalDecision: 'final_decision',
-  testPassed: 'test.passed',
 } as const;
 
 // ---------- JSON-RPC 2.0 envelopes ----------

@@ -17,13 +17,17 @@
  * vscode.d.ts:8623 — update() returns Thenable<void> (awaited).
  */
 
-import type * as vscode from 'vscode';
+import * as vscode from 'vscode';
 
 import {
   type PauseStore,
+  type PauseStoreDisposable,
   type PausePayload,
   type Proposal,
   type ProposalKind,
+  type AvailableChrome,
+  type ChromeSelection,
+  type ChromeSelectionSource,
   normalizeStoredPause,
 } from '@qa-debug/pause-store-types';
 import { QaToolError } from '@qa-debug/tool-contracts/errors';
@@ -32,6 +36,9 @@ const KEY_ACTIVE = 'qa-debug.pause.active';
 const KEY_PROPOSAL = 'qa-debug.pause.proposal';
 
 export class MementoPauseStore implements PauseStore {
+  private readonly chromeSelectedEmitter = new vscode.EventEmitter<ChromeSelection>();
+  private readonly chromeDeselectedEmitter = new vscode.EventEmitter<string>();
+
   constructor(private readonly globalState: vscode.Memento) {}
 
   async setActivePause(p: PausePayload): Promise<void> {
@@ -94,13 +101,88 @@ export class MementoPauseStore implements PauseStore {
 
   recordDecision(
     sessionId: string,
-    kind: 'retry' | 'give_up',
+    kind: 'give_up',
     _reason: string,
-  ): { decision: 'retry' | 'give_up'; accepted_at_ms: number } {
+  ): { decision: 'give_up'; accepted_at_ms: number } {
     this.getActivePause(sessionId);
     // S4_DESIGN.md §3.3 / §9.3 row 5: clear proposal atomically with decision.
     // Active pause stays — SessionManager clears it after the IPC round-trip.
     void this.globalState.update(KEY_PROPOSAL, undefined);
     return { decision: kind, accepted_at_ms: Date.now() };
+  }
+
+  // ---- v5.16 PLAN-cdp-port-discovery selection methods ----
+
+  async recordChromeSelection(
+    sessionId: string,
+    port: number,
+    source: ChromeSelectionSource,
+  ): Promise<ChromeSelection> {
+    const active = this.getActivePause(sessionId)!;
+    const candidate = (active.available_chromes ?? []).find((c) => c.port === port);
+    if (!candidate) {
+      throw new QaToolError(
+        'INVALID_PORT',
+        `Port ${port} is not in available_chromes (have: ${(active.available_chromes ?? [])
+          .map((c) => c.port)
+          .join(', ') || '<empty>'}). Call qa_discover_chromes first if framework ports changed.`,
+      );
+    }
+    const updated: PausePayload = {
+      ...active,
+      selected_cdp_port: port,
+      // Keep legacy cdp_ws_url synced for transitional consumers that still
+      // read the field directly off PausePayload.
+      cdp_ws_url: candidate.ws_url,
+    };
+    await this.globalState.update(KEY_ACTIVE, updated);
+    const selection: ChromeSelection = {
+      session_id: active.session_id,
+      port,
+      cdp_ws_url: candidate.ws_url,
+      page_titles: candidate.page_titles,
+      source,
+    };
+    // Fire AFTER persistence resolves (§3.18 — session-manager must see
+    // committed state when its subscriber runs).
+    this.chromeSelectedEmitter.fire(selection);
+    return selection;
+  }
+
+  async replaceAvailableChromes(
+    sessionId: string,
+    chromes: AvailableChrome[],
+  ): Promise<{ cleared: boolean }> {
+    const active = this.getActivePause(sessionId)!;
+    const priorPort = active.selected_cdp_port ?? null;
+    const priorInNewList =
+      priorPort != null && chromes.some((c) => c.port === priorPort);
+    const cleared = priorPort != null && !priorInNewList;
+    const updated: PausePayload = {
+      ...active,
+      available_chromes: chromes,
+      selected_cdp_port: cleared ? null : priorPort,
+      cdp_ws_url: cleared
+        ? chromes[0]?.ws_url ?? active.cdp_ws_url
+        : active.cdp_ws_url,
+    };
+    await this.globalState.update(KEY_ACTIVE, updated);
+    if (cleared) {
+      this.chromeDeselectedEmitter.fire(active.session_id);
+    }
+    return { cleared };
+  }
+
+  onChromeSelected(cb: (selection: ChromeSelection) => void): PauseStoreDisposable {
+    return this.chromeSelectedEmitter.event(cb);
+  }
+
+  onChromeDeselected(cb: (sessionId: string) => void): PauseStoreDisposable {
+    return this.chromeDeselectedEmitter.event(cb);
+  }
+
+  dispose(): void {
+    this.chromeSelectedEmitter.dispose();
+    this.chromeDeselectedEmitter.dispose();
   }
 }

@@ -23,9 +23,13 @@ export interface QaToolJsonSchema {
 }
 
 export interface JsonSchemaProp {
-  type: 'string' | 'number' | 'boolean';
+  type: 'string' | 'number' | 'boolean' | 'array';
   enum?: string[];
   description?: string;
+  // v5.16 PLAN-cdp-port-discovery §3.11.0 — array support for qa_discover_chromes.ports.
+  items?: { type: 'string' | 'number' | 'boolean'; minimum?: number; maximum?: number };
+  minItems?: number;
+  maxItems?: number;
 }
 
 /**
@@ -74,9 +78,17 @@ export const qa_get_failure_context: QaToolDef<{
     'but the ground-truth shape (failing assertion, stack frames, console output, browser CDP URL) lives in the pause record. ' +
     'Idempotent and safe to call multiple times. ' +
     'Returns: { test_title, file, line, failing_assertion, stack_trace: { frames (<=50 inline; concise mode <=10), more_at? }, ' +
-    "cdp_ws_url (use with playwright-mcp:browser_* tools to inspect the held browser), screenshot_path?, " +
+    'cdp_ws_url (DERIVED from selection; null until a chrome is selected — see selection branching below), ' +
+    'available_chromes: [{port, ws_url, page_titles}, ...] (discovered via /json/version probe at pause time), ' +
+    "selected_cdp_port (null until qa_select_chrome commits), screenshot_path?, " +
     'console_logs: { lines (<=100 inline; concise mode <=20), more_at? }, paused_for_ms, retry_count, max_retries_remaining, ' +
     "last_proposal_status: 'none' | 'awaiting_human' | 'accepted' | 'rejected' for any in-flight qa_propose_* }. " +
+    'Chrome selection branching (v5.16 PLAN-cdp-port-discovery): ' +
+    '(1) selected_cdp_port non-null AND cdp_ws_url non-null → selection already committed; pass cdp_ws_url to playwright-mcp:browser_connect. ' +
+    '(2) selected_cdp_port null AND available_chromes.length === 1 → call qa_select_chrome(session_id, available_chromes[0].port); no user confirmation needed. ' +
+    '(3) selected_cdp_port null AND available_chromes.length >= 2 → STOP, ask the user in chat which chrome to use (surface page_titles for context), then call qa_select_chrome with their pick. ' +
+    "(4) selected_cdp_port null AND available_chromes.length === 0 → STOP, ask the user 'I couldn't find Chrome at the default debug ports. What port(s) does your test framework launch Chrome on?', then call qa_discover_chromes(session_id, [user-ports]) and re-enter this branching. " +
+    'Until selection commits, playwright-mcp is NOT registered; browser_connect with a null cdp_ws_url will fail. ' +
     'Errors: NO_ACTIVE_PAUSE when no Mocha test is currently paused; SESSION_NOT_FOUND when session_id is supplied but does not match the active pause.',
   inputSchemaJson: {
     type: 'object',
@@ -100,47 +112,6 @@ export const qa_get_failure_context: QaToolDef<{
   // readOnlyHint == false". openWorldHint=false: the tool's domain of
   // interaction is closed (pause store only).
   annotations: { readOnlyHint: true, openWorldHint: false },
-};
-
-export const qa_request_retry: QaToolDef<{ session_id: string; reason: string }> = {
-  name: 'qa_request_retry',
-  description:
-    'Re-runs the currently paused Mocha test. The before-each hook re-runs; the held browser at cdp_ws_url stays alive across the retry. ' +
-    'Reversible: a subsequent failure simply re-pauses with a fresh session_id. ' +
-    'Callers should invoke this after the test selector, asserted value, or production code under test has been edited to address the failure — ' +
-    'not as a generic "try again" without a diff. The supplied reason is surfaced verbatim in the chat notification, the Test Explorer annotation, ' +
-    'and the audit log; callers should write it for a QA who did not see the conversation (e.g., "selector .submit-btn renamed to .primary-submit"). ' +
-    "Returns: { decision: 'retry', accepted_at_ms }. " +
-    'Errors: NO_ACTIVE_PAUSE when no pause is active; SESSION_NOT_FOUND when session_id is stale; ' +
-    'PAUSE_ALREADY_RESOLVED when another caller (e.g., a UI button click in Test Explorer) committed the verb first.',
-  inputSchemaJson: {
-    type: 'object',
-    properties: {
-      session_id: { ...sessionIdProp, description: 'The session_id from the pause notification.' },
-      reason: {
-        type: 'string',
-        description:
-          'Free-text rationale (1–2 sentences) surfaced to the QA verbatim. Write specifically what was changed; not "let us try again".',
-      },
-    },
-    required: ['session_id', 'reason'],
-    additionalProperties: false,
-  },
-  inputSchemaZod: z.object({
-    session_id: z.string(),
-    reason: z.string(),
-  }),
-  // v5.6 — request verb: auto-commits via DecisionRouter when called through
-  // the in-extension qa-debug-server (onDecision callback wires to
-  // decisionRouter.commit(sessionId, 'retry', reason, 'agent')). Returns
-  // PAUSE_ALREADY_RESOLVED on lost-race; the agent should re-ground via
-  // qa_get_failure_context rather than re-issue.
-  annotations: {
-    readOnlyHint: false,
-    destructiveHint: false,
-    idempotentHint: false,
-    openWorldHint: false,
-  },
 };
 
 export const qa_request_give_up: QaToolDef<{ session_id: string; reason: string }> = {
@@ -217,47 +188,6 @@ export const qa_propose_mark_passed: QaToolDef<{ session_id: string; rationale: 
   },
 };
 
-export const qa_propose_close_browser: QaToolDef<{ session_id: string; rationale: string }> = {
-  name: 'qa_propose_close_browser',
-  description:
-    "Proposes closing the held debugging browser at the pause's cdp_ws_url. Does NOT commit. " +
-    'Surfaces a confirmation button for the human. ' +
-    "Distinct from playwright-mcp:browser_close: that tool ends the agent's Playwright session against the browser; " +
-    "this tool tears down the underlying held-on-failure Chrome process the QA Debug Companion owns. Calling browser_close does NOT close this Chrome. " +
-    'Closing this Chrome destroys the QA\'s live inspection asset (DOM, console history, network state). ' +
-    'Callers should invoke this only when investigation is genuinely complete or the browser is unrecoverable (e.g., crashed renderer). ' +
-    'After calling, stop and report in chat; the verdict surfaces via qa_get_failure_context.last_proposal_status. ' +
-    "Returns: { proposal_id, status: 'awaiting_human' }. " +
-    'Mode A note (transparent wdio.remote integration, v5.2): when the browser was launched by your test code via webdriverio.remote(), ' +
-    "this tool returns { status: 'declined', reason: '...' } immediately because the test code owns the browser lifecycle. " +
-    'Close the browser via browser.deleteSession() in your test teardown instead. ' +
-    'Errors: NO_ACTIVE_PAUSE when no pause is active; SESSION_NOT_FOUND when session_id is stale.',
-  inputSchemaJson: {
-    type: 'object',
-    properties: {
-      session_id: { ...sessionIdProp, description: 'The session_id from the pause notification.' },
-      rationale: {
-        type: 'string',
-        description:
-          "Specific rationale the human reads verbatim (e.g., 'investigation complete; QA confirmed root cause' or 'renderer crashed; CDP unresponsive').",
-      },
-    },
-    required: ['session_id', 'rationale'],
-    additionalProperties: false,
-  },
-  inputSchemaZod: z.object({
-    session_id: z.string(),
-    rationale: z.string(),
-  }),
-  // v5.4 §2.3 — propose verb (see qa_request_retry rationale).
-  annotations: {
-    readOnlyHint: false,
-    destructiveHint: false,
-    idempotentHint: false,
-    openWorldHint: false,
-  },
-};
-
 export const qa_propose_abort_suite: QaToolDef<{ session_id: string; rationale: string }> = {
   name: 'qa_propose_abort_suite',
   description:
@@ -295,13 +225,95 @@ export const qa_propose_abort_suite: QaToolDef<{ session_id: string; rationale: 
   },
 };
 
+// ---- v5.16 PLAN-cdp-port-discovery — Mode C chrome discovery + selection ----
+
+export const qa_discover_chromes: QaToolDef<{ session_id: string; ports: number[] }> = {
+  name: 'qa_discover_chromes',
+  description:
+    "Re-probes a user-supplied list of ports for active Chrome CDP endpoints, then replaces the current pause's available_chromes with the result. " +
+    'Use when qa_get_failure_context.available_chromes is empty (defaults unreachable) OR when the previously-selected Chrome appears dead (e.g., playwright-mcp returns "target closed"). ' +
+    'Callers MUST ask the user for the port list — do NOT guess or scan. ' +
+    'Side-effects on the active pause: REPLACES available_chromes; CLEARS selected_cdp_port IFF the prior selection\'s port is not present in the new list. ' +
+    'Callers must call qa_select_chrome after this tool to commit a selection. ' +
+    'Idempotent: calling twice with the same ports yields the same available_chromes result. ' +
+    'Returns: { available_chromes: [{port, ws_url, page_titles}, ...] }. ' +
+    'Errors: NO_ACTIVE_PAUSE (session_id stale); INVALID_PORT (any port outside 1024-65535); ' +
+    'NO_CHROMES_FOUND (none of the supplied ports responded — re-ask the user or surface the framework launch failure).',
+  inputSchemaJson: {
+    type: 'object',
+    properties: {
+      session_id: {
+        type: 'string',
+        description: 'Active pause session_id from qa_get_failure_context.',
+      },
+      ports: {
+        type: 'array',
+        items: { type: 'number', minimum: 1024, maximum: 65535 },
+        minItems: 1,
+        maxItems: 8,
+        description: 'Integer port numbers (1024-65535) the test framework launched Chrome on.',
+      },
+    },
+    required: ['session_id', 'ports'],
+    additionalProperties: false,
+  },
+  inputSchemaZod: z.object({
+    session_id: z.string(),
+    ports: z.array(z.number().int().min(1024).max(65535)).min(1).max(8),
+  }),
+  annotations: {
+    readOnlyHint: false, // mutates pause-store
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: true, // HTTP fetches localhost; outside qa-debug closed world
+  },
+};
+
+export const qa_select_chrome: QaToolDef<{ session_id: string; port: number }> = {
+  name: 'qa_select_chrome',
+  description:
+    "Commits the chosen Chrome from available_chromes as the pause's active browser. " +
+    'After this tool returns, qa_get_failure_context will surface cdp_ws_url populated with the selected chrome\'s URL, and the extension will register playwright-mcp against it. ' +
+    'Until this commits, cdp_ws_url is null and playwright-mcp is NOT registered. ' +
+    'If available_chromes.length === 1 you may select that port without asking the user. ' +
+    'If length >= 2, ask the user which chrome (use page_titles for context) and call with their pick. ' +
+    'Idempotent within a pause: calling twice with different ports replaces the selection and re-registers playwright-mcp at the new endpoint. ' +
+    'Returns: { cdp_ws_url, port, page_titles }. ' +
+    'Errors: NO_ACTIVE_PAUSE; SESSION_NOT_FOUND; INVALID_PORT (port not in current available_chromes — call qa_discover_chromes first if the framework rev\'d ports).',
+  inputSchemaJson: {
+    type: 'object',
+    properties: {
+      session_id: {
+        type: 'string',
+        description: 'Active pause session_id from qa_get_failure_context.',
+      },
+      port: {
+        type: 'number',
+        description: "Port from available_chromes[].port (the user's pick).",
+      },
+    },
+    required: ['session_id', 'port'],
+    additionalProperties: false,
+  },
+  inputSchemaZod: z.object({
+    session_id: z.string(),
+    port: z.number().int().min(1024).max(65535),
+  }),
+  annotations: {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
+};
+
 export const qaTools = [
   qa_get_failure_context,
-  qa_request_retry,
   qa_request_give_up,
   qa_propose_mark_passed,
-  qa_propose_close_browser,
   qa_propose_abort_suite,
+  qa_discover_chromes,
+  qa_select_chrome,
 ] as const;
 
 export type QaToolName = (typeof qaTools)[number]['name'];

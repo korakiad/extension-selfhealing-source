@@ -1,7 +1,6 @@
 /**
  * qa-debug.* commands per `extension/package.json contributes.commands`:
  *  - qa-debug.runFixture          — spawn the fixture suite (entry point)
- *  - qa-debug.retry               — commit retry (reversible; no UI confirm)
  *  - qa-debug.giveUp              — commit give_up (reversible; no UI confirm)
  *  - qa-debug.markPassed          — commit mark_passed (irreversible; UI confirm
  *                                   for proposals, showInputBox prompt for cold clicks
@@ -16,6 +15,7 @@ import type { DecisionKind } from '@qa-debug/mocha-hooks/protocol';
 import type { PausePayload } from '@qa-debug/pause-store-types';
 
 import type { DecisionRouter } from './decision-router.js';
+import { probePorts } from './lm-tools/probe-ports.js';
 import { appendInfo } from './output-channel.js';
 import type { MementoPauseStore } from './pause-store.js';
 import type { SessionManager } from './session-manager.js';
@@ -33,10 +33,13 @@ let chatOpenAvailableCache: boolean | undefined;
 export function registerCommands(context: vscode.ExtensionContext, deps: CommandDeps): void {
   context.subscriptions.push(
     vscode.commands.registerCommand('qa-debug.runFixture', () => runFixtureCmd(deps)),
-    vscode.commands.registerCommand('qa-debug.retry', () => decisionCmd(deps, 'retry')),
-    vscode.commands.registerCommand('qa-debug.giveUp', () => decisionCmd(deps, 'give_up')),
+    vscode.commands.registerCommand('qa-debug.giveUp', () => giveUpCmd(deps)),
     vscode.commands.registerCommand('qa-debug.markPassed', () => markPassedCmd(deps)),
     vscode.commands.registerCommand('qa-debug.openChatForPaused', () => openChatForPausedCmd(deps)),
+    // v5.16 PLAN-cdp-port-discovery §3.14 — status-bar surfaces these when
+    // available_chromes.length !== 1 (no auto-select happened).
+    vscode.commands.registerCommand('qa-debug.selectChrome', () => selectChromeCmd(deps)),
+    vscode.commands.registerCommand('qa-debug.enterChromePorts', () => enterChromePortsCmd(deps)),
   );
 }
 
@@ -52,8 +55,8 @@ async function runFixtureCmd(deps: CommandDeps): Promise<void> {
   }
 }
 
-/** Reversible verbs (retry / give_up) commit immediately through DecisionRouter. */
-async function decisionCmd(deps: CommandDeps, kind: 'retry' | 'give_up'): Promise<void> {
+/** give_up commits immediately through DecisionRouter. */
+async function giveUpCmd(deps: CommandDeps): Promise<void> {
   let active;
   try {
     active = deps.pauseStore.getActivePause()!;
@@ -61,9 +64,8 @@ async function decisionCmd(deps: CommandDeps, kind: 'retry' | 'give_up'): Promis
     void vscode.window.showErrorMessage('QA Debug: no Mocha test is currently paused.');
     return;
   }
-  const verb = kind === 'retry' ? 'Retry' : 'Give Up';
-  const reason = `user clicked ${verb} in Test Explorer`;
-  const ok = deps.decisionRouter.commit(active.session_id, kind as DecisionKind, reason, 'human');
+  const reason = 'user clicked Give Up in Test Explorer';
+  const ok = deps.decisionRouter.commit(active.session_id, 'give_up' as DecisionKind, reason, 'human');
   if (!ok) {
     void vscode.window.showErrorMessage('QA Debug: Pause already resolved.');
   }
@@ -160,15 +162,71 @@ async function openChatForPausedCmd(deps: CommandDeps): Promise<void> {
 }
 
 export function buildPausePrompt(pause: PausePayload): string {
+  // v5.16 PLAN-cdp-port-discovery — cdp_ws_url is derived after a chrome
+  // selection commits; it is null until then. The prompt no longer inlines a
+  // (possibly stale) endpoint and instead tells the agent how to land on a
+  // dialable one via the new discover/select tools.
+  const chromes = pause.available_chromes ?? [];
+  const selectedPort = pause.selected_cdp_port ?? null;
+  const selected = selectedPort != null ? chromes.find((c) => c.port === selectedPort) : undefined;
+
+  let chromeLine: string;
+  let nextStep: string;
+  if (selected) {
+    chromeLine = `Browser: chrome already selected at port ${selected.port} (cdp_ws_url=${selected.ws_url}).`;
+    nextStep =
+      'Call qa-debug_qa_get_failure_context to ground, then attach via playwright-mcp:browser_connect using the cdp_ws_url it returns. ' +
+      'The browser at that endpoint is the same Chrome the failing test was driving — DOM, console, network state are live.';
+  } else if (chromes.length === 1) {
+    chromeLine = `Browser: 1 chrome discovered (port ${chromes[0].port}); no selection committed yet.`;
+    nextStep =
+      `Call qa-debug_qa_get_failure_context first to ground, then qa-debug_qa_select_chrome with session_id and port=${chromes[0].port} ` +
+      '(no user confirmation needed for a single candidate). After selection commits, attach via playwright-mcp:browser_connect using the returned cdp_ws_url.';
+  } else if (chromes.length >= 2) {
+    const summary = chromes
+      .map(
+        (c) =>
+          `port ${c.port}${c.page_titles.length > 0 ? ` (${c.page_titles.slice(0, 2).join(' / ')})` : ''}`,
+      )
+      .join('; ');
+    chromeLine = `Browser: ${chromes.length} chromes discovered — ${summary}; no selection committed.`;
+    nextStep =
+      'Call qa-debug_qa_get_failure_context first to ground. Then ask the user which chrome to attach to (surface page_titles as context). ' +
+      'Once they pick, call qa-debug_qa_select_chrome with their port. After it commits, attach via playwright-mcp:browser_connect using the returned cdp_ws_url.';
+  } else {
+    chromeLine = 'Browser: no chromes discovered at the default debug ports.';
+    nextStep =
+      "Call qa-debug_qa_get_failure_context first to ground. Then ask the user: \"I couldn't find Chrome at the default debug ports — what port(s) does your test framework launch Chrome on?\" " +
+      'Call qa-debug_qa_discover_chromes(session_id, [user-ports]); if it returns chromes, call qa-debug_qa_select_chrome next; then attach via playwright-mcp:browser_connect.';
+  }
+
   return [
-    'A Mocha test is paused at the failure point. Please investigate using the qa-debug + playwright-mcp tools.',
+    'A Mocha test is paused at the failure point. Investigate using the qa-debug + playwright-mcp tools.',
     '',
     `Test: ${pause.full_title}`,
     `File: ${pause.file}:${pause.line ?? '?'}`,
     `Failure: ${pause.failing_assertion}`,
-    `Browser (CDP): ${pause.cdp_ws_url}`,
+    chromeLine,
     '',
-    'Start by calling qa-debug_qa_get_failure_context for grounded context, then use playwright-mcp:browser_snapshot or :browser_evaluate to inspect live DOM. The browser at the CDP endpoint above is the same Chrome window that was open when the test failed.',
+    'GROUND TRUTH IS THE LIVE BROWSER, NOT THE SOURCE FILES.',
+    "Do NOT shortcut by reading the page's .html / .js / .css source to guess what's on screen. " +
+      'The browser at the CDP endpoint above is the exact Chrome window the test was driving when it failed — ' +
+      'post-JS DOM, computed styles, in-flight network responses, console errors, framework state, async timers, ' +
+      'dynamically-injected nodes — none of which exist in the source files. Source can be stale, can be conditionally rendered, ' +
+      'can be overridden at runtime. Attach first; read source only to corroborate something you already observed live.',
+    '',
+    nextStep,
+    '',
+    'Once attached, prefer these live-state queries over file reads:',
+    '  • playwright-mcp:browser_snapshot — current rendered DOM (accessibility tree)',
+    '  • playwright-mcp:browser_evaluate — run JS in the page to inspect runtime variables/state',
+    '  • playwright-mcp:browser_console_messages — errors/warnings the page emitted',
+    '  • playwright-mcp:browser_network_requests — what the page actually fetched + responses',
+    '  • playwright-mcp:browser_take_screenshot — visual ground truth',
+    '',
+    'When investigation is done: propose the fix in chat and let the user re-run via Test Explorer ▶ (for code/test bugs); ' +
+      'or call qa-debug_qa_request_give_up (final failure), qa-debug_qa_propose_mark_passed (env-flake — needs human confirm), ' +
+      'or qa-debug_qa_propose_abort_suite (catastrophic cross-test).',
   ].join('\n');
 }
 
@@ -177,4 +235,101 @@ async function isChatOpenAvailable(): Promise<boolean> {
   const all = await vscode.commands.getCommands(true);
   chatOpenAvailableCache = all.includes(CHAT_OPEN_COMMAND);
   return chatOpenAvailableCache;
+}
+
+// ---- v5.16 PLAN-cdp-port-discovery — extension UI chrome selection ----
+
+async function selectChromeCmd(deps: CommandDeps): Promise<void> {
+  let active: PausePayload;
+  try {
+    active = deps.pauseStore.getActivePause()!;
+  } catch {
+    void vscode.window.showErrorMessage('QA Debug: no Mocha test is currently paused.');
+    return;
+  }
+  const chromes = active.available_chromes ?? [];
+  if (chromes.length === 0) {
+    void vscode.window.showInformationMessage(
+      'QA Debug: no Chrome discovered yet — use "Enter Chrome ports" to supply ports.',
+    );
+    return;
+  }
+  const pick = await vscode.window.showQuickPick(
+    chromes.map((c) => ({
+      label: `Port ${c.port}`,
+      detail: c.page_titles.length > 0 ? c.page_titles.join(' / ') : '(no page titles)',
+      port: c.port,
+    })),
+    { placeHolder: 'Select the Chrome to attach playwright-mcp to', ignoreFocusOut: true },
+  );
+  if (!pick) return;
+  try {
+    await deps.pauseStore.recordChromeSelection(active.session_id, pick.port, 'extension-ui');
+    appendInfo(deps.channel, `[command] selectChrome committed port=${pick.port}`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    appendInfo(deps.channel, `[command] selectChrome failed: ${msg}`);
+    void vscode.window.showErrorMessage(`QA Debug: chrome selection failed — ${msg}`);
+  }
+}
+
+async function enterChromePortsCmd(deps: CommandDeps): Promise<void> {
+  let active: PausePayload;
+  try {
+    active = deps.pauseStore.getActivePause()!;
+  } catch {
+    void vscode.window.showErrorMessage('QA Debug: no Mocha test is currently paused.');
+    return;
+  }
+  const input = await vscode.window.showInputBox({
+    prompt: 'Chrome debug ports (comma-separated)',
+    placeHolder: '22135, 22136',
+    ignoreFocusOut: true,
+    validateInput: (v) => {
+      const tokens = v
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+      if (tokens.length === 0) return 'Enter at least one port (1024-65535).';
+      if (tokens.length > 8) return 'At most 8 ports.';
+      for (const t of tokens) {
+        const n = Number(t);
+        if (!Number.isInteger(n) || n < 1024 || n > 65535) {
+          return `"${t}" is not a valid port (1024-65535).`;
+        }
+      }
+      return null;
+    },
+  });
+  if (!input) return;
+  const ports = input
+    .split(',')
+    .map((s) => Number(s.trim()))
+    .filter((n) => Number.isInteger(n));
+  try {
+    const chromes = await probePorts(ports);
+    if (chromes.length === 0) {
+      void vscode.window.showErrorMessage(
+        `QA Debug: none of the supplied ports [${ports.join(', ')}] responded. ` +
+          'Verify the framework launched Chrome on those ports.',
+      );
+      return;
+    }
+    await deps.pauseStore.replaceAvailableChromes(active.session_id, chromes);
+    appendInfo(
+      deps.channel,
+      `[command] enterChromePorts found ${chromes.length} chrome(s) at [${chromes.map((c) => c.port).join(', ')}]`,
+    );
+    // If exactly one responded, auto-select for UX symmetry with pause-publish.
+    if (chromes.length === 1) {
+      await deps.pauseStore.recordChromeSelection(active.session_id, chromes[0].port, 'extension-ui');
+    } else {
+      // Surface the QuickPick immediately so the user lands on selection in one flow.
+      await selectChromeCmd(deps);
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    appendInfo(deps.channel, `[command] enterChromePorts failed: ${msg}`);
+    void vscode.window.showErrorMessage(`QA Debug: ${msg}`);
+  }
 }

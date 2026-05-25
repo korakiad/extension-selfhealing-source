@@ -37,7 +37,6 @@ import {
   METHOD,
   PausePayload as WirePausePayload,
   PausePublishResult,
-  TestPassedParams,
   nodeIpcTransport,
 } from '@qa-debug/mocha-hooks/protocol';
 import type { PausePayload } from '@qa-debug/pause-store-types';
@@ -112,12 +111,10 @@ interface ActiveRun {
   heartbeatTimers: Map<string, NodeJS.Timeout>;
   /** session_ids whose decision.await is currently pending. */
   pendingSessions: Set<string>;
-  /** CWD this run was spawned with — reused on retry respawn. */
+  /** CWD this run was spawned with. */
   cwd: string;
-  /** Mocha bin used — reused on retry respawn. */
+  /** Mocha bin used. */
   mochaBin: string;
-  /** Outstanding retry request to fire after `child` exits. */
-  retryAfterExit?: { specFile: string; testTitle: string };
 }
 
 export interface RunFixtureSuiteOptions {
@@ -146,8 +143,34 @@ export interface RunFixtureSuiteOptions {
 
 export class SessionManager {
   private activeRun?: ActiveRun;
+  private readonly chromeEventSubscriptions: { dispose(): void }[] = [];
 
-  constructor(private readonly deps: SessionManagerDeps) {}
+  constructor(private readonly deps: SessionManagerDeps) {
+    // v5.16 PLAN-cdp-port-discovery §3.18 — gate mcpProvider.setPaused on
+    // chrome selection events. Two paths feed this funnel: agent via
+    // qa-debug_qa_select_chrome (LM tool) and extension UI via QuickPick /
+    // InputBox. Both write through PauseStore.recordChromeSelection which
+    // awaits persistence before firing onChromeSelected.
+    this.chromeEventSubscriptions.push(
+      this.deps.pauseStore.onChromeSelected((selection) => {
+        const httpRoot = cdpWsUrlToHttpRoot(selection.cdp_ws_url);
+        this.deps.mcpProvider.setPaused(httpRoot);
+        appendInfo(
+          this.deps.channel,
+          `[session-manager] mcpProvider.setPaused endpoint=${httpRoot} port=${selection.port} ` +
+            `source=${selection.source} session=${selection.session_id}`,
+        );
+      }),
+      this.deps.pauseStore.onChromeDeselected((sessionId) => {
+        this.deps.mcpProvider.clearPaused();
+        appendInfo(
+          this.deps.channel,
+          `[session-manager] mcpProvider.clearPaused (selection invalidated by ` +
+            `replaceAvailableChromes) session=${sessionId}`,
+        );
+      }),
+    );
+  }
 
   /** Entrypoint for qa-debug.runFixture + TestController run handler. */
   async runFixtureSuite(opts: RunFixtureSuiteOptions = {}): Promise<void> {
@@ -183,6 +206,10 @@ export class SessionManager {
       }
       this.activeRun = undefined;
     }
+    for (const sub of this.chromeEventSubscriptions) {
+      sub.dispose();
+    }
+    this.chromeEventSubscriptions.length = 0;
     await this.deps.chrome.dispose();
   }
 
@@ -281,12 +308,43 @@ export class SessionManager {
       await this.deps.pauseStore.setActivePause(stored);
       await vscode.commands.executeCommand('setContext', 'qa-debug.paused', true);
       await refreshPausedTestIdsContext(this.deps.pauseStore);
-      const mcpEndpoint = cdpWsUrlToHttpRoot(wire.cdp_ws_url);
-      this.deps.mcpProvider.setPaused(mcpEndpoint);
+      // v5.16 PLAN-cdp-port-discovery §3.18 — mcpProvider.setPaused is gated
+      // on a committed chrome selection. Don't fire here. Auto-select when
+      // exactly one chrome was discovered; otherwise wait for agent
+      // (qa_select_chrome / qa_discover_chromes) or extension UI to commit.
+      const chromes = stored.available_chromes ?? [];
       appendInfo(
         this.deps.channel,
-        `[session-manager] mcpProvider.setPaused endpoint=${mcpEndpoint} mode=${wire.mode} source_ws=${wire.cdp_ws_url}`,
+        `[session-manager] pause session=${sessionId} test="${stored.test_title}" ` +
+          `chrome_owner=${stored.chrome_owner ?? 'unknown'} available_chromes=${chromes.length}`,
       );
+      if (chromes.length === 1) {
+        try {
+          await this.deps.pauseStore.recordChromeSelection(sessionId, chromes[0].port, 'auto');
+          appendInfo(
+            this.deps.channel,
+            `[session-manager] auto-selected single chrome port=${chromes[0].port} session=${sessionId}`,
+          );
+        } catch (err) {
+          appendInfo(
+            this.deps.channel,
+            `[session-manager] auto-select failed session=${sessionId}: ${(err as Error).message}`,
+          );
+          // Pause still surfaces; user can recover via Select Chrome status-bar action.
+        }
+      } else if (chromes.length === 0) {
+        appendInfo(
+          this.deps.channel,
+          `[session-manager] no chromes discovered — awaiting agent qa_discover_chromes ` +
+            `or extension UI port input session=${sessionId}`,
+        );
+      } else {
+        appendInfo(
+          this.deps.channel,
+          `[session-manager] multiple chromes discovered (${chromes.length}) — awaiting ` +
+            `selection via agent qa_select_chrome or status-bar QuickPick session=${sessionId}`,
+        );
+      }
       run.testHandle.recordPause(stored);
       // v5.4 §2.2 — ambient status-bar entry augments the notification toast.
       this.deps.pauseStatusBar.show(sessionId);
@@ -307,10 +365,6 @@ export class SessionManager {
         }
       });
 
-      appendInfo(
-        this.deps.channel,
-        `[session-manager] pause session=${sessionId} test="${stored.test_title}"`,
-      );
       const result: PausePublishResult = { session_id: sessionId };
       return result;
     });
@@ -337,50 +391,10 @@ export class SessionManager {
       const pause = this.peekPauseForFinalDecision(decision);
       run.testHandle.recordDecision(decision, pause);
 
-      if (decision.kind === 'retry') {
-        if (pause?.file) {
-          // v5.5 §2.4: decision.full_title is the canonical fullTitle (was
-          // decision.test_title pre-rename; mocha --grep matches against
-          // Runnable.fullTitle() per runnable.js:206).
-          run.retryAfterExit = { specFile: pause.file, testTitle: decision.full_title };
-        }
-        return;
-      }
-
       await this.deps.pauseStore.clearActivePause();
       await vscode.commands.executeCommand('setContext', 'qa-debug.paused', false);
       await refreshPausedTestIdsContext(this.deps.pauseStore);
       this.deps.mcpProvider.setIdle();
-    });
-
-    // v5.13 — test.passed REQUEST handler. Fires from qa-hooks afterEach on every
-    // passing test. We correlate by full_title against the active pause; if a
-    // match exists, the prior retry's respawn just passed and we run the
-    // commit-path cleanup that the retry branch's early return above skipped.
-    // Reply (empty ack) is sent ONLY after cleanup completes so the child-side
-    // `await c.request(...)` resolves with cleanup observable in the same tick.
-    // See PLAN-retry-pass-recovery.md "Why request, not notification".
-    connection.handle(METHOD.testPassed, async (raw) => {
-      const params = TestPassedParams.parse(raw);
-      const active = this.deps.pauseStore.peekActivePause();
-      if (!active || active.full_title !== params.full_title) {
-        // Non-retry pass — no stored pause to clean up. Ack immediately.
-        return {};
-      }
-
-      appendInfo(
-        this.deps.channel,
-        `[session-manager] retry-pass recovery for "${params.full_title}" session=${active.session_id}`,
-      );
-
-      run.testHandle.recordRetryPassed(active);
-      this.deps.pauseStatusBar.hide(active.session_id);
-      await this.deps.pauseStore.clearActivePause();
-      await vscode.commands.executeCommand('setContext', 'qa-debug.paused', false);
-      await refreshPausedTestIdsContext(this.deps.pauseStore);
-      this.deps.mcpProvider.setIdle();
-
-      return {};
     });
   }
 
@@ -423,43 +437,8 @@ export class SessionManager {
       this.activeRun = undefined;
     }
 
-    if (run.retryAfterExit) {
-      const { specFile, testTitle } = run.retryAfterExit;
-      appendInfo(
-        this.deps.channel,
-        `[session-manager] respawn for retry: spec=${specFile} test="${testTitle}"`,
-      );
-      // Retry reuses the same CWD + mocha bin as the original spawn so the
-      // user's .mocharc.cjs resolution (if any) stays consistent.
-      await this.spawnMochaChild(run.testHandle, {
-        cwd: run.cwd,
-        mochaBin: run.mochaBin,
-        grep: `^${escapeRegex(testTitle)}$`,
-        specFiles: [specFile],
-      });
-      return;
-    }
-
     const stalePause = this.deps.pauseStore.peekActivePause();
     if (!stalePause) {
-      await this.deps.chrome.dispose();
-    } else if (!this.deps.decisionRouter.hasPending(stalePause.session_id)) {
-      // v5.13 — crash-after-retry cleanup. The pause survived a retry commit
-      // (decisionRouter callback was consumed when the retry was committed) and
-      // mocha then crashed during the respawn without emitting pause.publish or
-      // test.passed. No agent/human can resolve this session — synthesize a
-      // give-up-shaped UI transition so the TestItem doesn't strand in the
-      // paused state with a stuck spinner. See PLAN-retry-pass-recovery.md.
-      appendInfo(
-        this.deps.channel,
-        `[session-manager] mocha crashed after retry; clearing stale pause session=${stalePause.session_id}`,
-      );
-      run.testHandle.recordCrashCleared(stalePause);
-      await this.deps.pauseStore.clearActivePause();
-      await vscode.commands.executeCommand('setContext', 'qa-debug.paused', false);
-      await refreshPausedTestIdsContext(this.deps.pauseStore);
-      this.deps.mcpProvider.setIdle();
-      this.deps.pauseStatusBar.hide(stalePause.session_id);
       await this.deps.chrome.dispose();
     } else {
       appendInfo(
@@ -543,17 +522,16 @@ function wireToStored(wire: WirePausePayload, sessionId: string): PausePayload {
     failing_assertion: wire.error.message,
     stack_trace: { frames: stackFrames },
     cdp_ws_url: wire.cdp_ws_url,
-    mode: wire.mode, // v5.2 §2.4 — propagated for qa_propose_close_browser decline check
+    mode: wire.mode, // v5.2 §2.4 — legacy field; kept transitional, see pause-store-types ChromeOwner
+    // v5.16 — propagate Mode C discovery fields to store for agent + UI consumers.
+    available_chromes: wire.available_chromes ?? [],
+    selected_cdp_port: wire.selected_cdp_port ?? null,
+    chrome_owner: wire.chrome_owner ?? (wire.mode === 'A' ? 'framework' : 'companion'),
     console_logs: { lines: [], bytes: 0 },
     paused_at_ms: wire.started_at,
     retry_count: wire.retry_count,
     max_retries_remaining: 0,
   };
-}
-
-/** §6.4.1 — escape regex metacharacters per MDN-canonical pattern. */
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 void HEARTBEAT_MS;

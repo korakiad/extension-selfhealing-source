@@ -8,11 +8,17 @@
  * when it hosts the qa-debug MCP server in-process over Streamable HTTP.
  */
 
+import { EventEmitter } from 'node:events';
+
 import {
   type PauseStore,
+  type PauseStoreDisposable,
   type PausePayload,
   type Proposal,
   type ProposalKind,
+  type AvailableChrome,
+  type ChromeSelection,
+  type ChromeSelectionSource,
 } from '@qa-debug/pause-store-types';
 import { QaToolError } from '@qa-debug/tool-contracts/errors';
 
@@ -32,6 +38,9 @@ export { QaToolError, type QaErrorCode } from '@qa-debug/tool-contracts/errors';
 export class InMemoryPauseStore implements PauseStore {
   private active?: PausePayload;
   private proposals = new Map<string, Proposal>();
+  // v5.16 — node EventEmitter parity with MementoPauseStore's vscode.EventEmitter
+  // (PLAN §3.7: both impls fire-after-persist; synchronous here, async there).
+  private readonly chromeEvents = new EventEmitter();
 
   setActivePause(p: PausePayload): void {
     this.active = p;
@@ -78,9 +87,9 @@ export class InMemoryPauseStore implements PauseStore {
 
   recordDecision(
     sessionId: string,
-    kind: 'retry' | 'give_up',
+    kind: 'give_up',
     _reason: string,
-  ): { decision: 'retry' | 'give_up'; accepted_at_ms: number } {
+  ): { decision: 'give_up'; accepted_at_ms: number } {
     const active = this.getActivePause(sessionId)!;
     // S4 contract per S4_DESIGN.md §3.3 + §9.3 row 5: recordDecision for
     // retry/give_up clears the proposal slot atomically, closing the
@@ -89,5 +98,71 @@ export class InMemoryPauseStore implements PauseStore {
     // stub's caller (oracle / Inspector smoke) clears separately if needed.
     this.proposals.delete(active.session_id);
     return { decision: kind, accepted_at_ms: Date.now() };
+  }
+
+  // ---- v5.16 PLAN-cdp-port-discovery selection methods ----
+
+  async recordChromeSelection(
+    sessionId: string,
+    port: number,
+    source: ChromeSelectionSource,
+  ): Promise<ChromeSelection> {
+    const active = this.getActivePause(sessionId)!;
+    const candidate = (active.available_chromes ?? []).find((c) => c.port === port);
+    if (!candidate) {
+      throw new QaToolError(
+        'INVALID_PORT',
+        `Port ${port} is not in available_chromes (have: ${(active.available_chromes ?? [])
+          .map((c) => c.port)
+          .join(', ') || '<empty>'}). Call qa_discover_chromes first if framework ports changed.`,
+      );
+    }
+    this.active = {
+      ...active,
+      selected_cdp_port: port,
+      cdp_ws_url: candidate.ws_url,
+    };
+    const selection: ChromeSelection = {
+      session_id: active.session_id,
+      port,
+      cdp_ws_url: candidate.ws_url,
+      page_titles: candidate.page_titles,
+      source,
+    };
+    this.chromeEvents.emit('selected', selection);
+    return selection;
+  }
+
+  async replaceAvailableChromes(
+    sessionId: string,
+    chromes: AvailableChrome[],
+  ): Promise<{ cleared: boolean }> {
+    const active = this.getActivePause(sessionId)!;
+    const priorPort = active.selected_cdp_port ?? null;
+    const priorInNewList =
+      priorPort != null && chromes.some((c) => c.port === priorPort);
+    const cleared = priorPort != null && !priorInNewList;
+    this.active = {
+      ...active,
+      available_chromes: chromes,
+      selected_cdp_port: cleared ? null : priorPort,
+      cdp_ws_url: cleared
+        ? chromes[0]?.ws_url ?? active.cdp_ws_url
+        : active.cdp_ws_url,
+    };
+    if (cleared) {
+      this.chromeEvents.emit('deselected', active.session_id);
+    }
+    return { cleared };
+  }
+
+  onChromeSelected(cb: (selection: ChromeSelection) => void): PauseStoreDisposable {
+    this.chromeEvents.on('selected', cb);
+    return { dispose: () => this.chromeEvents.off('selected', cb) };
+  }
+
+  onChromeDeselected(cb: (sessionId: string) => void): PauseStoreDisposable {
+    this.chromeEvents.on('deselected', cb);
+    return { dispose: () => this.chromeEvents.off('deselected', cb) };
   }
 }
