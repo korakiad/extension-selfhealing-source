@@ -41,7 +41,6 @@ import {
 } from '@qa-debug/mocha-hooks/protocol';
 import type { PausePayload } from '@qa-debug/pause-store-types';
 
-import type { ChromeProcess } from './chrome.js';
 import type { DecisionRouter } from './decision-router.js';
 import type { QaDebugMcpProvider } from './mcp-provider.js';
 import { appendInfo } from './output-channel.js';
@@ -87,7 +86,6 @@ for (const [label, p] of [
 export interface SessionManagerDeps {
   pauseStore: MementoPauseStore;
   decisionRouter: DecisionRouter;
-  chrome: ChromeProcess;
   mcpProvider: QaDebugMcpProvider;
   testControllerWrapper: TestControllerWrapper;
   channel: vscode.OutputChannel;
@@ -180,7 +178,6 @@ export class SessionManager {
       );
       return;
     }
-    await this.deps.chrome.spawn();
     const cwd = this.resolveCwd(opts.specs);
     const mochaBin = this.resolveMochaBin(cwd);
     const specFiles = (opts.specs ?? []).map((u) => u.fsPath);
@@ -210,7 +207,6 @@ export class SessionManager {
       sub.dispose();
     }
     this.chromeEventSubscriptions.length = 0;
-    await this.deps.chrome.dispose();
   }
 
   // ------------------- internal -------------------
@@ -436,16 +432,6 @@ export class SessionManager {
       this.activeRun = undefined;
     }
 
-    const stalePause = this.deps.pauseStore.peekActivePause();
-    if (!stalePause) {
-      await this.deps.chrome.dispose();
-    } else {
-      appendInfo(
-        this.deps.channel,
-        `[session-manager] mocha exited with outstanding pause session=${stalePause.session_id}; ` +
-          `Chrome stays up; next run reuses`,
-      );
-    }
     run.testHandle.end();
   }
 

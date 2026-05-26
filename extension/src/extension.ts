@@ -9,7 +9,6 @@ import path from 'node:path';
 
 import { appendDeactivateAudit, appendOrphanPauseAudit } from './audit-file.js';
 import { registerQaDebugChatParticipant } from './chat-participant.js';
-import { ChromeProcess } from './chrome.js';
 import { registerCommands } from './commands.js';
 import { DecisionRouter } from './decision-router.js';
 import { registerQaDebugLmTools } from './lm-tools/index.js';
@@ -54,7 +53,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   const pauseStore = new MementoPauseStore(context.globalState);
   const decisionRouter = new DecisionRouter(channel);
-  const chrome = new ChromeProcess(channel);
 
   // CR-v5.14 §3.4 — qa-debug verbs are now first-party Language Model Tools
   // (extension/src/lm-tools/). The MCP provider survives for playwright-mcp
@@ -176,7 +174,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     sessionMgr = new SessionManager({
       pauseStore,
       decisionRouter,
-      chrome,
       mcpProvider,
       testControllerWrapper,
       channel,
