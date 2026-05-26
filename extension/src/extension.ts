@@ -86,7 +86,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }
     await sessionMgr.runFixtureSuite({
       specs: opts.specs,
-      grep: opts.grep,
+      runSelection: opts.runSelection,
       cancellationToken: opts.cancellationToken,
     });
   });

@@ -43,10 +43,27 @@ export interface TestRunHandle {
   end(): void;
 }
 
+/**
+ * Raw test-selection passed to SessionManager. SessionManager translates this
+ * into a unique grep marker injected into matching test titles at mocha child
+ * boot — see qa-hooks runtime title-mutation. We DON'T synthesize a regex here
+ * because consumer test-framework wrappers (e.g. `@tr/mocha-runner-hooks`) tend
+ * to do their own naive `--grep` checks against top-level suite titles and emit
+ * misleading "NO TEST CASES MATCHED" logs when the regex doesn't match them —
+ * even though Mocha itself runs the test fine. A short opaque marker dodges
+ * those sniffers and is regex-safe.
+ */
+export interface RunSelection {
+  /** Exact `Mocha.Runnable#fullTitle()` matches to run. */
+  fullTitles: readonly string[];
+  /** Describe-path prefixes (space-joined); every test whose fullTitle starts with `<prefix> ` runs. */
+  describePrefixes: readonly string[];
+}
+
 export interface StartSuiteRunOptions {
   specs?: readonly vscode.Uri[];
-  /** v5.5 §2.5 — anchored alternation grep synthesized from selection. */
-  grep?: string;
+  /** Test selection used by qa-hooks to mark matching tests with the grep marker. */
+  runSelection?: RunSelection;
   /** v5.5 C2 — wired to mocha child via SIGTERM in SessionManager. */
   cancellationToken?: vscode.CancellationToken;
 }
@@ -107,12 +124,6 @@ function fullTitleFromItId(id: string): string {
 function describePathFromDescribeId(id: string): readonly string[] {
   const i = id.indexOf('::describe::');
   return id.slice(i + '::describe::'.length).split('>');
-}
-
-/** §6.4.1 — escape regex metacharacters per MDN-canonical pattern.
- *  Shared with SessionManager (NB4 — single source of truth). */
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 export function createTestControllerWrapper(
@@ -320,14 +331,19 @@ export function createTestControllerWrapper(
         for (const w of plan.onlySkipWarnings) {
           appendInfo(channel, w);
         }
+        const sel = plan.runSelection;
         appendInfo(
           channel,
           `[test-controller] run plan specs=${plan.specs?.length ?? 0} ` +
-            `grep=${plan.grep ? JSON.stringify(plan.grep) : '<none>'}`,
+            `runSelection=${
+              sel
+                ? `fullTitles=${sel.fullTitles.length},describePrefixes=${sel.describePrefixes.length}`
+                : '<none>'
+            }`,
         );
         await startSuiteRun({
           specs: plan.specs,
-          grep: plan.grep,
+          runSelection: sel,
           cancellationToken: token,
         });
       } catch (err) {
@@ -348,7 +364,7 @@ export function createTestControllerWrapper(
 
   function planRun(request: vscode.TestRunRequest): {
     specs?: readonly vscode.Uri[];
-    grep?: string;
+    runSelection?: RunSelection;
     onlySkipWarnings: string[];
   } {
     if (!request.include || request.include.length === 0) {
@@ -466,21 +482,24 @@ export function createTestControllerWrapper(
       }
     }
 
-    // Synthesize grep — NB13 mandatory alternation parens.
-    const altParts: string[] = [];
+    // v5.17 — pass raw title list/prefixes; qa-hooks tags matching tests with
+    // a unique marker so mocha's `--grep <marker>` is regex-safe and bypasses
+    // consumer-side --grep sniffers that would otherwise log misleading
+    // "NO TEST CASES MATCHED" against the top-level suite title.
+    const fullTitles: string[] = [];
+    const describePrefixes: string[] = [];
     for (const sel of byFile.values()) {
       if (sel.runEntireFile) continue;
-      for (const ft of sel.concreteFullTitles) {
-        altParts.push(escapeRegex(ft));
-      }
-      for (const prefix of sel.prefixDescribePaths) {
-        altParts.push(`${escapeRegex(prefix)} .*`);
-      }
+      for (const ft of sel.concreteFullTitles) fullTitles.push(ft);
+      for (const prefix of sel.prefixDescribePaths) describePrefixes.push(prefix);
     }
-    const grep = altParts.length > 0 ? `^(${altParts.join('|')})$` : undefined;
+    const runSelection: RunSelection | undefined =
+      fullTitles.length > 0 || describePrefixes.length > 0
+        ? { fullTitles, describePrefixes }
+        : undefined;
     const specs = Array.from(byFile.values()).map((s) => s.fileUri);
 
-    return { specs, grep, onlySkipWarnings };
+    return { specs, runSelection, onlySkipWarnings };
   }
 
   function collectAllLeaves(

@@ -46,7 +46,7 @@ import type { QaDebugMcpProvider } from './mcp-provider.js';
 import { appendInfo, createChildLogPump } from './output-channel.js';
 import type { PauseStatusBar } from './pause-status-bar.js';
 import type { MementoPauseStore } from './pause-store.js';
-import type { TestControllerWrapper, TestRunHandle } from './test-controller.js';
+import type { RunSelection, TestControllerWrapper, TestRunHandle } from './test-controller.js';
 
 // CR-v5.6 §3.8 / I2#A — v5.5 unified-id formula `file::it::full_title`. Must
 // match test-controller's lookupOrCreateTestItem so the context-key array set
@@ -133,11 +133,12 @@ export interface RunFixtureSuiteOptions {
   /** Test-run label surfaced in Test Explorer. */
   runLabel?: string;
   /**
-   * v5.5 §2.5 — anchored alternation grep synthesized by TestController
-   * planRun (NB13 mandatory alternation parens block the /pat/flags shortcut).
-   * Forwarded to mocha as `--grep <value>`.
+   * v5.17 — raw test selection. SessionManager generates a unique grep marker,
+   * passes the selection to qa-hooks via env vars, and qa-hooks tags matching
+   * tests with the marker so mocha's `--grep <marker>` runs exactly them. See
+   * `mocha-hooks/src/qa-hooks.ts` `installRunSelectionMarkerPatch`.
    */
-  grep?: string;
+  runSelection?: RunSelection;
   /**
    * v5.5 C2 — wired to `child.kill('SIGTERM')` on cancellation. The
    * heartbeat-abandon path in qa-hooks resolves the IPC decision so the
@@ -195,7 +196,7 @@ export class SessionManager {
       cwd,
       mochaBin,
       specFiles,
-      grep: opts.grep,
+      runSelection: opts.runSelection,
       cancellationToken: opts.cancellationToken,
     });
   }
@@ -223,29 +224,48 @@ export class SessionManager {
     opts: {
       cwd: string;
       mochaBin: string;
-      grep?: string;
+      runSelection?: RunSelection;
       specFiles?: string[];
       cancellationToken?: vscode.CancellationToken;
     },
   ): Promise<void> {
     // v5.2 §2.1: inject --require + --reporter as absolute paths to the
     // extension-bundled hook/reporter. User .mocharc.cjs needs no edits.
+    // v5.17 §3 — `--no-timeouts` overrides the consumer's `.mocharc` default
+    // (typically 2000ms) so pause-debug runs aren't killed by a beforeAll
+    // hook timeout while the QA inspects the browser. qa-hooks separately
+    // calls this.timeout(0) inside its afterEach for defense-in-depth.
     const args: string[] = [
       '--require',
       REGISTER_PATH,
       '--reporter',
       REPORTER_PATH,
+      '--no-timeouts',
     ];
-    if (opts.grep) {
-      args.push('--grep', opts.grep);
-    }
-    if (opts.specFiles && opts.specFiles.length > 0) {
-      args.push(...opts.specFiles);
-    }
 
     // v5.16 PLAN-cdp-port-discovery — QA_DEBUG_CDP_WS_URL is gone. qa-hooks
     // probes effectiveCdpPorts() per pause; ports override via QA_DEBUG_CDP_PORTS.
     const env: NodeJS.ProcessEnv = { ...process.env };
+
+    // v5.17 — runtime title-mutation grep. Generate a unique marker per run;
+    // qa-hooks reads QA_DEBUG_RUN_* envs at register time and appends the
+    // marker to matching test titles. We then `--grep <marker>` so mocha runs
+    // exactly those tests. The marker is regex-safe (alphanumeric only) so
+    // we avoid escaping issues with titles that contain regex metachars, AND
+    // consumer-side `--grep` sniffers (e.g. `@tr/mocha-runner-hooks`) won't
+    // emit false "NO TEST CASES MATCHED" logs against suite titles.
+    if (opts.runSelection &&
+        (opts.runSelection.fullTitles.length > 0 || opts.runSelection.describePrefixes.length > 0)) {
+      const marker = `__qa${randomUUID().replace(/-/g, '')}__`;
+      env.QA_DEBUG_RUN_MARKER = marker;
+      env.QA_DEBUG_RUN_FULL_TITLES = JSON.stringify(opts.runSelection.fullTitles);
+      env.QA_DEBUG_RUN_DESCRIBE_PREFIXES = JSON.stringify(opts.runSelection.describePrefixes);
+      args.push('--grep', marker);
+    }
+
+    if (opts.specFiles && opts.specFiles.length > 0) {
+      args.push(...opts.specFiles);
+    }
 
     appendInfo(
       this.deps.channel,

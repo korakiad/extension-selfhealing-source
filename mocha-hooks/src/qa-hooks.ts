@@ -87,6 +87,95 @@ const MAX_MISSED_HEARTBEATS = 3;
 let conn: JsonRpcConnection | undefined;
 let connDisabledReason: string | undefined;
 
+// ---------- v5.17 grep marker injection ----------
+// The extension passes a unique alphanumeric marker via QA_DEBUG_RUN_MARKER
+// and the raw selection (full titles + describe-path prefixes) via env JSON.
+// At register time we monkey-patch Suite.prototype.addTest so any test whose
+// fullTitle() matches the selection has the marker appended to its title.
+// mocha's own `--grep <marker>` then runs exactly those tests.
+//
+// Why this exists: synthesizing `^(escFull1|escFull2)$` and passing it as
+// --grep works fine for mocha itself, but consumer test-framework wrappers
+// (e.g. `@tr/mocha-runner-hooks`) inspect --grep and compare it against the
+// top-level suite title, emitting "NO TEST CASES MATCHED" when the anchored
+// regex doesn't match the suite. Wrapping the selection in an opaque marker
+// dodges those sniffers AND eliminates the per-title regex-escaping path.
+
+interface RunSelection {
+  fullTitles: ReadonlySet<string>;
+  describePrefixes: readonly string[];
+}
+
+function readRunSelection(): { marker: string; selection: RunSelection } | null {
+  const marker = process.env.QA_DEBUG_RUN_MARKER;
+  if (!marker) return null;
+  let fullTitles: string[] = [];
+  let describePrefixes: string[] = [];
+  try {
+    const rawTitles = process.env.QA_DEBUG_RUN_FULL_TITLES;
+    if (rawTitles) {
+      const parsed = JSON.parse(rawTitles) as unknown;
+      if (Array.isArray(parsed)) fullTitles = parsed.filter((s): s is string => typeof s === 'string');
+    }
+  } catch (err) {
+    process.stderr.write(
+      `[qa-hooks] WARN QA_DEBUG_RUN_FULL_TITLES unparseable: ${(err as Error).message}\n`,
+    );
+  }
+  try {
+    const rawPrefixes = process.env.QA_DEBUG_RUN_DESCRIBE_PREFIXES;
+    if (rawPrefixes) {
+      const parsed = JSON.parse(rawPrefixes) as unknown;
+      if (Array.isArray(parsed)) describePrefixes = parsed.filter((s): s is string => typeof s === 'string');
+    }
+  } catch (err) {
+    process.stderr.write(
+      `[qa-hooks] WARN QA_DEBUG_RUN_DESCRIBE_PREFIXES unparseable: ${(err as Error).message}\n`,
+    );
+  }
+  return {
+    marker,
+    selection: { fullTitles: new Set(fullTitles), describePrefixes },
+  };
+}
+
+function matchesRunSelection(fullTitle: string, sel: RunSelection): boolean {
+  if (sel.fullTitles.has(fullTitle)) return true;
+  for (const prefix of sel.describePrefixes) {
+    if (fullTitle === prefix) return true;
+    if (fullTitle.startsWith(prefix + ' ')) return true;
+  }
+  return false;
+}
+
+;(function installRunSelectionMarkerPatch(): void {
+  const runSelection = readRunSelection();
+  if (!runSelection) return;
+  const { Suite, Test } = (require.main?.require('mocha') ?? require('mocha')) as {
+    Suite: typeof Mocha.Suite;
+    Test: typeof Mocha.Test;
+  };
+  const origAddTest = Suite.prototype.addTest;
+  let markedCount = 0;
+  Suite.prototype.addTest = function patchedAddTest(this: Mocha.Suite, test: Mocha.Test): Mocha.Suite {
+    const result = origAddTest.call(this, test) as Mocha.Suite;
+    // After addTest the test's parent chain is set, so fullTitle() is stable.
+    if (test instanceof Test) {
+      const full = test.fullTitle();
+      if (matchesRunSelection(full, runSelection.selection)) {
+        test.title = `${test.title} ${runSelection.marker}`;
+        markedCount++;
+      }
+    }
+    return result;
+  };
+  process.on('exit', () => {
+    process.stderr.write(
+      `[qa-hooks] run-selection marker applied to ${markedCount} test(s) (marker=${runSelection.marker})\n`,
+    );
+  });
+})();
+
 // ---------- v5.15 hook-order injection state ----------
 // See PLAN-hook-order-injection.md. Tag identifies our afterEach when it
 // re-enters the patched Suite.prototype.afterEach via rootHooks (mocha.js:1082).
