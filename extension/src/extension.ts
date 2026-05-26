@@ -13,7 +13,7 @@ import { registerCommands } from './commands.js';
 import { DecisionRouter } from './decision-router.js';
 import { registerQaDebugLmTools } from './lm-tools/index.js';
 import { QaDebugMcpProvider } from './mcp-provider.js';
-import { appendInfo, createAuditChannel } from './output-channel.js';
+import { appendInfo, createAuditChannel, createMochaChannel } from './output-channel.js';
 import { registerPauseStatusBar } from './pause-status-bar.js';
 import { MementoPauseStore } from './pause-store.js';
 import { SessionManager } from './session-manager.js';
@@ -28,6 +28,7 @@ let deactivateHook: (() => Promise<void>) | undefined;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const channel = createAuditChannel(context);
+  const mochaChannel = createMochaChannel(context);
   appendInfo(
     channel,
     `[activate] qa-debug-companion ${context.extension.packageJSON.version}`,
@@ -177,6 +178,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       mcpProvider,
       testControllerWrapper,
       channel,
+      mochaChannel,
       workspaceRoot,
       chatOpenAvailable,
       chatOpenFallbackAvailable,

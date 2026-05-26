@@ -43,7 +43,7 @@ import type { PausePayload } from '@qa-debug/pause-store-types';
 
 import type { DecisionRouter } from './decision-router.js';
 import type { QaDebugMcpProvider } from './mcp-provider.js';
-import { appendInfo } from './output-channel.js';
+import { appendInfo, createChildLogPump } from './output-channel.js';
 import type { PauseStatusBar } from './pause-status-bar.js';
 import type { MementoPauseStore } from './pause-store.js';
 import type { TestControllerWrapper, TestRunHandle } from './test-controller.js';
@@ -89,6 +89,13 @@ export interface SessionManagerDeps {
   mcpProvider: QaDebugMcpProvider;
   testControllerWrapper: TestControllerWrapper;
   channel: vscode.OutputChannel;
+  /**
+   * Dedicated channel for the mocha child's raw stdout/stderr. The audit
+   * channel is kept machine-parseable; user-facing mocha output (qa-reporter
+   * lines, console.log from specs, qa-hooks stderr breadcrumbs) lands here so
+   * the QA can diagnose stalled runs.
+   */
+  mochaChannel: vscode.OutputChannel;
   /** Workspace root used to resolve mocha bin + fallback CWD. */
   workspaceRoot: string;
   /**
@@ -244,11 +251,23 @@ export class SessionManager {
       this.deps.channel,
       `[session-manager] spawn mocha cwd=${opts.cwd} args=${JSON.stringify(args)}`,
     );
+    // stdout/stderr are PIPED (not inherited) so they can be funneled into the
+    // QA Debug Mocha output channel. Before this, mocha output landed in the
+    // extension-host log — invisible to the QA debugging a stalled run.
+    this.deps.mochaChannel.appendLine(
+      `\n──── mocha spawn ${new Date().toISOString()} cwd=${opts.cwd} ────`,
+    );
+    this.deps.mochaChannel.appendLine(`args=${JSON.stringify(args)}`);
     const child = spawn(opts.mochaBin, args, {
       cwd: opts.cwd,
-      stdio: ['inherit', 'inherit', 'inherit', 'ipc'],
+      stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
       env,
     });
+    child.stdout?.on('data', createChildLogPump(this.deps.mochaChannel, 'stdout'));
+    child.stderr?.on('data', createChildLogPump(this.deps.mochaChannel, 'stderr'));
+    // Reveal the channel without stealing focus so a stalled run is one click
+    // (or already visible) instead of a scavenger hunt through the dropdown.
+    this.deps.mochaChannel.show(/* preserveFocus */ true);
 
     // v5.5 C2 — Test Explorer Cancel button reaches the mocha child via SIGTERM.
     // The heartbeat-abandon path in qa-hooks resolves any open decision so the
