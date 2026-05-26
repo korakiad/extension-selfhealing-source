@@ -80,6 +80,43 @@ function escapeRegex(s: string): string {
  *    same prefix substring.
  * All inputs are regex-escaped per MDN guidance.
  */
+/**
+ * Walks upward from `startDir` (inclusive) until it finds a directory that
+ * contains a `.mocharc.*` config file or `package.json`. Stops at `boundary`
+ * (inclusive). Returns the directory path, or null if nothing was found.
+ *
+ * Why `.mocharc.*` first: mocha config is the strongest signal that a
+ * directory is the intended test-project root. `package.json` is a softer
+ * fallback for repos that pass mocha options via CLI / wdio config and don't
+ * keep a separate `.mocharc`.
+ */
+function findProjectRoot(startDir: string, boundary: string): string | null {
+  const mochaRcNames = [
+    '.mocharc.cjs',
+    '.mocharc.js',
+    '.mocharc.mjs',
+    '.mocharc.json',
+    '.mocharc.jsonc',
+    '.mocharc.yaml',
+    '.mocharc.yml',
+    '.mocharcrc',
+  ];
+  const norm = (p: string) => path.resolve(p);
+  const boundaryNorm = norm(boundary);
+  let cur = norm(startDir);
+  // Walk only within the boundary subtree.
+  while (cur.startsWith(boundaryNorm)) {
+    for (const name of mochaRcNames) {
+      if (existsSync(path.join(cur, name))) return cur;
+    }
+    if (existsSync(path.join(cur, 'package.json'))) return cur;
+    const parent = path.dirname(cur);
+    if (parent === cur) break;
+    cur = parent;
+  }
+  return null;
+}
+
 function buildAlternationGrep(selection: RunSelection): string {
   const alts: string[] = [];
   for (const t of selection.topLevelSuiteTitles) alts.push(`^${escapeRegex(t)}$`);
@@ -503,15 +540,24 @@ export class SessionManager {
   }
 
   /**
-   * CWD selection per CR §2.1 [R#3-NB6]:
-   *  - If specs[] non-empty: parent dir of first spec (transparent for any
-   *    user project layout — wdio or otherwise).
+   * CWD selection:
+   *  - If specs[] non-empty: walk UP from the first spec file looking for the
+   *    nearest `.mocharc.*` (or `package.json` as a fallback project marker),
+   *    stopping at workspaceRoot. Use that dir if found, else workspaceRoot.
+   *    This matters because consumer `.mocharc.cjs` files typically reference
+   *    paths relative to the project root (e.g. `node_modules/@tr/.../runnerCore.js`)
+   *    and mocha resolves them against CWD. Earlier behavior used
+   *    `path.dirname(spec)` which for layouts like `<root>/build/test/*.spec.js`
+   *    pointed at `<root>/build/test/`, where `node_modules/...` doesn't exist
+   *    — mocha then exited with "No test file(s) found".
    *  - Else if `<workspaceRoot>/fixture-tests` exists: legacy demo flow.
-   *  - Else: workspaceRoot (user's .mocharc.cjs from there decides spec patterns).
+   *  - Else: workspaceRoot.
    */
   private resolveCwd(specs: readonly vscode.Uri[] | undefined): string {
     if (specs && specs.length > 0) {
-      return path.dirname(specs[0].fsPath);
+      const root = this.deps.workspaceRoot;
+      const found = findProjectRoot(path.dirname(specs[0].fsPath), root);
+      return found ?? root;
     }
     const fixtureDir = path.join(this.deps.workspaceRoot, 'fixture-tests');
     if (existsSync(fixtureDir)) {
