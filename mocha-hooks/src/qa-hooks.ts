@@ -170,27 +170,47 @@ function matchesRunSelection(fullTitle: string, sel: RunSelection): boolean {
   const runSelection = readRunSelection();
   if (!runSelection) return;
   runMarker = runSelection.marker;
-  const { Suite, Test } = (require.main?.require('mocha') ?? require('mocha')) as {
+  const { Suite } = (require.main?.require('mocha') ?? require('mocha')) as {
     Suite: typeof Mocha.Suite;
-    Test: typeof Mocha.Test;
   };
+  const trace = process.env.QA_DEBUG_RUN_TRACE === '1';
   const origAddTest = Suite.prototype.addTest;
   let markedCount = 0;
+  let sawAddTest = 0;
   const selectionSize =
     runSelection.selection.fullTitles.size + runSelection.selection.describePrefixes.length;
   Suite.prototype.addTest = function patchedAddTest(this: Mocha.Suite, test: Mocha.Test): Mocha.Suite {
     const result = origAddTest.call(this, test) as Mocha.Suite;
-    // After addTest the test's parent chain is set, so fullTitle() is stable.
-    if (test instanceof Test) {
-      const full = test.fullTitle();
-      if (matchesRunSelection(full, runSelection.selection)) {
-        // Format ` [<marker>]` so the marker is visually unambiguous in any
-        // diagnostic that doesn't strip it. mocha's --grep <marker> still
-        // matches because regex partial-match finds the bare marker inside
-        // the brackets (`__qa<hex>__` contains no regex metachars).
-        test.title = `${test.title} [${runSelection.marker}]`;
-        markedCount++;
+    sawAddTest++;
+    // Duck-check fullTitle() instead of `instanceof Test`. In setups with
+    // multiple mocha installs (consumer framework bundles its own, dependency
+    // hoisting, etc.) `Test` resolved via require.main may not match the
+    // test instance's constructor and instanceof returns false, silently
+    // skipping every mark. addTest's contract is "the argument has the Test
+    // shape" so the duck check is correct + more permissive.
+    const fullTitleFn = (test as unknown as { fullTitle?: () => string }).fullTitle;
+    if (typeof fullTitleFn !== 'function') {
+      if (trace) {
+        process.stderr.write(
+          `[qa-hooks] TRACE addTest skipped — argument has no fullTitle() method\n`,
+        );
       }
+      return result;
+    }
+    const full = fullTitleFn.call(test);
+    const matched = matchesRunSelection(full, runSelection.selection);
+    if (trace) {
+      process.stderr.write(
+        `[qa-hooks] TRACE addTest fullTitle=${JSON.stringify(full)} matched=${matched}\n`,
+      );
+    }
+    if (matched) {
+      // Format ` [<marker>]` so the marker is visually unambiguous in any
+      // diagnostic that doesn't strip it. mocha's --grep <marker> still
+      // matches because regex partial-match finds the bare marker inside
+      // the brackets (`__qa<hex>__` contains no regex metachars).
+      test.title = `${test.title} [${runSelection.marker}]`;
+      markedCount++;
     }
     return result;
   };
@@ -202,14 +222,22 @@ function matchesRunSelection(fullTitle: string, sel: RunSelection): boolean {
   process.on('exit', () => {
     process.stderr.write(
       `[qa-hooks] run-selection marker applied to ${markedCount}/${selectionSize}+ candidate(s) ` +
-        `(marker=${runSelection.marker})\n`,
+        `(sawAddTest=${sawAddTest} marker=${runSelection.marker})\n`,
     );
     if (selectionSize > 0 && markedCount === 0) {
       process.stderr.write(
-        `[qa-hooks] WARN run-selection had ${selectionSize} entry/entries but ZERO tests matched. ` +
-          `Either the selection's fullTitles don't match any discovered test's ` +
-          `Mocha.Runnable#fullTitle(), or the discovery layer and the runner are ` +
-          `out of sync. Mocha will emit "NO TEST CASES MATCHED --grep" and exit clean.\n`,
+        `[qa-hooks] WARN run-selection had ${selectionSize} entry/entries but ZERO tests matched ` +
+          `(saw ${sawAddTest} addTest call(s)). Either the selection's fullTitles don't match any ` +
+          `discovered test's Mocha.Runnable#fullTitle(), the discovery layer and the runner are ` +
+          `out of sync, or the consumer framework registers tests via a path that bypasses ` +
+          `Suite.prototype.addTest. Set QA_DEBUG_RUN_TRACE=1 to dump every fullTitle qa-hooks ` +
+          `observed. Mocha will emit "NO TEST CASES MATCHED --grep" and exit clean.\n`,
+      );
+      process.stderr.write(
+        `[qa-hooks] DUMP selection fullTitles=${JSON.stringify([...runSelection.selection.fullTitles])}\n`,
+      );
+      process.stderr.write(
+        `[qa-hooks] DUMP selection describePrefixes=${JSON.stringify(runSelection.selection.describePrefixes)}\n`,
       );
     }
   });
