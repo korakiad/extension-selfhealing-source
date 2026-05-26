@@ -5,15 +5,15 @@ description: Investigates a paused Mocha test failure through the QA Debug Compa
 
 # QA Debug Companion — debugging a paused failure
 
-A Mocha test is currently paused at a failure. The browser that ran the test is held alive at a Chrome DevTools endpoint so you can inspect the live DOM, console, network, and asserted values via `playwright-mcp:browser_*` tools. After investigation, either propose a source/spec fix (for code-bug / test-bug) and let the user re-run via Test Explorer ▶, or commit one of the three terminal verbs: `qa_propose_mark_passed`, `qa_propose_abort_suite`, `qa_request_give_up`.
+A Mocha test is currently paused at a failure. The browser that ran the test is held alive at a Chrome DevTools endpoint so you can inspect the live DOM, console, network, and asserted values via the playwright-mcp `browser_*` tools. After investigation, either propose a source/spec fix (for code-bug / test-bug) and let the user re-run via Test Explorer ▶, or commit one of the three terminal verbs: `qa_propose_mark_passed`, `qa_propose_abort_suite`, `qa_request_give_up`.
 
-There is no `qa_request_retry`. Re-running after a fix is the user's action via Test Explorer ▶ Run; the pause + MCP gate stay attached up to that point so the user can use `playwright-mcp:browser_*` tools freely to verify or extend their investigation before re-running.
+There is no `qa_request_retry`. Re-running after a fix is the user's action via Test Explorer ▶ Run; the pause + MCP gate stay attached up to that point so the user can use the playwright-mcp `browser_*` tools freely to verify or extend their investigation before re-running.
 
 ## Workflow checklist (copy into your reply and tick as you go)
 
 - [ ] Step 1: Ground via `qa-debug_qa_get_failure_context` (concise)
 - [ ] Step 1b: Select a chrome (auto / `qa-debug_qa_select_chrome` / `qa-debug_qa_discover_chromes`) so `cdp_ws_url` becomes non-null
-- [ ] Step 2: Investigate via `playwright-mcp:browser_*` against the held browser — **do not shortcut by reading page source**
+- [ ] Step 2: Investigate via the playwright-mcp `browser_*` tools against the held browser — **do not shortcut by reading page source**
 - [ ] Step 3: Classify failure (one of: **code-bug** / **test-bug** / **env-flake** / **structural** / **ambiguous-or-out-of-scope**)
 - [ ] Step 4: Apply the closing turn per Step-3 classification (see "Closing turn" below)
 - [ ] Step 5: Report decision and rationale in chat (one-line conclusion); end turn
@@ -37,17 +37,11 @@ If a later playwright-mcp call returns "target closed" mid-investigation, the se
 
 ## Step 2 — Investigate the held browser
 
-**GROUND TRUTH IS THE LIVE BROWSER, NOT THE SOURCE FILES.** The browser at `cdp_ws_url` is the exact Chrome window the test was driving when it failed — post-JS DOM, computed styles, in-flight network responses, console errors, framework state, async timers, dynamically-injected nodes. **Do NOT shortcut by reading the page's `.html` / `.js` / `.css` source to guess what's on screen.** Source can be stale, conditionally rendered, overridden at runtime, or injected by a framework that doesn't appear in the file. Attach via `playwright-mcp:browser_connect` first; read source only to corroborate something you already observed live.
+**GROUND TRUTH IS THE LIVE BROWSER, NOT THE SOURCE FILES.** The browser at `cdp_ws_url` is the exact Chrome window the test was driving when it failed — post-JS DOM, computed styles, in-flight network responses, console errors, framework state, async timers, dynamically-injected nodes. **Do NOT shortcut by reading the page's `.html` / `.js` / `.css` source to guess what's on screen.** Source can be stale, conditionally rendered, overridden at runtime, or injected by a framework that doesn't appear in the file. Attach via the playwright-mcp `browser_connect` tool first; read source only to corroborate something you already observed live.
 
-Recommended starting tools (always live-state queries, never file reads):
+Use the playwright-mcp `browser_*` tools against the held browser (resolve the exact tool ids from your registry by suffix — Copilot Chat normalizes them with an `mcp_` prefix). Prefer **read-only** queries first — `browser_snapshot` (DOM / accessibility tree), `browser_evaluate` (in-page JS for runtime values / framework state), `browser_console_messages` (in-page errors), `browser_network_requests` (XHR / fetch / WebSocket around the assertion moment), `browser_take_screenshot` (visual ground truth) — and only reach for **interactive** tools (`browser_click`, `browser_hover`, `browser_wait_for`, `browser_fill_form`, `browser_press_key`, …) when a read-only query can't disambiguate (e.g., need to expand a collapsed panel to see a hidden node, or wait for an async render to settle). Investigation order is up to you (degrees of freedom: medium).
 
-- `playwright-mcp:browser_snapshot` — current rendered DOM (accessibility tree).
-- `playwright-mcp:browser_evaluate` — resolve the asserted value in-page; inspect runtime variables / framework state.
-- `playwright-mcp:browser_console_messages` — in-page errors (JS exceptions, CSP violations, renderer crashes).
-- `playwright-mcp:browser_network_requests` — XHR / fetch / WebSocket activity around the assertion moment.
-- `playwright-mcp:browser_take_screenshot` — visual ground truth (catches CSS / layout failures that DOM alone misses).
-
-Investigation order is up to you (degrees of freedom: medium). **Do NOT call `playwright-mcp:browser_close`** — closing destroys the QA's live inspection asset and is not recoverable.
+**Do NOT call `browser_close` or `browser_navigate`** — both destroy the post-failure state the pause is preserving (`browser_close` kills the held Chrome; `browser_navigate` discards the DOM / console / network log that paused the test). Both are not recoverable.
 
 **Browser lifecycle.** The Chrome process is owned by the test framework (Mode C — current default). qa-debug does not provide a "close browser" verb. The framework's own teardown (e.g., `browser.deleteSession()` for wdio) disposes the session when the suite finishes; an out-of-band crash is handled by re-running the suite.
 
@@ -177,15 +171,15 @@ If during investigation you observe signals suggesting multiple tests will fail 
 
 | Anti-pattern | Reason |
 |---|---|
-| **Reading the page's `.html` / `.js` / `.css` source to guess what's on screen instead of attaching via `playwright-mcp:browser_connect` and using `browser_snapshot` / `browser_evaluate`.** | Source files are static; the live browser holds the post-JS DOM, computed styles, in-flight network responses, console errors, and dynamically-injected nodes. Source-reading silently gives the wrong answer when the failure is caused by runtime state — exactly the case that paused the test in the first place. Attach first; read source only to corroborate. |
-| Skipping Step 1b (chrome selection) and trying `playwright-mcp:browser_connect` with a null / stale `cdp_ws_url`. | playwright-mcp is not registered until selection commits; the connect call fails. Walk the Step-1b branching first. |
+| **Reading the page's `.html` / `.js` / `.css` source to guess what's on screen instead of attaching via the playwright-mcp `browser_connect` tool and using `browser_snapshot` / `browser_evaluate`.** | Source files are static; the live browser holds the post-JS DOM, computed styles, in-flight network responses, console errors, and dynamically-injected nodes. Source-reading silently gives the wrong answer when the failure is caused by runtime state — exactly the case that paused the test in the first place. Attach first; read source only to corroborate. |
+| Skipping Step 1b (chrome selection) and trying the playwright-mcp `browser_connect` tool with a null / stale `cdp_ws_url`. | playwright-mcp is not registered until selection commits; the connect call fails. Walk the Step-1b branching first. |
 | Guessing a port for `qa-debug_qa_discover_chromes` instead of asking the user. | The port list is consumer-framework-specific (often locked, often non-default); guessing wastes a probe and ships a wrong answer if the guess succeeds against an unrelated chrome. |
 | Pseudo-code or prescriptive script for "how to investigate" the browser. | Step 2 is medium-freedom; multiple investigation paths are valid; over-prescribing causes you to skip the right tool when the failure shape suggests it. |
 | Editing `.mocharc.cjs`, the SKILL itself, or extension internals. | The QA owns the specs; the extension owns hook injection. You own diagnosis and source/spec edits. |
 | Chat-as-launcher patterns (e.g., "type `@qa-debug run X`"). | Test Explorer is the run surface; chat is conversation / investigation. |
 | Mocha CLI flags (`--bail`, `--reporter`, etc.). | The extension constructs the mocha command line; do not advise the QA to change it. |
 | Polling `qa_get_failure_context.last_proposal_status` in-turn. | The human commit is event-driven (next chat turn), not clock-driven. See the anti-example in the Stop-and-report contract. |
-| Calling `playwright-mcp:browser_close` during investigation. | Destroys the held browser; not recoverable; QA loses the live state they paused to inspect. |
+| Calling the playwright-mcp `browser_close` or `browser_navigate` tool during investigation. | Both destroy the post-failure state the pause is preserving — `browser_close` kills the held Chrome; `browser_navigate` discards the DOM / console / network log that paused the test. Neither is recoverable; QA loses the live state they paused to inspect. |
 | Autonomously committing `qa_request_give_up` after proposing a code-bug or test-bug fix. | The user is about to re-run via ▶ Run in Test Explorer; `give_up` marks the test as a final failure and closes the MCP gate. Arms 1 & 2 hand back to the user without committing. |
 | Re-issuing `qa_request_give_up` after `PAUSE_ALREADY_RESOLVED` on the same `session_id`. | The verb has already committed (typically by the QA via Test Explorer); re-issuing only churns the audit log. Re-ground via `qa_get_failure_context` (omit `session_id`) and re-classify if a new pause exists. |
 

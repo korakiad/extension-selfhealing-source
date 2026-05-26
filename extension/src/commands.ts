@@ -175,13 +175,13 @@ export function buildPausePrompt(pause: PausePayload): string {
   if (selected) {
     chromeLine = `Browser: chrome already selected at port ${selected.port} (cdp_ws_url=${selected.ws_url}).`;
     nextStep =
-      'Call qa-debug_qa_get_failure_context to ground, then attach via playwright-mcp:browser_connect using the cdp_ws_url it returns. ' +
+      'Call qa-debug_qa_get_failure_context to ground, then attach via the playwright-mcp browser_connect tool using the cdp_ws_url it returns. ' +
       'The browser at that endpoint is the same Chrome the failing test was driving — DOM, console, network state are live.';
   } else if (chromes.length === 1) {
     chromeLine = `Browser: 1 chrome discovered (port ${chromes[0].port}); no selection committed yet.`;
     nextStep =
       `Call qa-debug_qa_get_failure_context first to ground, then qa-debug_qa_select_chrome with session_id and port=${chromes[0].port} ` +
-      '(no user confirmation needed for a single candidate). After selection commits, attach via playwright-mcp:browser_connect using the returned cdp_ws_url.';
+      '(no user confirmation needed for a single candidate). After selection commits, attach via the playwright-mcp browser_connect tool using the returned cdp_ws_url.';
   } else if (chromes.length >= 2) {
     const summary = chromes
       .map(
@@ -192,12 +192,12 @@ export function buildPausePrompt(pause: PausePayload): string {
     chromeLine = `Browser: ${chromes.length} chromes discovered — ${summary}; no selection committed.`;
     nextStep =
       'Call qa-debug_qa_get_failure_context first to ground. Then ask the user which chrome to attach to (surface page_titles as context). ' +
-      'Once they pick, call qa-debug_qa_select_chrome with their port. After it commits, attach via playwright-mcp:browser_connect using the returned cdp_ws_url.';
+      'Once they pick, call qa-debug_qa_select_chrome with their port. After it commits, attach via the playwright-mcp browser_connect tool using the returned cdp_ws_url.';
   } else {
     chromeLine = 'Browser: no chromes discovered at the default debug ports.';
     nextStep =
       "Call qa-debug_qa_get_failure_context first to ground. Then ask the user: \"I couldn't find Chrome at the default debug ports — what port(s) does your test framework launch Chrome on?\" " +
-      'Call qa-debug_qa_discover_chromes(session_id, [user-ports]); if it returns chromes, call qa-debug_qa_select_chrome next; then attach via playwright-mcp:browser_connect.';
+      'Call qa-debug_qa_discover_chromes(session_id, [user-ports]); if it returns chromes, call qa-debug_qa_select_chrome next; then attach via the playwright-mcp browser_connect tool.';
   }
 
   return [
@@ -217,12 +217,10 @@ export function buildPausePrompt(pause: PausePayload): string {
     '',
     nextStep,
     '',
-    'Once attached, prefer these live-state queries over file reads:',
-    '  • playwright-mcp:browser_snapshot — current rendered DOM (accessibility tree)',
-    '  • playwright-mcp:browser_evaluate — run JS in the page to inspect runtime variables/state',
-    '  • playwright-mcp:browser_console_messages — errors/warnings the page emitted',
-    '  • playwright-mcp:browser_network_requests — what the page actually fetched + responses',
-    '  • playwright-mcp:browser_take_screenshot — visual ground truth',
+    'Once attached, use the playwright-mcp browser_* tools against the held browser (resolve the exact ids from your registry by suffix). ' +
+      'Prefer read-only queries first (snapshot, evaluate, console_messages, network_requests, take_screenshot, etc.); ' +
+      'interactive tools (click, hover, wait_for, fill_form, …) are available when read-only can\'t disambiguate. ' +
+      'Do NOT call browser_close or browser_navigate — both destroy the post-failure state the pause is preserving.',
     '',
     'When investigation is done: propose the fix in chat and let the user re-run via Test Explorer ▶ (for code/test bugs); ' +
       'or call qa-debug_qa_request_give_up (final failure), qa-debug_qa_propose_mark_passed (env-flake — needs human confirm), ' +
