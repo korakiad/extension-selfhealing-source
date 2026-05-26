@@ -43,25 +43,8 @@ interface ReporterOptions {
   treatMarkedAsPassing?: boolean;
 }
 
-// v5.17 — keep in sync with qa-hooks installRunSelectionMarkerPatch. The
-// reporter must use the ORIGINAL title for correlation with qa-hooks'
-// final_decision (qa-hooks strips before publishing) AND for display so the
-// QA doesn't see `__qa<hex>__` noise on the spec line.
-const RUN_MARKER: string | undefined = process.env.QA_DEBUG_RUN_MARKER;
-function stripRunMarker(s: string): string {
-  if (!RUN_MARKER) return s;
-  const suffix = ` [${RUN_MARKER}]`;
-  return s.endsWith(suffix) ? s.slice(0, -suffix.length) : s;
-}
-function displayTitle(test: Mocha.Test): string {
-  return stripRunMarker(test.title);
-}
-function displayFullTitle(test: Mocha.Test): string {
-  return stripRunMarker(test.fullTitle());
-}
-
 function key(test: Mocha.Test): string {
-  return `${test.file ?? '<inline>'} :: ${displayFullTitle(test)}`;
+  return `${test.file ?? '<inline>'} :: ${test.fullTitle()}`;
 }
 
 function parseOptions(opts: unknown): ReporterOptions {
@@ -125,7 +108,7 @@ export class QaReporter {
       // synchronously inside the afterEach completion callback in runner.js:828),
       // so any final_decision from the hook is already in the decisions map.
       this.flushPending();
-      this.write(`  ${DIM}▶ ${displayFullTitle(test)}${RESET}\n`);
+      this.write(`  ${DIM}▶ ${test.fullTitle()}${RESET}\n`);
     });
 
     runner.on(C.EVENT_TEST_PASS, (test: Mocha.Test) => {
@@ -208,7 +191,7 @@ export class QaReporter {
 
     if (outcome === 'passed') {
       this.passed++;
-      this.write(`    ${GREEN}✓${RESET} ${displayTitle(test)}${retrySuffix}\n`);
+      this.write(`    ${GREEN}✓${RESET} ${test.title}${retrySuffix}\n`);
       return;
     }
     if (outcome === 'marked-passed') {
@@ -216,7 +199,7 @@ export class QaReporter {
       const by = decision?.by ?? 'human';
       const reason = decision?.reason ?? '<no rationale>';
       this.write(
-        `    ${YELLOW}✓ marked-passed${RESET} ${displayTitle(test)}${retrySuffix} ${DIM}— by ${by}: ${reason}${RESET}\n`,
+        `    ${YELLOW}✓ marked-passed${RESET} ${test.title}${retrySuffix} ${DIM}— by ${by}: ${reason}${RESET}\n`,
       );
       if (errMessage) {
         this.write(`      ${DIM}(original failure: ${errMessage})${RESET}\n`);
@@ -226,7 +209,7 @@ export class QaReporter {
     // failed
     this.failed++;
     const reasonStr = decision ? ` ${DIM}— ${decision.kind} by ${decision.by}: ${decision.reason}${RESET}` : '';
-    this.write(`    ${RED}✗${RESET} ${displayTitle(test)}${retrySuffix}${reasonStr}\n`);
+    this.write(`    ${RED}✗${RESET} ${test.title}${retrySuffix}${reasonStr}\n`);
     if (errMessage) {
       this.write(`      ${DIM}${errMessage}${RESET}\n`);
     }

@@ -45,18 +45,28 @@ export interface TestRunHandle {
 
 /**
  * Raw test-selection passed to SessionManager. SessionManager translates this
- * into a unique grep marker injected into matching test titles at mocha child
- * boot — see qa-hooks runtime title-mutation. We DON'T synthesize a regex here
- * because consumer test-framework wrappers (e.g. `@tr/mocha-runner-hooks`) tend
- * to do their own naive `--grep` checks against top-level suite titles and emit
- * misleading "NO TEST CASES MATCHED" logs when the regex doesn't match them —
- * even though Mocha itself runs the test fine. A short opaque marker dodges
- * those sniffers and is regex-safe.
+ * into an anchored alternation `--grep` regex that matches BOTH the top-level
+ * suite title(s) AND the exact full test title(s) / describe prefixes. The
+ * top-level alt is what silences consumer test-framework wrappers (e.g.
+ * `@tr/mocha-runner-hooks`) that check `--grep` against `this.suite.suites[].title`
+ * only and would otherwise emit a misleading `NO TEST CASES MATCHED` log even
+ * though mocha itself runs the test. Per-alt `$` anchors keep exact-match
+ * semantics so siblings under the same top-level describe DON'T over-select.
  */
 export interface RunSelection {
-  /** Exact `Mocha.Runnable#fullTitle()` matches to run. */
+  /**
+   * First-element describe titles for each selected entry (e.g. `Example Regression Test`).
+   * Added to the alt as `^<escaped>$`. Since no test's `fullTitle()` equals the
+   * top-level title alone (tests always have nested structure), this satisfies
+   * the consumer sniffer without over-selecting tests.
+   */
+  topLevelSuiteTitles: readonly string[];
+  /** Exact `Mocha.Runnable#fullTitle()` matches to run. Added as `^<escaped>$`. */
   fullTitles: readonly string[];
-  /** Describe-path prefixes (space-joined); every test whose fullTitle starts with `<prefix> ` runs. */
+  /**
+   * Describe-path prefixes (space-joined). Added as `^<escaped>(?:$| )` so
+   * every test whose fullTitle starts with `<prefix> ` runs.
+   */
   describePrefixes: readonly string[];
 }
 
@@ -360,6 +370,10 @@ export function createTestControllerWrapper(
     concreteFullTitles: Set<string>;
     /** Describe paths whose subtree is partial (computed titles inside) — use prefix fallback. */
     prefixDescribePaths: Set<string>;
+    /** First-element describe titles for each selected entry — used to satisfy
+     *  consumer test-framework wrappers that check `--grep` against top-level
+     *  suite titles only. */
+    topLevelSuiteTitles: Set<string>;
   }
 
   function planRun(request: vscode.TestRunRequest): {
@@ -383,6 +397,7 @@ export function createTestControllerWrapper(
           runEntireFile: false,
           concreteFullTitles: new Set(),
           prefixDescribePaths: new Set(),
+          topLevelSuiteTitles: new Set(),
         };
         byFile.set(k, s);
       }
@@ -427,19 +442,27 @@ export function createTestControllerWrapper(
           // Single computed-title it has no static name; fall back to running
           // its parent describe (best Phase 1 approximation).
           const describePath = discovered.describePath.join(' ');
-          if (describePath.length > 0) sel.prefixDescribePaths.add(describePath);
-          else sel.runEntireFile = true;
+          if (describePath.length > 0) {
+            sel.prefixDescribePaths.add(describePath);
+            sel.topLevelSuiteTitles.add(discovered.describePath[0]);
+          } else {
+            sel.runEntireFile = true;
+          }
         } else {
           sel.concreteFullTitles.add(fullTitleFromItId(item.id));
+          if (discovered && discovered.describePath.length > 0) {
+            sel.topLevelSuiteTitles.add(discovered.describePath[0]);
+          }
         }
       } else if (isDescribeItem(item)) {
+        const describePath = describePathFromDescribeId(item.id);
         const { leaves, hasComputed } = collectLeavesInItem(item);
         if (hasComputed || leaves.length === 0) {
-          const fullDescribePath = describePathFromDescribeId(item.id).join(' ');
-          sel.prefixDescribePaths.add(fullDescribePath);
+          sel.prefixDescribePaths.add(describePath.join(' '));
         } else {
           for (const t of leaves) sel.concreteFullTitles.add(t);
         }
+        if (describePath.length > 0) sel.topLevelSuiteTitles.add(describePath[0]);
       }
     }
 
@@ -482,20 +505,27 @@ export function createTestControllerWrapper(
       }
     }
 
-    // v5.17 — pass raw title list/prefixes; qa-hooks tags matching tests with
-    // a unique marker so mocha's `--grep <marker>` is regex-safe and bypasses
-    // consumer-side --grep sniffers that would otherwise log misleading
-    // "NO TEST CASES MATCHED" against the top-level suite title.
+    // v5.17 — collect raw selection; SessionManager builds the anchored
+    // alternation regex (with `topLevelSuiteTitles` as alts so the consumer's
+    // `@tr/mocha-runner-hooks`-style sniffer's check against top-level suite
+    // titles is satisfied, AND fullTitles / prefixes as alts so mocha runs
+    // exactly the selected tests).
     const fullTitles: string[] = [];
     const describePrefixes: string[] = [];
+    const topLevelSuiteTitles = new Set<string>();
     for (const sel of byFile.values()) {
       if (sel.runEntireFile) continue;
       for (const ft of sel.concreteFullTitles) fullTitles.push(ft);
       for (const prefix of sel.prefixDescribePaths) describePrefixes.push(prefix);
+      for (const top of sel.topLevelSuiteTitles) topLevelSuiteTitles.add(top);
     }
     const runSelection: RunSelection | undefined =
       fullTitles.length > 0 || describePrefixes.length > 0
-        ? { fullTitles, describePrefixes }
+        ? {
+            fullTitles,
+            describePrefixes,
+            topLevelSuiteTitles: Array.from(topLevelSuiteTitles),
+          }
         : undefined;
     const specs = Array.from(byFile.values()).map((s) => s.fileUri);
 

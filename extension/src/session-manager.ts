@@ -61,6 +61,33 @@ async function refreshPausedTestIdsContext(pauseStore: MementoPauseStore): Promi
   await vscode.commands.executeCommand('setContext', 'qa-debug.pausedTestIds', ids);
 }
 
+/** MDN-canonical regex metachar escape — used by buildAlternationGrep. */
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Synthesizes `--grep <regex>` such that:
+ *  - Each top-level suite title is its own anchored alternative (`^T$`) — this
+ *    satisfies consumer test-framework wrappers (`@tr/mocha-runner-hooks` and
+ *    friends) whose sniffer tests `--grep` against `this.suite.suites[].title`
+ *    only and would otherwise log `NO TEST CASES MATCHED`. No test's
+ *    `fullTitle()` equals a top-level title alone (tests have nested titles)
+ *    so this alt doesn't over-select.
+ *  - Each full title is anchored (`^F$`) — exact match, no sibling leakage.
+ *  - Each describe prefix becomes `^P(?:$| )` — runs every test under that
+ *    describe but not under sibling describes whose names start with the
+ *    same prefix substring.
+ * All inputs are regex-escaped per MDN guidance.
+ */
+function buildAlternationGrep(selection: RunSelection): string {
+  const alts: string[] = [];
+  for (const t of selection.topLevelSuiteTitles) alts.push(`^${escapeRegex(t)}$`);
+  for (const f of selection.fullTitles) alts.push(`^${escapeRegex(f)}$`);
+  for (const p of selection.describePrefixes) alts.push(`^${escapeRegex(p)}(?:$| )`);
+  return alts.length === 1 ? alts[0] : `(?:${alts.join('|')})`;
+}
+
 const HEARTBEAT_MS = Number(process.env.QA_DEBUG_HEARTBEAT_MS ?? 5_000);
 
 // v5.2 §2.1: absolute-path resolution for bundled hook + reporter. Resolved
@@ -247,20 +274,21 @@ export class SessionManager {
     // probes effectiveCdpPorts() per pause; ports override via QA_DEBUG_CDP_PORTS.
     const env: NodeJS.ProcessEnv = { ...process.env };
 
-    // v5.17 — runtime title-mutation grep. Generate a unique marker per run;
-    // qa-hooks reads QA_DEBUG_RUN_* envs at register time and appends the
-    // marker to matching test titles. We then `--grep <marker>` so mocha runs
-    // exactly those tests. The marker is regex-safe (alphanumeric only) so
-    // we avoid escaping issues with titles that contain regex metachars, AND
-    // consumer-side `--grep` sniffers (e.g. `@tr/mocha-runner-hooks`) won't
-    // emit false "NO TEST CASES MATCHED" logs against suite titles.
-    if (opts.runSelection &&
-        (opts.runSelection.fullTitles.length > 0 || opts.runSelection.describePrefixes.length > 0)) {
-      const marker = `__qa${randomUUID().replace(/-/g, '')}__`;
-      env.QA_DEBUG_RUN_MARKER = marker;
-      env.QA_DEBUG_RUN_FULL_TITLES = JSON.stringify(opts.runSelection.fullTitles);
-      env.QA_DEBUG_RUN_DESCRIBE_PREFIXES = JSON.stringify(opts.runSelection.describePrefixes);
-      args.push('--grep', marker);
+    // v5.17 — anchored alternation `--grep`. Each entry is its own anchored
+    // alternative so exact-match semantics hold (siblings under the same
+    // top-level describe DON'T over-select). The first alts are the top-level
+    // suite titles, included so consumer test-framework wrappers
+    // (e.g. `@tr/mocha-runner-hooks`) whose sniffer tests `--grep` against
+    // `this.suite.suites[].title` only see at least one match and don't emit
+    // a misleading `NO TEST CASES MATCHED` log even though mocha runs the
+    // selected tests fine.
+    if (
+      opts.runSelection &&
+      (opts.runSelection.fullTitles.length > 0 ||
+        opts.runSelection.describePrefixes.length > 0)
+    ) {
+      const grep = buildAlternationGrep(opts.runSelection);
+      args.push('--grep', grep);
     }
 
     if (opts.specFiles && opts.specFiles.length > 0) {

@@ -87,162 +87,6 @@ const MAX_MISSED_HEARTBEATS = 3;
 let conn: JsonRpcConnection | undefined;
 let connDisabledReason: string | undefined;
 
-// ---------- v5.17 grep marker injection ----------
-// The extension passes a unique alphanumeric marker via QA_DEBUG_RUN_MARKER
-// and the raw selection (full titles + describe-path prefixes) via env JSON.
-// At register time we monkey-patch Suite.prototype.addTest so any test whose
-// fullTitle() matches the selection has the marker appended to its title.
-// mocha's own `--grep <marker>` then runs exactly those tests.
-//
-// Why this exists: synthesizing `^(escFull1|escFull2)$` and passing it as
-// --grep works fine for mocha itself, but consumer test-framework wrappers
-// (e.g. `@tr/mocha-runner-hooks`) inspect --grep and compare it against the
-// top-level suite title, emitting "NO TEST CASES MATCHED" when the anchored
-// regex doesn't match the suite. Wrapping the selection in an opaque marker
-// dodges those sniffers AND eliminates the per-title regex-escaping path.
-
-interface RunSelection {
-  fullTitles: ReadonlySet<string>;
-  describePrefixes: readonly string[];
-}
-
-// Module-level so qaAfterEachImpl + any other consumer can strip the marker
-// from the polluted test.title / test.fullTitle() before publishing through
-// IPC. Set inside installRunSelectionMarkerPatch; undefined when no run
-// selection is in effect (full-suite runs).
-let runMarker: string | undefined;
-
-/**
- * Strips a trailing ` [<runMarker>]` from a Mocha title or fullTitle so the
- * agent / extension / Test Explorer see the original, unmutated title. Pure
- * suffix-strip — safe against tests whose own bodies log strings that contain
- * the marker.
- */
-function stripRunMarker(s: string): string {
-  if (!runMarker) return s;
-  const suffix = ` [${runMarker}]`;
-  return s.endsWith(suffix) ? s.slice(0, -suffix.length) : s;
-}
-
-function readRunSelection(): { marker: string; selection: RunSelection } | null {
-  const marker = process.env.QA_DEBUG_RUN_MARKER;
-  if (!marker) return null;
-  let fullTitles: string[] = [];
-  let describePrefixes: string[] = [];
-  try {
-    const rawTitles = process.env.QA_DEBUG_RUN_FULL_TITLES;
-    if (rawTitles) {
-      const parsed = JSON.parse(rawTitles) as unknown;
-      if (Array.isArray(parsed)) fullTitles = parsed.filter((s): s is string => typeof s === 'string');
-    }
-  } catch (err) {
-    process.stderr.write(
-      `[qa-hooks] WARN QA_DEBUG_RUN_FULL_TITLES unparseable: ${(err as Error).message}\n`,
-    );
-  }
-  try {
-    const rawPrefixes = process.env.QA_DEBUG_RUN_DESCRIBE_PREFIXES;
-    if (rawPrefixes) {
-      const parsed = JSON.parse(rawPrefixes) as unknown;
-      if (Array.isArray(parsed)) describePrefixes = parsed.filter((s): s is string => typeof s === 'string');
-    }
-  } catch (err) {
-    process.stderr.write(
-      `[qa-hooks] WARN QA_DEBUG_RUN_DESCRIBE_PREFIXES unparseable: ${(err as Error).message}\n`,
-    );
-  }
-  return {
-    marker,
-    selection: { fullTitles: new Set(fullTitles), describePrefixes },
-  };
-}
-
-function matchesRunSelection(fullTitle: string, sel: RunSelection): boolean {
-  if (sel.fullTitles.has(fullTitle)) return true;
-  for (const prefix of sel.describePrefixes) {
-    if (fullTitle === prefix) return true;
-    if (fullTitle.startsWith(prefix + ' ')) return true;
-  }
-  return false;
-}
-
-;(function installRunSelectionMarkerPatch(): void {
-  const runSelection = readRunSelection();
-  if (!runSelection) return;
-  runMarker = runSelection.marker;
-  const { Suite } = (require.main?.require('mocha') ?? require('mocha')) as {
-    Suite: typeof Mocha.Suite;
-  };
-  const trace = process.env.QA_DEBUG_RUN_TRACE === '1';
-  const origAddTest = Suite.prototype.addTest;
-  let markedCount = 0;
-  let sawAddTest = 0;
-  const selectionSize =
-    runSelection.selection.fullTitles.size + runSelection.selection.describePrefixes.length;
-  Suite.prototype.addTest = function patchedAddTest(this: Mocha.Suite, test: Mocha.Test): Mocha.Suite {
-    const result = origAddTest.call(this, test) as Mocha.Suite;
-    sawAddTest++;
-    // Duck-check fullTitle() instead of `instanceof Test`. In setups with
-    // multiple mocha installs (consumer framework bundles its own, dependency
-    // hoisting, etc.) `Test` resolved via require.main may not match the
-    // test instance's constructor and instanceof returns false, silently
-    // skipping every mark. addTest's contract is "the argument has the Test
-    // shape" so the duck check is correct + more permissive.
-    const fullTitleFn = (test as unknown as { fullTitle?: () => string }).fullTitle;
-    if (typeof fullTitleFn !== 'function') {
-      if (trace) {
-        process.stderr.write(
-          `[qa-hooks] TRACE addTest skipped — argument has no fullTitle() method\n`,
-        );
-      }
-      return result;
-    }
-    const full = fullTitleFn.call(test);
-    const matched = matchesRunSelection(full, runSelection.selection);
-    if (trace) {
-      process.stderr.write(
-        `[qa-hooks] TRACE addTest fullTitle=${JSON.stringify(full)} matched=${matched}\n`,
-      );
-    }
-    if (matched) {
-      // Format ` [<marker>]` so the marker is visually unambiguous in any
-      // diagnostic that doesn't strip it. mocha's --grep <marker> still
-      // matches because regex partial-match finds the bare marker inside
-      // the brackets (`__qa<hex>__` contains no regex metachars).
-      test.title = `${test.title} [${runSelection.marker}]`;
-      markedCount++;
-    }
-    return result;
-  };
-  process.stderr.write(
-    `[qa-hooks] run-selection marker active marker=${runSelection.marker} ` +
-      `selection=fullTitles:${runSelection.selection.fullTitles.size},` +
-      `describePrefixes:${runSelection.selection.describePrefixes.length}\n`,
-  );
-  process.on('exit', () => {
-    process.stderr.write(
-      `[qa-hooks] run-selection marker applied to ${markedCount}/${selectionSize}+ candidate(s) ` +
-        `(sawAddTest=${sawAddTest} marker=${runSelection.marker})\n`,
-    );
-    if (selectionSize > 0 && markedCount === 0) {
-      process.stderr.write(
-        `[qa-hooks] WARN run-selection had ${selectionSize} entry/entries but ZERO tests matched ` +
-          `(saw ${sawAddTest} addTest call(s)). Either the selection's fullTitles don't match any ` +
-          `discovered test's Mocha.Runnable#fullTitle(), the discovery layer and the runner are ` +
-          `out of sync, or the consumer framework registers tests via a path that bypasses ` +
-          `Suite.prototype.addTest. Set QA_DEBUG_RUN_TRACE=1 to dump every fullTitle qa-hooks ` +
-          `observed. Mocha will emit "NO TEST CASES MATCHED --grep" and exit clean.\n`,
-      );
-      process.stderr.write(
-        `[qa-hooks] DUMP selection fullTitles=${JSON.stringify([...runSelection.selection.fullTitles])}\n`,
-      );
-      process.stderr.write(
-        `[qa-hooks] DUMP selection describePrefixes=${JSON.stringify(runSelection.selection.describePrefixes)}\n`,
-      );
-    }
-  });
-})();
-
 // ---------- v5.15 hook-order injection state ----------
 // See PLAN-hook-order-injection.md. Tag identifies our afterEach when it
 // re-enters the patched Suite.prototype.afterEach via rootHooks (mocha.js:1082).
@@ -520,12 +364,9 @@ async function qaAfterEachImpl(this: Mocha.Context): Promise<void> {
         `If you see this WARN, either the reporter changed, OR the test was failed via a path that bypasses EVENT_TEST_FAIL.\n`,
     );
   }
-  // v5.17 — strip the run-selection grep marker from outbound titles so the
-  // extension's TestController lookup (keyed by the ORIGINAL fullTitle) and
-  // the agent's display of the failing test name both see the unmutated title.
   const payload: PausePayload = {
-    test: stripRunMarker(test.title),
-    full_title: stripRunMarker(test.fullTitle()),
+    test: test.title,
+    full_title: test.fullTitle(),
     file: test.file ?? null,
     line: fileLineFromStack(test.err?.stack),
     error: serializeError(test.err),
@@ -562,10 +403,7 @@ async function qaAfterEachImpl(this: Mocha.Context): Promise<void> {
     reason: decision.reason,
     by: decision.by,
     // v5.5 §2.4: renamed test_title → full_title (always was test.fullTitle()).
-    // v5.17: stripRunMarker so the reporter's in-proc bus key matches the
-    // reporter's own (stripped) key(test) lookup, and the extension's
-    // TestController correlation in onFinalDecision finds the right TestItem.
-    full_title: stripRunMarker(test.fullTitle()),
+    full_title: test.fullTitle(),
     test_file: test.file ?? null,
   };
   inProcBus.emitFinalDecision(finalDecision);
