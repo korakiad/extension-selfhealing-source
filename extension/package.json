@@ -216,8 +216,19 @@
       { "command": "qa-debug.openChatForPaused", "title": "QA Debug: Ask Copilot About This Failure", "category": "QA Debug", "enablement": "qa-debug.paused", "icon": "$(comment-discussion)" },
       { "command": "qa-debug.selectChrome", "title": "QA Debug: Select Chrome for Paused Test", "category": "QA Debug", "enablement": "qa-debug.paused", "icon": "$(list-selection)" },
       { "command": "qa-debug.enterChromePorts", "title": "QA Debug: Enter Chrome Debug Ports", "category": "QA Debug", "enablement": "qa-debug.paused", "icon": "$(question)" },
-      { "command": "qa-debug.smokeTestMessageRetention", "title": "QA Debug: Smoke — TestMessage Retention", "category": "QA Debug" }
+      { "command": "qa-debug.smokeTestMessageRetention", "title": "QA Debug: Smoke — TestMessage Retention", "category": "QA Debug" },
+      { "command": "qa-debug.checkForUpdates", "title": "QA Debug: Check for Updates", "category": "QA Debug" }
     ],
+    "configuration": {
+      "title": "QA Debug Companion",
+      "properties": {
+        "qaDebug.updateCheck.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Check the public GitHub mirror for a newer stable release on activation."
+        }
+      }
+    },
     "menus": {
       "testing/message/content": [
         { "command": "qa-debug.markPassed",  "when": "testMessage == qaDebugPaused" },

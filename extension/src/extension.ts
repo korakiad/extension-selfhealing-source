@@ -19,6 +19,7 @@ import { MementoPauseStore } from './pause-store.js';
 import { SessionManager } from './session-manager.js';
 import { smokeTestMessageRetention } from './smoke-test-message.js';
 import { createTestControllerWrapper } from './test-controller.js';
+import { createUpdateChecker, parseRepoSlugFromPackageJson } from './update-checker.js';
 
 let sessionManagerSingleton: SessionManager | undefined;
 // Closure captures pauseStore + decisionRouter + context.globalStorageUri at
@@ -33,6 +34,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     channel,
     `[activate] qa-debug-companion ${context.extension.packageJSON.version}`,
   );
+
+  const updateChecker = createUpdateChecker({
+    context,
+    channel,
+    installedVersion: context.extension.packageJSON.version,
+    repoSlug: parseRepoSlugFromPackageJson(context.extension.packageJSON.repository?.url),
+  });
+  context.subscriptions.push(updateChecker);
+  context.subscriptions.push(
+    vscode.commands.registerCommand('qa-debug.checkForUpdates', () => updateChecker.runManualCheck()),
+  );
+  void updateChecker.runBackgroundCheck();
 
   // v5.16 PLAN-cdp-port-discovery — QA_DEBUG_CDP_WS_URL no longer flows to
   // mocha child; per-pause CDP discovery happens in qa-hooks. One-time warning
