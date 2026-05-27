@@ -208,6 +208,11 @@ export function buildPausePrompt(pause: PausePayload): string {
     `Failure: ${pause.failing_assertion}`,
     chromeLine,
     '',
+    'Step 0 — Check with the user first. Before launching into investigation, ask once: ' +
+      '"Want me to investigate end-to-end, or is there a specific angle you\'d like me to look at first ' +
+      "(a suspect file / hypothesis / 'just check network' / 'just look at the DOM')?\" " +
+      'Wait for their reply. Skip this ask if their opening turn already named an angle, or if the session is in autopilot / auto-approve mode.',
+    '',
     'GROUND TRUTH IS THE LIVE BROWSER, NOT THE SOURCE FILES.',
     "Do NOT shortcut by reading the page's .html / .js / .css source to guess what's on screen. " +
       'The browser at the CDP endpoint above is the exact Chrome window the test was driving when it failed — ' +
@@ -217,14 +222,33 @@ export function buildPausePrompt(pause: PausePayload): string {
     '',
     nextStep,
     '',
-    'Once attached, use the playwright-mcp browser_* tools against the held browser (resolve the exact ids from your registry by suffix). ' +
-      'Prefer read-only queries first (snapshot, evaluate, console_messages, network_requests, take_screenshot, etc.); ' +
-      'interactive tools (click, hover, wait_for, fill_form, …) are available when read-only can\'t disambiguate. ' +
-      'Do NOT call browser_close or browser_navigate — both destroy the post-failure state the pause is preserving.',
+    'playwright-mcp is available in your registry. Find its child tools by the browser_* SUFFIX — the server may be registered ' +
+      'under various prefixes (mcp_<server>_browser_*, com.microsoft/playwright-mcp/browser_*, mcp__<server>__browser_*); ' +
+      'match on the browser_ suffix, not on prefix. ' +
+      'Use browser_connect with the cdp_ws_url to attach to the held browser, then use the rest of the playwright-mcp surface to inspect it — ' +
+      'DOM, targeted in-page JS, screenshots, plus interactive tools when read-only can\'t disambiguate. Prefer read-only moves first.',
+    'Network and console reads are OFF-BY-DEFAULT in beta (noisy framework / HMR / dev-telemetry / hot-reload chatter drowns the signal). ' +
+      'browser_network_requests and browser_console_messages (and browser_evaluate(console.*)-style log scrapes) are on-demand — ' +
+      'call them only after the user explicitly asks ("show the console", "check the network", "any failed requests?"), ' +
+      'OR after you asked them yourself ("Want me to pull network requests for an upstream check?") and they confirmed. ' +
+      'For runtime-state queries, use browser_evaluate against a specific expression (window.__lastError, framework state) instead.',
+    'Do NOT call browser_close or browser_navigate — both destroy the post-failure state the pause is preserving.',
     '',
-    'When investigation is done: propose the fix in chat and let the user re-run via Test Explorer ▶ (for code/test bugs); ' +
-      'or call qa-debug_qa_request_give_up (final failure), qa-debug_qa_propose_mark_passed (env-flake — needs human confirm), ' +
-      'or qa-debug_qa_propose_abort_suite (catastrophic cross-test).',
+    'Default: propose, don\'t edit. Surface file:line / tool-call shape in chat and wait for the user before applying ' +
+      'any file edit, running state-changing playwright-mcp tools (anything that clicks, fills, navigates, presses keys), ' +
+      'or qa-debug_qa_propose_* / qa_request_* verbs. ' +
+      'Skip the ask gate only if the session is in autopilot / auto-approve mode. ' +
+      'Read-only investigation (DOM snapshot, targeted evaluate, screenshot) never needs the gate.',
+    '',
+    'Keep the loop open. After proposing a fix (code-bug / test-bug), ASK explicitly: "Anything else you\'d like me to investigate, ' +
+      'add to the fix, or check before you re-run (e.g., pull network/console if you want them, check a sibling spec, ' +
+      'add a defensive guard)?" Do not end the turn after the diff. The user often has follow-up steps — let them voice those ' +
+      'before you stop. End the turn only when the user signals done or pivots.',
+    'Two-stage commit for qa-debug verbs. Before calling qa-debug_qa_propose_mark_passed (env-flake), ' +
+      'qa-debug_qa_propose_abort_suite (structural), or qa-debug_qa_request_give_up (ambiguous / out-of-scope), ' +
+      'first surface your classification and ASK: "Leaning <verb> because <rationale>. Before I commit, anything else to investigate or pull?" ' +
+      'Wait for the user. Only after they confirm do you call the verb and end the turn. ' +
+      'Do NOT jump to give_up — it is the last reach, not the first. The pause + playwright-mcp loop stays hot for follow-up investigation.',
   ].join('\n');
 }
 

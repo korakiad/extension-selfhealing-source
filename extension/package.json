@@ -18,7 +18,8 @@
   ],
   "contributes": {
     "chatSkills": [
-      { "path": "./skills/qa-debug/SKILL.md" }
+      { "path": "./skills/qa-debug/SKILL.md" },
+      { "path": "./skills/identify-element/SKILL.md" }
     ],
     "mcpServerDefinitionProviders": [
       {

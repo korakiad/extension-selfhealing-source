@@ -42,8 +42,11 @@ export function registerQaDebugChatParticipant(
       `### Active pause: \`${active.test_title}\`\n\n` +
         `**File:** \`${active.file}\`${active.line ? ` (line ${active.line})` : ''}\n\n` +
         `**Failure:** ${active.failing_assertion}\n\n` +
-        `The qa-debug + playwright-mcp tool surface is registered. ` +
-        `Ask me to inspect the live browser, edit a selector, give up, or mark as passed. ` +
+        `The qa-debug + playwright-mcp tool surface is registered — I can attach to the held browser and inspect it ` +
+        `(DOM, targeted in-page JS, screenshots). ` +
+        `_Network and console reads are on-demand in beta — ask if you want them pulled._\n\n` +
+        `Tell me what you'd like to investigate. After I propose a fix I'll ask if there's anything else to investigate or add ` +
+        `before you re-run; I won't jump to give-up. I'll propose edits in chat before applying them unless the session is on autopilot. ` +
         `When the underlying issue is addressed, re-run the test via ▶ Run in Test Explorer.`,
     );
 
@@ -62,8 +65,8 @@ export function registerQaDebugChatParticipant(
       const active = pauseStore.peekActivePause();
       if (!active) return [];
       return [
-        { prompt: `Inspect the failing selector for "${active.test_title}"`, label: 'Inspect selector' },
-        { prompt: `Show console logs for the held browser`, label: 'Console logs' },
+        { prompt: `Use the identify-element skill so I can pick the failing element in the held browser`, label: 'Pick failing element' },
+        { prompt: `Show the network requests around the failure for the held browser`, label: 'Network requests' },
         { prompt: `What was the failure root cause?`, label: 'Diagnose root cause' },
       ];
     },
