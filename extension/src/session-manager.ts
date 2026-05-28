@@ -46,6 +46,7 @@ import type { QaDebugMcpProvider } from './mcp-provider.js';
 import { appendInfo, createChildLogPump } from './output-channel.js';
 import type { PauseStatusBar } from './pause-status-bar.js';
 import type { MementoPauseStore } from './pause-store.js';
+import type { RunStatusBar } from './run-status-bar.js';
 import type { RunSelection, TestControllerWrapper, TestRunHandle } from './test-controller.js';
 
 // CR-v5.6 §3.8 / I2#A — v5.5 unified-id formula `file::it::full_title`. Must
@@ -171,6 +172,8 @@ export interface SessionManagerDeps {
   chatOpenFallbackAvailable: boolean;
   /** v5.4 §2.2 — ambient pause indicator; show on pause-publish, hide on decision commit. */
   pauseStatusBar: PauseStatusBar;
+  /** Ambient run indicator; show on spawnMochaChild, hide on onMochaExit. */
+  runStatusBar: RunStatusBar;
 }
 
 interface ActiveRun {
@@ -184,6 +187,8 @@ interface ActiveRun {
   cwd: string;
   /** Mocha bin used. */
   mochaBin: string;
+  /** Set by cancelActiveRun() so onMochaExit can attribute the exit to the user. */
+  userCancelled: boolean;
 }
 
 export interface RunFixtureSuiteOptions {
@@ -274,6 +279,8 @@ export class SessionManager {
         // best-effort
       }
       this.activeRun = undefined;
+      void vscode.commands.executeCommand('setContext', 'qa-debug.running', false);
+      this.deps.runStatusBar.hide();
     }
     for (const sub of this.chromeEventSubscriptions) {
       sub.dispose();
@@ -379,8 +386,11 @@ export class SessionManager {
       pendingSessions: new Set(),
       cwd: opts.cwd,
       mochaBin: opts.mochaBin,
+      userCancelled: false,
     };
     this.activeRun = run;
+    void vscode.commands.executeCommand('setContext', 'qa-debug.running', true);
+    this.deps.runStatusBar.show();
 
     this.wireConnection(run);
 
@@ -521,12 +531,11 @@ export class SessionManager {
   }
 
   private async onMochaExit(run: ActiveRun): Promise<void> {
+    const abandonReason = run.userCancelled
+      ? 'mocha child cancelled by user (no final_decision)'
+      : 'mocha child exited unexpectedly (no final_decision)';
     for (const sessionId of run.pendingSessions) {
-      this.deps.decisionRouter.abandon(
-        sessionId,
-        'mocha child exited unexpectedly (no final_decision)',
-        'hook',
-      );
+      this.deps.decisionRouter.abandon(sessionId, abandonReason, 'hook');
     }
     for (const timer of run.heartbeatTimers.values()) clearInterval(timer);
     run.heartbeatTimers.clear();
@@ -534,9 +543,32 @@ export class SessionManager {
 
     if (this.activeRun === run) {
       this.activeRun = undefined;
+      void vscode.commands.executeCommand('setContext', 'qa-debug.running', false);
+      this.deps.runStatusBar.hide();
     }
 
     run.testHandle.end();
+  }
+
+  /**
+   * User-initiated cancel: SIGTERM the active mocha child. Returns false when
+   * there is no active run. Cleanup (heartbeats, decision abandonment, context
+   * keys) flows through the existing child.on('exit') → onMochaExit path.
+   */
+  cancelActiveRun(reason: string): boolean {
+    const run = this.activeRun;
+    if (!run) return false;
+    run.userCancelled = true;
+    appendInfo(
+      this.deps.channel,
+      `[session-manager] user cancel requested; SIGTERM mocha pid=${run.child.pid} reason="${reason}"`,
+    );
+    try {
+      run.child.kill('SIGTERM');
+    } catch {
+      // already exited; onMochaExit will fire (or already has)
+    }
+    return true;
   }
 
   /**

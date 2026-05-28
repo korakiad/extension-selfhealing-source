@@ -16,6 +16,7 @@ import { QaDebugMcpProvider } from './mcp-provider.js';
 import { appendInfo, createAuditChannel, createMochaChannel } from './output-channel.js';
 import { registerPauseStatusBar } from './pause-status-bar.js';
 import { MementoPauseStore } from './pause-store.js';
+import { registerRunStatusBar } from './run-status-bar.js';
 import { SessionManager } from './session-manager.js';
 import { smokeTestMessageRetention } from './smoke-test-message.js';
 import { createTestControllerWrapper } from './test-controller.js';
@@ -136,6 +137,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // v5.4 §2.2 / §3.7 — ambient pause indicator. Lives across activations;
   // SessionManager toggles show/hide via the returned handle.
   const pauseStatusBar = registerPauseStatusBar(context, pauseStore, channel);
+  const runStatusBar = registerRunStatusBar(context, channel);
 
   // v5.5 §2.7 — FileSystemWatcher keeps the discovered Test Explorer tree in
   // sync with on-disk changes. 300ms per-URI debounce absorbs editor save +
@@ -196,6 +198,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       chatOpenAvailable,
       chatOpenFallbackAvailable,
       pauseStatusBar,
+      runStatusBar,
     });
     sessionManagerSingleton = sessionMgr;
     registerCommands(context, {

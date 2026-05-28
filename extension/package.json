@@ -211,6 +211,7 @@
     ],
     "commands": [
       { "command": "qa-debug.runFixture", "title": "QA Debug: Run Fixture Suite", "category": "QA Debug" },
+      { "command": "qa-debug.cancelRun", "title": "QA Debug: Cancel Running Suite", "category": "QA Debug", "enablement": "qa-debug.running", "icon": "$(debug-stop)" },
       { "command": "qa-debug.markPassed", "title": "QA Debug: Mark Paused Test as Passed", "category": "QA Debug", "enablement": "qa-debug.paused", "icon": "$(pass)" },
       { "command": "qa-debug.giveUp", "title": "QA Debug: Give Up on Paused Test", "category": "QA Debug", "enablement": "qa-debug.paused", "icon": "$(stop-circle)" },
       { "command": "qa-debug.openChatForPaused", "title": "QA Debug: Ask Copilot About This Failure", "category": "QA Debug", "enablement": "qa-debug.paused", "icon": "$(comment-discussion)" },
@@ -230,6 +231,9 @@
       }
     },
     "menus": {
+      "view/title": [
+        { "command": "qa-debug.cancelRun", "when": "view == workbench.view.testing && qa-debug.running && !qa-debug.paused", "group": "navigation@1" }
+      ],
       "testing/message/content": [
         { "command": "qa-debug.markPassed",  "when": "testMessage == qaDebugPaused" },
         { "command": "qa-debug.giveUp",      "when": "testMessage == qaDebugPaused" }

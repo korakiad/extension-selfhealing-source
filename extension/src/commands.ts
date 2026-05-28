@@ -1,6 +1,8 @@
 /**
  * qa-debug.* commands per `extension/package.json contributes.commands`:
  *  - qa-debug.runFixture          — spawn the fixture suite (entry point)
+ *  - qa-debug.cancelRun           — SIGTERM the active mocha child (recover from
+ *                                   wrong-fixture selection mid-run)
  *  - qa-debug.giveUp              — commit give_up (reversible; no UI confirm)
  *  - qa-debug.markPassed          — commit mark_passed (irreversible; UI confirm
  *                                   for proposals, showInputBox prompt for cold clicks
@@ -33,6 +35,7 @@ let chatOpenAvailableCache: boolean | undefined;
 export function registerCommands(context: vscode.ExtensionContext, deps: CommandDeps): void {
   context.subscriptions.push(
     vscode.commands.registerCommand('qa-debug.runFixture', () => runFixtureCmd(deps)),
+    vscode.commands.registerCommand('qa-debug.cancelRun', () => cancelRunCmd(deps)),
     vscode.commands.registerCommand('qa-debug.giveUp', () => giveUpCmd(deps)),
     vscode.commands.registerCommand('qa-debug.markPassed', () => markPassedCmd(deps)),
     vscode.commands.registerCommand('qa-debug.openChatForPaused', () => openChatForPausedCmd(deps)),
@@ -53,6 +56,25 @@ async function runFixtureCmd(deps: CommandDeps): Promise<void> {
     appendInfo(deps.channel, `[command] runFixture failed: ${msg}`);
     void vscode.window.showErrorMessage(`QA Debug: failed to start fixture suite — ${msg}`);
   }
+}
+
+/**
+ * Recover from a wrong-fixture selection without waiting for mocha to fail.
+ * Modal confirm because SIGTERM aborts every test in the current run.
+ */
+async function cancelRunCmd(deps: CommandDeps): Promise<void> {
+  const choice = await vscode.window.showWarningMessage(
+    'Cancel the running fixture suite? Any unfinished tests will be aborted.',
+    { modal: true },
+    'Cancel Suite',
+  );
+  if (choice !== 'Cancel Suite') return;
+  const cancelled = deps.sessionManager.cancelActiveRun('user invoked qa-debug.cancelRun');
+  if (!cancelled) {
+    void vscode.window.showInformationMessage('QA Debug: no active suite run to cancel.');
+    return;
+  }
+  appendInfo(deps.channel, '[command] cancelRun invoked');
 }
 
 /** give_up commits immediately through DecisionRouter. */
