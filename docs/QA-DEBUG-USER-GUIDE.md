@@ -27,10 +27,7 @@ When a Mocha test fails, this tool:
 2. Keeps the browser open on the failing page.
 3. Tells GitHub Copilot what broke: the assertion, the stack, the console output.
 4. Lets Copilot drive the live browser for you. It can look at the DOM, click things, take screenshots.
-5. Gives you three buttons in the Test Explorer:
-   - **Retry**: try the test again.
-   - **Mark Passed**: call it a flake and move on.
-   - **Give Up**: accept the failure as real and continue the suite.
+5. Gives you a button in the Test Explorer to stop the pause when you're done looking.
 
 You stay in the conversation. Copilot does the technical reading.
 
@@ -86,11 +83,7 @@ It's basically three steps:
 
    Copilot reads the error for you, looks at the live browser, and answers in plain words.
 
-When you're done asking questions, pick one of the buttons in the Test Explorer next to the paused test:
-
-- **Retry**: try the test again. Use this if the failure looked like a one-off.
-- **Mark Passed**: the test failed but the product is fine. Move on.
-- **Give Up**: it's a real bug. Move on and file it.
+When you're done looking, click any button next to the paused test in the Test Explorer to stop. There's a few of them (Retry, Mark Passed, Give Up) but for most cases it doesn't really matter which one you click. They all stop the pause and let you move on.
 
 That's it.
 
@@ -127,7 +120,7 @@ You probably started Mocha from a terminal instead of through the extension. Sto
 **Copilot doesn't seem to know there's a paused test.**
 Make sure GitHub Copilot Chat is installed and signed in. Then right-click the paused test and pick **"Ask Copilot About This Failure"**. That hands the context over directly.
 
-**I clicked Retry, Mark Passed, or Give Up and nothing happened.**
+**I clicked the stop button and nothing happened.**
 Open the **"QA Debug Mocha"** output channel (View > Output, then pick "QA Debug Mocha" from the dropdown). The error will be in there. Show it to your test lead.
 
 **I'm on an old version.**
@@ -142,8 +135,7 @@ All commands live under the `QA Debug:` prefix in the Command Palette (`Cmd+Shif
 - **Run Fixture Suite**: start a test run.
 - **Cancel Running Suite**: stop the current run.
 - **Ask Copilot About This Failure**: hand the paused test to Copilot Chat.
-- **Mark Paused Test as Passed**: accept the failure as a flake.
-- **Give Up on Paused Test**: accept the failure as real.
+- **Mark Paused Test as Passed** / **Give Up on Paused Test**: both stop the pause and move on. Pick whichever.
 - **Select Chrome for Paused Test**: pick which browser to attach to.
 - **Enter Chrome Debug Ports**: tell the tool which ports your test framework used.
 - **Check for Updates**: look for a newer release by hand.
