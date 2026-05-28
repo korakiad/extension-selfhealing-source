@@ -74,56 +74,27 @@ You can also check by hand. Open the Command Palette (`Cmd+Shift+P`) and run **"
 
 ## How to use it
 
-### Step 1: Run your tests through the extension
+It's basically three steps:
 
-This part is important. The tool only works when you run your tests **through the extension**. If you start Mocha from a terminal (like `npx mocha`), the tool is not in the loop and nothing will pause when a test fails.
+1. **Click the play button in the Test Explorer** to run your tests. (Or use the Command Palette and run **"QA Debug: Run Fixture Suite"**. Same thing.)
+2. **Wait.** When a test fails, it pauses. The browser stays open. You'll see a pop-up at the bottom-right of VS Code.
+3. **Open Copilot Chat and just ask.** Type whatever you want to know:
+   - *"what happened?"*
+   - *"what does the login button look like right now?"*
+   - *"is there an error on the page?"*
+   - *"why did the click fail?"*
 
-Two ways to start a run the right way:
+   Copilot reads the error for you, looks at the live browser, and answers in plain words.
 
-- **From the Test Explorer:** open the Testing panel on the left and click the play button on a suite.
-- **From the Command Palette:** press `Cmd+Shift+P` and run **"QA Debug: Run Fixture Suite"**.
+When you're done asking questions, pick one of the buttons in the Test Explorer next to the paused test:
 
-You can watch the test output in the **"QA Debug Mocha"** output channel at the bottom of VS Code.
+- **Retry**: try the test again. Use this if the failure looked like a one-off.
+- **Mark Passed**: the test failed but the product is fine. Move on.
+- **Give Up**: it's a real bug. Move on and file it.
 
-### Step 2: Wait for a test to fail
+That's it.
 
-When something breaks:
-
-- The failing test gets a red mark in the Test Explorer.
-- The browser stays open on the failing page. Don't close it.
-- A small pop-up appears at the bottom-right of VS Code.
-
-### Step 3: Ask Copilot what happened
-
-Three ways:
-
-- **Easiest:** right-click the failed test in the Test Explorer, then pick **"QA Debug: Ask Copilot About This Failure"**.
-- Or open Copilot Chat and type `@qa-debug` followed by your question, like `@qa-debug what went wrong?`.
-- Or just open Copilot Chat. It will usually notice you're in a debug session and offer to look.
-
-Copilot will:
-
-- Read the error and stack for you.
-- Look at the live browser, click things, read the page, and tell you what it sees.
-- Explain the failure in plain words.
-
-You can keep asking follow-up questions like:
-
-- *"What does the login button look like right now?"*
-- *"Is there an error message on the page?"*
-- *"Why did the click fail?"*
-
-### Step 4: Decide what to do
-
-Once you know what broke, pick one of three actions from the Test Explorer or Command Palette:
-
-| Action          | When to use it                                                              |
-| --------------- | --------------------------------------------------------------------------- |
-| **Retry**       | The failure looked like a one-off (slow page, flaky network). Try again.   |
-| **Mark Passed** | The test failed but the product is fine. It was a flake.                   |
-| **Give Up**     | The failure is real. There's a bug to file. The suite moves on.            |
-
-Copilot can also suggest **Mark Passed** or **Give Up** for you. You'll see a Continue / Cancel button in the chat before anything happens.
+> **Tip:** if Copilot doesn't seem to know about the paused test, right-click the paused test in the Test Explorer and pick **"QA Debug: Ask Copilot About This Failure"**. That hands it the context.
 
 ---
 
