@@ -42,13 +42,14 @@ You only do this once.
 - VS Code 1.120 or newer.
 - GitHub Copilot Chat installed and signed in.
 - Node.js 18 or newer.
-- **playwright-mcp installed.** Open a terminal and run:
+- **playwright-mcp added to VS Code.** This is what lets Copilot see the live browser. Add it once:
+  1. In VS Code, open the Command Palette (`Cmd+Shift+P`).
+  2. Search for **"MCP: Add Server"** and pick it.
+  3. Choose **Command (stdio)** when asked how to launch it.
+  4. Paste this as the command: `npx @playwright/mcp@latest`
+  5. Name it `playwright` and confirm.
 
-  ```
-  npm install -g @playwright/mcp@latest
-  ```
-
-  This is what lets Copilot see the live browser. Do it once.
+  You only do this once. VS Code remembers it.
 - Any Mocha test project. You do **not** need to install anything inside it. You also do **not** need to edit your `.mocharc` file. The extension hooks itself into your tests when it runs them.
 
 ### 2. Download the extension
