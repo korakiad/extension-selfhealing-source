@@ -45,7 +45,7 @@ You only do this once.
 - VS Code 1.120 or newer.
 - GitHub Copilot Chat installed and signed in.
 - Node.js 18 or newer.
-- A Mocha test project that uses the `@qa-debug/mocha-hooks` package. If you're not sure, ask your test lead.
+- Any Mocha test project. You do **not** need to install anything inside it. You also do **not** need to edit your `.mocharc` file. The extension hooks itself into your tests when it runs them.
 
 ### 2. Download the extension
 
@@ -74,9 +74,11 @@ You can also check by hand. Open the Command Palette (`Cmd+Shift+P`) and run **"
 
 ## How to use it
 
-### Step 1: Run your tests
+### Step 1: Run your tests through the extension
 
-Two ways:
+This part is important. The tool only works when you run your tests **through the extension**. If you start Mocha from a terminal (like `npx mocha`), the tool is not in the loop and nothing will pause when a test fails.
+
+Two ways to start a run the right way:
 
 - **From the Test Explorer:** open the Testing panel on the left and click the play button on a suite.
 - **From the Command Palette:** press `Cmd+Shift+P` and run **"QA Debug: Run Fixture Suite"**.
@@ -149,7 +151,7 @@ Changed your mind in the middle of a run? Two ways:
 ## Troubleshooting
 
 **The browser closed when the test failed.**
-The test file probably isn't loading `@qa-debug/mocha-hooks`. Ask your test lead to check.
+You probably started Mocha from a terminal instead of through the extension. Stop the run, then start it again from the Test Explorer or from the "QA Debug: Run Fixture Suite" command. The tool only pauses on failure when it launched the run itself.
 
 **Copilot doesn't seem to know there's a paused test.**
 Make sure GitHub Copilot Chat is installed and signed in. Then right-click the paused test and pick **"Ask Copilot About This Failure"**. That hands the context over directly.
