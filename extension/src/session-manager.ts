@@ -39,8 +39,9 @@ import {
   PausePublishResult,
   nodeIpcTransport,
 } from '@qa-debug/mocha-hooks/protocol';
-import type { PausePayload } from '@qa-debug/pause-store-types';
+import type { ChromeSelection, PausePayload } from '@qa-debug/pause-store-types';
 
+import { startCdpDownloadShim, type CdpShim } from './cdp-download-shim.js';
 import type { DecisionRouter } from './decision-router.js';
 import type { QaDebugMcpProvider } from './mcp-provider.js';
 import { appendInfo, createChildLogPump } from './output-channel.js';
@@ -219,6 +220,13 @@ export interface RunFixtureSuiteOptions {
 export class SessionManager {
   private activeRun?: ActiveRun;
   private readonly chromeEventSubscriptions: { dispose(): void }[] = [];
+  /**
+   * PLAN-cdp-electron-shim — active CDP download-shim, if any. 1:1 with the
+   * current chrome selection. The MCP is pointed at `shim.httpRoot` rather than
+   * the raw endpoint so `Browser.setDownloadBehavior` is swallowed (lets
+   * playwright-mcp attach to old Electron / embedded Chromium).
+   */
+  private cdpShim?: CdpShim;
 
   constructor(private readonly deps: SessionManagerDeps) {
     // v5.16 PLAN-cdp-port-discovery §3.18 — gate mcpProvider.setPaused on
@@ -228,15 +236,10 @@ export class SessionManager {
     // awaits persistence before firing onChromeSelected.
     this.chromeEventSubscriptions.push(
       this.deps.pauseStore.onChromeSelected((selection) => {
-        const httpRoot = cdpWsUrlToHttpRoot(selection.cdp_ws_url);
-        this.deps.mcpProvider.setPaused(httpRoot);
-        appendInfo(
-          this.deps.channel,
-          `[session-manager] mcpProvider.setPaused endpoint=${httpRoot} port=${selection.port} ` +
-            `source=${selection.source} session=${selection.session_id}`,
-        );
+        void this.bindMcpToSelection(selection);
       }),
       this.deps.pauseStore.onChromeDeselected((sessionId) => {
+        void this.stopCdpShim();
         this.deps.mcpProvider.clearPaused();
         appendInfo(
           this.deps.channel,
@@ -245,6 +248,62 @@ export class SessionManager {
         );
       }),
     );
+  }
+
+  /**
+   * PLAN-cdp-electron-shim — start the download-shim (if enabled) and point the
+   * MCP at it; otherwise publish the raw endpoint. The onChromeSelected emitter
+   * ignores the returned promise — MCP registration is already async on the
+   * VS Code side, so the brief gap before setPaused is benign.
+   */
+  private async bindMcpToSelection(selection: ChromeSelection): Promise<void> {
+    const rawHttpRoot = cdpWsUrlToHttpRoot(selection.cdp_ws_url);
+    // Replacing a selection: tear down the prior shim before starting a new one.
+    await this.stopCdpShim();
+
+    const shimEnabled = vscode.workspace
+      .getConfiguration('qaDebug')
+      .get<boolean>('cdpDownloadShim.enabled', true);
+
+    let endpoint = rawHttpRoot;
+    if (shimEnabled) {
+      try {
+        this.cdpShim = await startCdpDownloadShim({
+          targetHttpRoot: rawHttpRoot,
+          log: (msg) => appendInfo(this.deps.channel, msg),
+        });
+        endpoint = this.cdpShim.httpRoot;
+      } catch (err) {
+        appendInfo(
+          this.deps.channel,
+          `[session-manager] WARN cdp-shim failed to start (${(err as Error).message}); ` +
+            `falling back to raw endpoint ${rawHttpRoot}`,
+        );
+      }
+    }
+
+    this.deps.mcpProvider.setPaused(endpoint);
+    appendInfo(
+      this.deps.channel,
+      `[session-manager] mcpProvider.setPaused endpoint=${endpoint} ` +
+        `(raw=${rawHttpRoot}, shim=${this.cdpShim ? 'on' : 'off'}) port=${selection.port} ` +
+        `source=${selection.source} session=${selection.session_id}`,
+    );
+  }
+
+  /** PLAN-cdp-electron-shim — stop and clear the active shim (idempotent). */
+  private async stopCdpShim(): Promise<void> {
+    const shim = this.cdpShim;
+    if (!shim) return;
+    this.cdpShim = undefined;
+    try {
+      await shim.stop();
+    } catch (err) {
+      appendInfo(
+        this.deps.channel,
+        `[session-manager] WARN cdp-shim stop error: ${(err as Error).message}`,
+      );
+    }
   }
 
   /** Entrypoint for qa-debug.runFixture + TestController run handler. */
@@ -286,6 +345,8 @@ export class SessionManager {
       sub.dispose();
     }
     this.chromeEventSubscriptions.length = 0;
+    // PLAN-cdp-electron-shim — release the proxy port on deactivate.
+    await this.stopCdpShim();
   }
 
   // ------------------- internal -------------------
@@ -504,6 +565,8 @@ export class SessionManager {
       await vscode.commands.executeCommand('setContext', 'qa-debug.paused', false);
       await refreshPausedTestIdsContext(this.deps.pauseStore);
       this.deps.mcpProvider.setIdle();
+      // PLAN-cdp-electron-shim — pause ended; release the shim proxy port.
+      await this.stopCdpShim();
     });
   }
 

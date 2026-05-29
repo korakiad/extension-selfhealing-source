@@ -197,13 +197,13 @@ export function buildPausePrompt(pause: PausePayload): string {
   if (selected) {
     chromeLine = `Browser: chrome already selected at port ${selected.port} (cdp_ws_url=${selected.ws_url}).`;
     nextStep =
-      'Call qa-debug_qa_get_failure_context to ground, then attach via the playwright-mcp browser_connect tool using the cdp_ws_url it returns. ' +
-      'The browser at that endpoint is the same Chrome the failing test was driving — DOM, console, network state are live.';
+      'Call qa-debug_qa_get_failure_context to ground. playwright-mcp is already registered against the held browser — start inspecting with browser_snapshot (there is no attach step and no cdp_ws_url to pass anywhere). ' +
+      'The browser it drives is the same Chrome the failing test was driving — DOM, console, network state are live.';
   } else if (chromes.length === 1) {
     chromeLine = `Browser: 1 chrome discovered (port ${chromes[0].port}); no selection committed yet.`;
     nextStep =
       `Call qa-debug_qa_get_failure_context first to ground, then qa-debug_qa_select_chrome with session_id and port=${chromes[0].port} ` +
-      '(no user confirmation needed for a single candidate). After selection commits, attach via the playwright-mcp browser_connect tool using the returned cdp_ws_url.';
+      '(no user confirmation needed for a single candidate). Once selection commits, playwright-mcp is auto-registered against the held browser — start inspecting with browser_snapshot (no attach step).';
   } else if (chromes.length >= 2) {
     const summary = chromes
       .map(
@@ -213,13 +213,13 @@ export function buildPausePrompt(pause: PausePayload): string {
       .join('; ');
     chromeLine = `Browser: ${chromes.length} chromes discovered — ${summary}; no selection committed.`;
     nextStep =
-      'Call qa-debug_qa_get_failure_context first to ground. Then ask the user which chrome to attach to (surface page_titles as context). ' +
-      'Once they pick, call qa-debug_qa_select_chrome with their port. After it commits, attach via the playwright-mcp browser_connect tool using the returned cdp_ws_url.';
+      'Call qa-debug_qa_get_failure_context first to ground. Then ask the user which chrome to inspect (surface page_titles as context). ' +
+      'Once they pick, call qa-debug_qa_select_chrome with their port. After it commits, playwright-mcp is auto-registered against the held browser — start inspecting with browser_snapshot (no attach step).';
   } else {
     chromeLine = 'Browser: no chromes discovered at the default debug ports.';
     nextStep =
       "Call qa-debug_qa_get_failure_context first to ground. Then ask the user: \"I couldn't find Chrome at the default debug ports — what port(s) does your test framework launch Chrome on?\" " +
-      'Call qa-debug_qa_discover_chromes(session_id, [user-ports]); if it returns chromes, call qa-debug_qa_select_chrome next; then attach via the playwright-mcp browser_connect tool.';
+      'Call qa-debug_qa_discover_chromes(session_id, [user-ports]); if it returns chromes, call qa-debug_qa_select_chrome next; once it commits, playwright-mcp is auto-registered against the held browser — start inspecting with browser_snapshot.';
   }
 
   return [
@@ -240,15 +240,15 @@ export function buildPausePrompt(pause: PausePayload): string {
       'The browser at the CDP endpoint above is the exact Chrome window the test was driving when it failed — ' +
       'post-JS DOM, computed styles, in-flight network responses, console errors, framework state, async timers, ' +
       'dynamically-injected nodes — none of which exist in the source files. Source can be stale, can be conditionally rendered, ' +
-      'can be overridden at runtime. Attach first; read source only to corroborate something you already observed live.',
+      'can be overridden at runtime. Inspect the live browser first (browser_snapshot); read source only to corroborate something you already observed live.',
     '',
     nextStep,
     '',
     'playwright-mcp is available in your registry. Find its child tools by the browser_* SUFFIX — the server may be registered ' +
       'under various prefixes (mcp_<server>_browser_*, com.microsoft/playwright-mcp/browser_*, mcp__<server>__browser_*); ' +
       'match on the browser_ suffix, not on prefix. ' +
-      'Use browser_connect with the cdp_ws_url to attach to the held browser, then use the rest of the playwright-mcp surface to inspect it — ' +
-      'DOM, targeted in-page JS, screenshots, plus interactive tools when read-only can\'t disambiguate. Prefer read-only moves first.',
+      'There is no connect/attach tool — the extension already pointed playwright-mcp at the held browser when the chrome was selected; just call browser_snapshot to inspect it, ' +
+      'then use the rest of the playwright-mcp surface — DOM, targeted in-page JS, screenshots, plus interactive tools when read-only can\'t disambiguate. Prefer read-only moves first.',
     'Network and console reads are OFF-BY-DEFAULT in beta (noisy framework / HMR / dev-telemetry / hot-reload chatter drowns the signal). ' +
       'browser_network_requests and browser_console_messages (and browser_evaluate(console.*)-style log scrapes) are on-demand — ' +
       'call them only after the user explicitly asks ("show the console", "check the network", "any failed requests?"), ' +

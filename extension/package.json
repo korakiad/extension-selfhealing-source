@@ -227,6 +227,11 @@
           "type": "boolean",
           "default": true,
           "description": "Check the public GitHub mirror for a newer stable release on activation."
+        },
+        "qaDebug.cdpDownloadShim.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Route playwright-mcp's CDP connection through a local shim that swallows Browser.setDownloadBehavior. Required to attach to browsers whose CDP rejects browser-level context management (e.g. old Electron / embedded Chromium). Harmless for normal Chrome. Disable only if the shim interferes."
         }
       }
     },
@@ -249,6 +254,7 @@
     "build": "node esbuild.config.mjs",
     "build:prod": "node esbuild.config.mjs --production",
     "build:check": "tsc -p tsconfig.json --noEmit",
+    "test:e2e:shim": "node --import tsx test/cdp-shim-e2e.mts",
     "clean": "rm -rf dist",
     "package": "pnpm run clean && pnpm --filter ../mocha-hooks run build && pnpm run build:prod && node tools/prepare-vsix.mjs && cd _vsix-staging && npx --yes @vscode/vsce package --out ../qa-debug-companion-${npm_package_version}.vsix"
   },
@@ -256,11 +262,13 @@
     "@qa-debug/mocha-hooks": "workspace:*",
     "@qa-debug/pause-store-types": "workspace:*",
     "@qa-debug/tool-contracts": "workspace:*",
+    "ws": "^8.18.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
     "@types/vscode": "^1.120.0",
+    "@types/ws": "^8.5.12",
     "esbuild": "^0.24.0",
     "typescript": "^5.7.2"
   }

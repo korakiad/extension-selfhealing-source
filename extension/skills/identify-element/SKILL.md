@@ -11,7 +11,7 @@ A Mocha test is paused and a browser is held alive at a CDP endpoint (qa-debug c
 
 - An active Mocha pause (qa-debug companion engaged); `qa-debug.paused` context is true.
 - Chrome selection committed (qa-debug SKILL Step 1b ran; `cdp_ws_url` is non-null).
-- playwright-mcp registered and attached to the held Chrome via `browser_connect`.
+- playwright-mcp registered and attached to the held Chrome (auto-registered when the chrome selection committed in qa-debug Step 1b — no manual connect).
 
 If any prerequisite is missing, do NOT call the picker — fall back to the qa-debug Step 1 / Step 1b flow first.
 
@@ -161,7 +161,7 @@ Before writing the diff, read 2–3 of the project's existing test / page-object
 
 | Anti-pattern | Reason |
 |---|---|
-| Picking before attaching to the held browser via `browser_connect`. | The picker runs in the page context; if playwright-mcp isn't connected to the held browser, `browser_evaluate` returns no active page or attaches to a fresh blank target. Attach via the qa-debug Step 1b flow first. |
+| Picking before the held browser is attached (i.e. before chrome selection commits). | The picker runs in the page context; if playwright-mcp isn't pointed at the held browser yet, `browser_evaluate` returns no active page or hits a fresh blank target. Run the qa-debug Step 1b selection flow first — that auto-registers playwright-mcp. |
 | Skipping Step 3 (QA confirmation in plain language). | The picker reports *what* QA clicked, but they may have mis-clicked (sticky headers, overlays, hidden disabled buttons). Always confirm in plain English before building the selector. |
 | Building the final selector from `playwrightLocatorHint` directly. | It's a hint, not a project-matched expression. The QA's project may use `data-test`, `getByRole`, a wrapper like `Ws.instance.client.$()`, or a custom CSS scheme. Read the project's tests first. |
 | Calling the picker on an element inside a nested iframe (v1 limitation). | This first version captures only top-frame elements. If `document.elementFromPoint` returns the iframe shell, fall back to: read the iframe's `src`, ask the QA to confirm which iframe, then use Playwright's frame-locator path. iframe-aware picking will land in a later beta. |
