@@ -79,7 +79,7 @@ export const qa_get_failure_context: QaToolDef<{
     'Idempotent and safe to call multiple times. ' +
     'Returns: { test_title, file, line, failing_assertion, stack_trace: { frames (<=50 inline; concise mode <=10), more_at? }, ' +
     'cdp_ws_url (DERIVED from selection; null until a chrome is selected — see selection branching below), ' +
-    'available_chromes: [{port, ws_url, page_titles}, ...] (discovered via /json/version probe at pause time), ' +
+    'available_chromes: [{port, ws_url, page_titles, tab_count, runtime}, ...] (discovered via /json/version + /json/list probe at pause time; runtime is a best-effort chrome|electron|openfin|unknown label, tab_count is the page-target count), ' +
     "selected_cdp_port (null until qa_select_chrome commits), screenshot_path?, " +
     'console_logs: { lines (<=100 inline; concise mode <=20), more_at? }, paused_for_ms, retry_count, max_retries_remaining, ' +
     "last_proposal_status: 'none' | 'awaiting_human' | 'accepted' | 'rejected' for any in-flight qa_propose_* }. " +
@@ -88,6 +88,7 @@ export const qa_get_failure_context: QaToolDef<{
     '(2) selected_cdp_port null AND available_chromes.length === 1 → call qa_select_chrome(session_id, available_chromes[0].port); no user confirmation needed. ' +
     '(3) selected_cdp_port null AND available_chromes.length >= 2 → STOP, ask the user in chat which chrome to use (surface page_titles for context), then call qa_select_chrome with their pick. ' +
     "(4) selected_cdp_port null AND available_chromes.length === 0 → STOP, ask the user 'I couldn't find Chrome at the default debug ports. What port(s) does your test framework launch Chrome on?', then call qa_discover_chromes(session_id, [user-ports]) and re-enter this branching. " +
+    'Multi-tab orient: if the selected chrome has tab_count > 1 (Electron / OpenFin desktop runtimes expose many windows/webviews), the page playwright-mcp lands on is arbitrary — call browser_tabs(action:"list") then browser_tabs(action:"select", index) to land on the page under test BEFORE browser_snapshot. (runtime electron/openfin is a hint; tab_count > 1 is the trigger.) ' +
     'Until selection commits, playwright-mcp is NOT registered, so the browser_* tools have no target — selecting a chrome is what registers it. ' +
     'Errors: NO_ACTIVE_PAUSE when no Mocha test is currently paused; SESSION_NOT_FOUND when session_id is supplied but does not match the active pause.',
   inputSchemaJson: {
@@ -236,7 +237,7 @@ export const qa_discover_chromes: QaToolDef<{ session_id: string; ports: number[
     'Side-effects on the active pause: REPLACES available_chromes; CLEARS selected_cdp_port IFF the prior selection\'s port is not present in the new list. ' +
     'Callers must call qa_select_chrome after this tool to commit a selection. ' +
     'Idempotent: calling twice with the same ports yields the same available_chromes result. ' +
-    'Returns: { available_chromes: [{port, ws_url, page_titles}, ...] }. ' +
+    'Returns: { available_chromes: [{port, ws_url, page_titles, tab_count, runtime}, ...] }. ' +
     'Errors: NO_ACTIVE_PAUSE (session_id stale); INVALID_PORT (any port outside 1024-65535); ' +
     'NO_CHROMES_FOUND (none of the supplied ports responded — re-ask the user or surface the framework launch failure).',
   inputSchemaJson: {

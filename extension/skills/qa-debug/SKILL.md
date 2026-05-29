@@ -14,6 +14,7 @@ There is no `qa_request_retry`. Re-running after a fix is the user's action via 
 - [ ] Step 0: Ask the user once — full investigation or a specific angle?
 - [ ] Step 1: Ground via `qa-debug_qa_get_failure_context` (concise)
 - [ ] Step 1b: Select a chrome (auto / `qa-debug_qa_select_chrome` / `qa-debug_qa_discover_chromes`) so `cdp_ws_url` becomes non-null
+- [ ] Step 1c: If the selected chrome's `tab_count > 1` (Electron / OpenFin), switch to the page under test via `browser_tabs` **before** investigating
 - [ ] Step 2: Investigate via the playwright-mcp `browser_*` tools against the held browser — **do not shortcut by reading page source**
 - [ ] Step 3: Classify failure (one of: **code-bug** / **test-bug** / **env-flake** / **structural** / **ambiguous-or-out-of-scope**)
 - [ ] Step 4: Closing turn per Step-3 classification — Arms 1/2: propose diff + ASK "anything else?"; Arms 3/4/5: two-stage (Stage 1 propose-and-ask, Stage 2 commit-and-end)
@@ -59,6 +60,26 @@ Call `qa-debug_qa_get_failure_context` with `response_format: "concise"` to grou
 Until selection commits, playwright-mcp is NOT registered, so its `browser_*` tools have no target — selecting a chrome is what registers and points it at the held browser.
 
 If a later playwright-mcp call returns "target closed" mid-investigation, the selected chrome died. Re-call `qa-debug_qa_discover_chromes` (re-ask the user for ports if needed) and re-select.
+
+## Step 1c — Orient on the runtime, land on the right tab
+
+One CDP endpoint can expose a different number of pages depending on what's running:
+
+- **Chrome (web app)** — usually a single page. Nothing to pick; go straight to Step 2.
+- **Refinitiv Workspace (Electron) / OpenFin** — desktop runtimes that surface **many** pages (app windows, webviews, hidden views) at the *same* endpoint. playwright-mcp does **not** define which one it attaches to, so a blind `browser_snapshot` may inspect the wrong window and yield a confident-but-wrong diagnosis.
+
+Read the **selected** chrome's `tab_count` and `runtime` from `available_chromes` (the entry whose `port === selected_cdp_port`):
+
+- `tab_count <= 1` → single page; proceed to Step 2 directly. No tab dance, no friction.
+- `tab_count > 1` → **orient before investigating**:
+  1. Call `browser_tabs` with `action: "list"` to get the authoritative tab list **and indices**. Get the index from this live call — do not trust the order of `page_titles`.
+  2. Identify the page under test by matching the failing test (its file / expected URL / title) against the listed tabs.
+     - Exactly one plausible match → select it.
+     - Several plausible matches, or none obvious → **ask the user once** which tab is the one under test, surfacing the `runtime` + the tab titles: *"This looks like an Electron app with 4 windows open — which is the one under test: 'Login' / 'Dashboard' / 'Settings' / 'DevTools'?"*. Then proceed with their pick.
+  3. Call `browser_tabs` with `action: "select", index: <N>` to switch to it.
+  4. Only now proceed to Step 2 (`browser_snapshot`).
+
+`runtime` (`chrome` / `electron` / `openfin` / `unknown`) is a **best-effort hint** — a desktop app can override its User-Agent and report `chrome`/`unknown`, so do **not** gate on it. **`tab_count > 1` is the trigger.** When `runtime` is `electron`/`openfin`, name it to the user for context.
 
 ## Step 2 — Investigate the held browser
 
@@ -233,6 +254,7 @@ If during investigation you observe signals suggesting multiple tests will fail 
 |---|---|
 | **Reading the page's `.html` / `.js` / `.css` source to guess what's on screen instead of inspecting the live browser with `browser_snapshot` / `browser_evaluate`.** | Source files are static; the live browser holds the post-JS DOM, computed styles, in-flight network responses, console errors, and dynamically-injected nodes. Source-reading silently gives the wrong answer when the failure is caused by runtime state — exactly the case that paused the test in the first place. Inspect the live browser first; read source only to corroborate. |
 | Calling `browser_*` tools before Step 1b (chrome selection) commits. | playwright-mcp is not registered until selection commits, so its tools have no target. Walk the Step-1b branching first; once it commits, the browser is auto-attached. |
+| Calling `browser_snapshot` on a multi-tab runtime (`tab_count > 1`, Electron / OpenFin) without selecting the page under test first. | playwright-mcp attaches to an arbitrary page when the endpoint exposes many; snapshotting blind inspects the wrong window and produces a confident-but-wrong diagnosis. Run Step 1c: `browser_tabs(action:"list")` → match or ask → `browser_tabs(action:"select", index)`. |
 | Guessing a port for `qa-debug_qa_discover_chromes` instead of asking the user. | The port list is consumer-framework-specific (often locked, often non-default); guessing wastes a probe and ships a wrong answer if the guess succeeds against an unrelated chrome. |
 | Pseudo-code or prescriptive script for "how to investigate" the browser. | Step 2 is medium-freedom; multiple investigation paths are valid; over-prescribing causes you to skip the right tool when the failure shape suggests it. |
 | Editing `.mocharc.cjs`, the SKILL itself, or extension internals. | The QA owns the specs; the extension owns hook injection. You own diagnosis and source/spec edits. |

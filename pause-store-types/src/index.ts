@@ -23,11 +23,23 @@ export type ProposalStatus = 'none' | 'awaiting_human' | 'accepted' | 'rejected'
  */
 export type ChromeOwner = 'framework' | 'companion';
 
+/**
+ * PLAN-runtime-tab-orient — best-effort runtime label from /json/version
+ * User-Agent. `unknown` when the UA is absent or app-overridden (Electron's
+ * app.userAgentFallback can strip the "Electron" token). Behavior never depends
+ * on this label — `tab_count` is the load-bearing multi-tab signal.
+ */
+export type ChromeRuntime = 'chrome' | 'electron' | 'openfin' | 'unknown';
+
 /** v5.16 — single discovered chrome (browser-level CDP endpoint). */
 export interface AvailableChrome {
   port: number;
   ws_url: string;        // browser-level ws://.../devtools/browser/<UUID>, normalized 0.0.0.0→127.0.0.1
   page_titles: string[]; // up to 5 from /json/list — used for picker UI / agent prompts
+  // PLAN-runtime-tab-orient — count of `type==='page'` targets from /json/list;
+  // the orient/tab-switch trigger (>1). Override-proof. /json/list fail → 1.
+  tab_count: number;
+  runtime: ChromeRuntime; // best-effort; see ChromeRuntime note above.
 }
 
 /** v5.16 — selection source for §3.4 diagnostic log. */
@@ -251,7 +263,15 @@ export function normalizePausePayload(raw: unknown): {
   let chrome_owner: ChromeOwner | undefined;
 
   if (Array.isArray(obj.available_chromes)) {
-    available_chromes = obj.available_chromes as AvailableChrome[];
+    // PLAN-runtime-tab-orient — default tab_count/runtime on pre-field stored data
+    // so downstream readers (and the SKILL Step 1c trigger) always see the fields.
+    available_chromes = (obj.available_chromes as Partial<AvailableChrome>[]).map((c) => ({
+      port: c.port as number,
+      ws_url: c.ws_url as string,
+      page_titles: c.page_titles ?? [],
+      tab_count: typeof c.tab_count === 'number' ? c.tab_count : (c.page_titles?.length || 1),
+      runtime: c.runtime ?? 'unknown',
+    }));
     selected_cdp_port =
       typeof obj.selected_cdp_port === 'number' ? (obj.selected_cdp_port as number) : null;
     chrome_owner = (obj.chrome_owner as ChromeOwner | undefined) ?? 'framework';
@@ -259,7 +279,9 @@ export function normalizePausePayload(raw: unknown): {
     const match = obj.cdp_ws_url.match(/ws:\/\/[^:/]+:(\d+)\//);
     if (match) {
       const port = Number(match[1]);
-      available_chromes = [{ port, ws_url: obj.cdp_ws_url, page_titles: [] }];
+      available_chromes = [
+        { port, ws_url: obj.cdp_ws_url, page_titles: [], tab_count: 1, runtime: 'unknown' },
+      ];
       selected_cdp_port = port;
       chrome_owner = obj.mode === 'A' ? 'framework' : 'companion';
       diagnostics.push(

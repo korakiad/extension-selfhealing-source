@@ -44,33 +44,53 @@ function effectiveCdpPorts(): readonly number[] {
   return valid.length > 0 ? valid : DEFAULT_CDP_PORTS;
 }
 
+// PLAN-runtime-tab-orient — best-effort runtime classification from the
+// /json/version User-Agent. MUST stay identical to the copies in
+// extension/src/lm-tools/probe-ports.ts and qa-debug-mcp/src/probe-ports.ts.
+export function classifyRuntime(
+  userAgent: string | undefined,
+): 'chrome' | 'electron' | 'openfin' | 'unknown' {
+  if (!userAgent) return 'unknown';
+  if (/openfin/i.test(userAgent)) return 'openfin';
+  if (/electron/i.test(userAgent)) return 'electron';
+  return 'chrome';
+}
+
 async function probeChromePort(port: number): Promise<AvailableChrome | null> {
   try {
     const versionRes = await fetch(`http://localhost:${port}/json/version`, {
       signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
     });
     if (!versionRes.ok) return null;
-    const versionJson = (await versionRes.json()) as { webSocketDebuggerUrl?: string };
+    const versionJson = (await versionRes.json()) as {
+      webSocketDebuggerUrl?: string;
+      'User-Agent'?: string;
+    };
     const wsRaw = versionJson.webSocketDebuggerUrl;
     if (!wsRaw || typeof wsRaw !== 'string') return null;
     const wsUrl = normalizeCdpWsUrl(wsRaw);
-    // /json/list for page_titles — best-effort; empty array on failure.
+    const runtime = classifyRuntime(versionJson['User-Agent']);
+    // /json/list → tab_count (orient trigger) + page_titles (display, capped 5).
+    // Best-effort: on failure keep tab_count=1 (we know ≥1 since /json/version probed).
     let pageTitles: string[] = [];
+    let tabCount = 1;
     try {
       const listRes = await fetch(`http://localhost:${port}/json/list`, {
         signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
       });
       if (listRes.ok) {
         const listJson = (await listRes.json()) as Array<{ title?: string; type?: string }>;
-        pageTitles = listJson
-          .filter((p) => p.type === 'page' && typeof p.title === 'string')
+        const pages = listJson.filter((p) => p.type === 'page');
+        tabCount = pages.length;
+        pageTitles = pages
+          .filter((p) => typeof p.title === 'string')
           .map((p) => p.title as string)
           .slice(0, 5);
       }
     } catch {
-      // /json/list optional; missing titles is not fatal.
+      // /json/list optional; missing titles/count is not fatal.
     }
-    return { port, ws_url: wsUrl, page_titles: pageTitles };
+    return { port, ws_url: wsUrl, page_titles: pageTitles, tab_count: tabCount, runtime };
   } catch {
     return null;
   }
