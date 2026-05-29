@@ -39,6 +39,8 @@ function copyTree(src, dst, skip = () => false) {
 const skipDev = (name) =>
   name === 'node_modules' ||
   name === 'src' ||
+  name === 'test' ||
+  name === '.playwright-mcp' || // runtime trace snapshots — must never ship
   name === '_vsix-staging' ||
   name === 'tools' ||
   name === 'tsconfig.json' ||
@@ -46,7 +48,9 @@ const skipDev = (name) =>
   name === 'esbuild.config.mjs' ||
   name === '.gitignore' ||
   name === '.vscodeignore' ||
-  name.endsWith('.map');
+  name.endsWith('.map') ||
+  name.endsWith('.ts') || // .ts/.mts are dev-only (src is bundled into dist)
+  name.endsWith('.mts');
 
 copyTree(extDir, staging, skipDev);
 
