@@ -91,7 +91,9 @@ It's basically three steps:
 
    Copilot reads the error for you, looks at the live browser, and answers in plain words.
 
-When you're done looking, click any button next to the paused test in the Test Explorer to stop. There's a few of them (Retry, Mark Passed, Give Up) but for most cases it doesn't really matter which one you click. They all stop the pause and let you move on.
+When you're done looking, click any button next to the paused test in the Test Explorer to stop. There's a couple of them (Mark Passed, Give Up) but for most cases it doesn't really matter which one you click. They both stop the pause and let you move on.
+
+Once you've made a fix and want to try again, just hit the **▶ Run** button in the Test Explorer to run the suite afresh.
 
 That's it.
 
