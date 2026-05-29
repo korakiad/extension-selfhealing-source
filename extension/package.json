@@ -1,7 +1,7 @@
 {
   "name": "qa-debug-companion",
   "displayName": "QA Debug Companion",
-  "version": "0.0.5-beta.10",
+  "version": "0.0.5-beta.12",
   "private": true,
   "repository": {
     "type": "git",
@@ -18,8 +18,12 @@
   ],
   "contributes": {
     "chatSkills": [
-      { "path": "./skills/qa-debug/SKILL.md" },
-      { "path": "./skills/identify-element/SKILL.md" }
+      {
+        "path": "./skills/qa-debug/SKILL.md"
+      },
+      {
+        "path": "./skills/identify-element/SKILL.md"
+      }
     ],
     "mcpServerDefinitionProviders": [
       {
@@ -51,7 +55,9 @@
     "languageModelTools": [
       {
         "name": "qa-debug_qa_get_failure_context",
-        "tags": ["qa-debug"],
+        "tags": [
+          "qa-debug"
+        ],
         "toolReferenceName": "qaFailureContext",
         "displayName": "QA Debug: Get Failure Context",
         "modelDescription": "Returns the currently paused Mocha test failure as a structured payload. Callers should invoke this first when entering a debugging session — the QA describes the failure conversationally, but the ground-truth shape (failing assertion, stack frames, console output, browser CDP URL) lives in the pause record. Idempotent and safe to call multiple times. Returns: { test_title, file, line, failing_assertion, stack_trace: { frames (<=50 inline; concise mode <=10), more_at? }, cdp_ws_url (use with the playwright-mcp browser_* tools to inspect the held browser), screenshot_path?, console_logs: { lines (<=100 inline; concise mode <=20), more_at? }, paused_for_ms, retry_count, max_retries_remaining, last_proposal_status: 'none' | 'awaiting_human' | 'accepted' | 'rejected' for any in-flight qa_propose_* }. Errors: NO_ACTIVE_PAUSE when no Mocha test is currently paused; SESSION_NOT_FOUND when session_id is supplied but does not match the active pause.",
@@ -68,7 +74,10 @@
             },
             "response_format": {
               "type": "string",
-              "enum": ["concise", "detailed"],
+              "enum": [
+                "concise",
+                "detailed"
+              ],
               "description": "Defaults to 'concise' (stack <=10 frames, logs <=20 lines). Use 'detailed' only when the concise view is insufficient."
             }
           },
@@ -77,7 +86,9 @@
       },
       {
         "name": "qa-debug_qa_request_give_up",
-        "tags": ["qa-debug"],
+        "tags": [
+          "qa-debug"
+        ],
         "toolReferenceName": "qaRequestGiveUp",
         "displayName": "QA Debug: Request Give Up",
         "modelDescription": "Marks the paused Mocha test as a final failure and lets Mocha proceed to the next test. The held browser is released and the MCP gate closes. Reversible only by re-running the suite. Callers should invoke this when the failure is genuine and no retry is warranted (e.g., the asserted product behavior is wrong and requires a fix in source). The supplied reason is surfaced verbatim in the chat notification, the Test Explorer annotation, and the audit log. Returns: { decision: 'give_up', accepted_at_ms }. Errors: NO_ACTIVE_PAUSE when no pause is active; SESSION_NOT_FOUND when session_id is stale; PAUSE_ALREADY_RESOLVED when another caller committed the verb first.",
@@ -97,13 +108,18 @@
               "description": "Free-text rationale (1–2 sentences) surfaced to the QA verbatim. State the root cause concretely."
             }
           },
-          "required": ["session_id", "reason"],
+          "required": [
+            "session_id",
+            "reason"
+          ],
           "additionalProperties": false
         }
       },
       {
         "name": "qa-debug_qa_propose_mark_passed",
-        "tags": ["qa-debug"],
+        "tags": [
+          "qa-debug"
+        ],
         "toolReferenceName": "qaProposeMarkPassed",
         "displayName": "QA Debug: Propose Mark Passed",
         "modelDescription": "Proposes marking the failing test as passed without re-running. Callers should reserve this for environmental flake signals (upstream API hiccup, transient infra error, known-broken staging fixture). Callers MUST NOT invoke when the failing assertion's value is derived from production code paths — that is a real bug and should follow qa_request_give_up or a fix-and-retry. The supplied rationale is what the QA reads when deciding; be specific and falsifiable (e.g., \"intermittent 503 from auth-service at 14:03; subsequent /healthz returns 200\"). VS Code surfaces a Continue/Cancel confirmation chip before this tool's body runs; user Continue commits via DecisionRouter, user Cancel returns status: 'rejected'. Returns: { proposal_id, status: 'accepted' | 'rejected' }. Errors: NO_ACTIVE_PAUSE when no pause is active; SESSION_NOT_FOUND when session_id is stale; PAUSE_ALREADY_RESOLVED when the user (or another caller) committed via the Test Explorer button before the chip Continue landed.",
@@ -123,13 +139,18 @@
               "description": "Specific, falsifiable rationale the human reads verbatim. Cite concrete signals (timestamps, log lines, observed behavior) — not \"looks flaky\"."
             }
           },
-          "required": ["session_id", "rationale"],
+          "required": [
+            "session_id",
+            "rationale"
+          ],
           "additionalProperties": false
         }
       },
       {
         "name": "qa-debug_qa_propose_abort_suite",
-        "tags": ["qa-debug"],
+        "tags": [
+          "qa-debug"
+        ],
         "toolReferenceName": "qaProposeAbortSuite",
         "displayName": "QA Debug: Propose Abort Suite",
         "modelDescription": "Proposes aborting the remaining Mocha suite. VS Code surfaces a Continue/Cancel confirmation chip before this tool's body runs. Destroys remaining test work in the current run. Callers should reserve this for cases where continuing the suite is clearly wasted effort: global misconfiguration (wrong staging URL, missing seed data), license/credential failures that block every downstream test, or catastrophic infra outage. NOT for a single failed assertion. Returns: { proposal_id, status: 'accepted' | 'rejected' }. Errors: NO_ACTIVE_PAUSE when no pause is active; SESSION_NOT_FOUND when session_id is stale.",
@@ -149,13 +170,18 @@
               "description": "Specific rationale citing the cross-test signal (e.g., \"all tests fail at fixture seed: pg_connection_refused\")."
             }
           },
-          "required": ["session_id", "rationale"],
+          "required": [
+            "session_id",
+            "rationale"
+          ],
           "additionalProperties": false
         }
       },
       {
         "name": "qa-debug_qa_discover_chromes",
-        "tags": ["qa-debug"],
+        "tags": [
+          "qa-debug"
+        ],
         "toolReferenceName": "qaDiscoverChromes",
         "displayName": "QA Debug: Discover Chromes",
         "modelDescription": "Re-probes a user-supplied list of ports for active Chrome CDP endpoints, then replaces the current pause's available_chromes with the result. Use when qa_get_failure_context.available_chromes is empty (defaults unreachable) OR when the previously-selected Chrome appears dead (e.g., playwright-mcp returns \"target closed\"). Callers MUST ask the user for the port list — do NOT guess or scan. Side-effects on the active pause: REPLACES available_chromes; CLEARS selected_cdp_port IFF the prior selection's port is not present in the new list. Callers must call qa_select_chrome after this tool to commit a selection. Idempotent: calling twice with the same ports yields the same available_chromes result. Returns: { available_chromes: [{port, ws_url, page_titles}, ...], selection_cleared }. Errors: NO_ACTIVE_PAUSE; INVALID_PORT (any port outside 1024-65535); NO_CHROMES_FOUND (none of the supplied ports responded — re-ask the user or surface the framework launch failure).",
@@ -172,19 +198,28 @@
             },
             "ports": {
               "type": "array",
-              "items": { "type": "number", "minimum": 1024, "maximum": 65535 },
+              "items": {
+                "type": "number",
+                "minimum": 1024,
+                "maximum": 65535
+              },
               "minItems": 1,
               "maxItems": 8,
               "description": "Integer port numbers (1024-65535) the test framework launched Chrome on."
             }
           },
-          "required": ["session_id", "ports"],
+          "required": [
+            "session_id",
+            "ports"
+          ],
           "additionalProperties": false
         }
       },
       {
         "name": "qa-debug_qa_select_chrome",
-        "tags": ["qa-debug"],
+        "tags": [
+          "qa-debug"
+        ],
         "toolReferenceName": "qaSelectChrome",
         "displayName": "QA Debug: Select Chrome",
         "modelDescription": "Commits the chosen Chrome from available_chromes as the pause's active browser. After this tool returns, qa_get_failure_context will surface cdp_ws_url populated with the selected chrome's URL, and the extension will register playwright-mcp against it. Until this commits, cdp_ws_url is null and playwright-mcp is NOT registered. If available_chromes.length === 1 you may select that port without asking the user. If length >= 2, ask the user which chrome (use page_titles for context) and call with their pick. Idempotent within a pause: calling twice with different ports replaces the selection and re-registers playwright-mcp at the new endpoint. Returns: { cdp_ws_url, port, page_titles }. Errors: NO_ACTIVE_PAUSE; SESSION_NOT_FOUND; INVALID_PORT (port not in current available_chromes — call qa_discover_chromes first if the framework rev'd ports).",
@@ -204,21 +239,72 @@
               "description": "Port from available_chromes[].port (the user's pick)."
             }
           },
-          "required": ["session_id", "port"],
+          "required": [
+            "session_id",
+            "port"
+          ],
           "additionalProperties": false
         }
       }
     ],
     "commands": [
-      { "command": "qa-debug.runFixture", "title": "QA Debug: Run Fixture Suite", "category": "QA Debug" },
-      { "command": "qa-debug.cancelRun", "title": "QA Debug: Cancel Running Suite", "category": "QA Debug", "enablement": "qa-debug.running", "icon": "$(debug-stop)" },
-      { "command": "qa-debug.markPassed", "title": "QA Debug: Mark Paused Test as Passed", "category": "QA Debug", "enablement": "qa-debug.paused", "icon": "$(pass)" },
-      { "command": "qa-debug.giveUp", "title": "QA Debug: Give Up on Paused Test", "category": "QA Debug", "enablement": "qa-debug.paused", "icon": "$(stop-circle)" },
-      { "command": "qa-debug.openChatForPaused", "title": "QA Debug: Ask Copilot About This Failure", "category": "QA Debug", "enablement": "qa-debug.paused", "icon": "$(comment-discussion)" },
-      { "command": "qa-debug.selectChrome", "title": "QA Debug: Select Chrome for Paused Test", "category": "QA Debug", "enablement": "qa-debug.paused", "icon": "$(list-selection)" },
-      { "command": "qa-debug.enterChromePorts", "title": "QA Debug: Enter Chrome Debug Ports", "category": "QA Debug", "enablement": "qa-debug.paused", "icon": "$(question)" },
-      { "command": "qa-debug.smokeTestMessageRetention", "title": "QA Debug: Smoke — TestMessage Retention", "category": "QA Debug" },
-      { "command": "qa-debug.checkForUpdates", "title": "QA Debug: Check for Updates", "category": "QA Debug" }
+      {
+        "command": "qa-debug.runFixture",
+        "title": "QA Debug: Run Fixture Suite",
+        "category": "QA Debug"
+      },
+      {
+        "command": "qa-debug.cancelRun",
+        "title": "QA Debug: Cancel Running Suite",
+        "category": "QA Debug",
+        "enablement": "qa-debug.running",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "qa-debug.markPassed",
+        "title": "QA Debug: Mark Paused Test as Passed",
+        "category": "QA Debug",
+        "enablement": "qa-debug.paused",
+        "icon": "$(pass)"
+      },
+      {
+        "command": "qa-debug.giveUp",
+        "title": "QA Debug: Give Up on Paused Test",
+        "category": "QA Debug",
+        "enablement": "qa-debug.paused",
+        "icon": "$(stop-circle)"
+      },
+      {
+        "command": "qa-debug.openChatForPaused",
+        "title": "QA Debug: Ask Copilot About This Failure",
+        "category": "QA Debug",
+        "enablement": "qa-debug.paused",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "qa-debug.selectChrome",
+        "title": "QA Debug: Select Chrome for Paused Test",
+        "category": "QA Debug",
+        "enablement": "qa-debug.paused",
+        "icon": "$(list-selection)"
+      },
+      {
+        "command": "qa-debug.enterChromePorts",
+        "title": "QA Debug: Enter Chrome Debug Ports",
+        "category": "QA Debug",
+        "enablement": "qa-debug.paused",
+        "icon": "$(question)"
+      },
+      {
+        "command": "qa-debug.smokeTestMessageRetention",
+        "title": "QA Debug: Smoke — TestMessage Retention",
+        "category": "QA Debug"
+      },
+      {
+        "command": "qa-debug.checkForUpdates",
+        "title": "QA Debug: Check for Updates",
+        "category": "QA Debug"
+      }
     ],
     "configuration": {
       "title": "QA Debug Companion",
@@ -237,16 +323,38 @@
     },
     "menus": {
       "view/title": [
-        { "command": "qa-debug.cancelRun", "when": "view == workbench.view.testing && qa-debug.running && !qa-debug.paused", "group": "navigation@1" }
+        {
+          "command": "qa-debug.cancelRun",
+          "when": "view == workbench.view.testing && qa-debug.running && !qa-debug.paused",
+          "group": "navigation@1"
+        }
       ],
       "testing/message/content": [
-        { "command": "qa-debug.markPassed",  "when": "testMessage == qaDebugPaused" },
-        { "command": "qa-debug.giveUp",      "when": "testMessage == qaDebugPaused" }
+        {
+          "command": "qa-debug.markPassed",
+          "when": "testMessage == qaDebugPaused"
+        },
+        {
+          "command": "qa-debug.giveUp",
+          "when": "testMessage == qaDebugPaused"
+        }
       ],
       "testing/item/context": [
-        { "command": "qa-debug.openChatForPaused", "when": "testId in qa-debug.pausedTestIds", "group": "inline@1" },
-        { "command": "qa-debug.markPassed",        "when": "testId in qa-debug.pausedTestIds", "group": "inline@2" },
-        { "command": "qa-debug.giveUp",            "when": "testId in qa-debug.pausedTestIds", "group": "inline@3" }
+        {
+          "command": "qa-debug.openChatForPaused",
+          "when": "testId in qa-debug.pausedTestIds",
+          "group": "inline@1"
+        },
+        {
+          "command": "qa-debug.markPassed",
+          "when": "testId in qa-debug.pausedTestIds",
+          "group": "inline@2"
+        },
+        {
+          "command": "qa-debug.giveUp",
+          "when": "testId in qa-debug.pausedTestIds",
+          "group": "inline@3"
+        }
       ]
     }
   },
