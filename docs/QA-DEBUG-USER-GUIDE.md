@@ -103,13 +103,14 @@ That's it.
 
 ## Picking the right browser (if you're asked)
 
-Some test setups open more than one Chrome window. If the tool can't figure out which one to attach to, it will ask:
+Most of the time you won't be. The tool finds the failing test's browser on its own and attaches to it.
 
-1. A pop-up asks for the **Chrome debug ports** your test used.
-2. Type the port numbers, like `9222, 9223`.
-3. If more than one browser shows up, pick the one whose page title matches your failing test.
+You'll only see a prompt in two cases:
 
-If you don't know the ports, ask your test lead. It's a one-time setup per project.
+- **It found several browsers.** A picker appears listing them by page title. Pick the one that matches your failing test. (Or just tell Copilot in chat which one, and it can pick for you.)
+- **It found none.** A box asks for the **Chrome debug ports** your test framework uses. Type them comma-separated, like `22135, 22136`. The tool checks those ports and attaches.
+
+If you don't know the ports, ask your test lead; it's a one-time thing per project. You can also re-open either prompt any time from the Command Palette: **"QA Debug: Select Chrome for Paused Test"** and **"QA Debug: Enter Chrome Debug Ports"**.
 
 ---
 
@@ -149,6 +150,27 @@ All commands live under the `QA Debug:` prefix in the Command Palette (`Cmd+Shif
 - **Select Chrome for Paused Test**: pick which browser to attach to.
 - **Enter Chrome Debug Ports**: tell the tool which ports your test framework used.
 - **Check for Updates**: look for a newer release by hand.
+
+---
+
+## How it finds the browser (the technical bit, skip if you don't care)
+
+*For test leads and developers. If you're just running tests, ignore this. The tool handles it for you.*
+
+When a test fails, the extension doesn't guess a browser URL. It **discovers** the live Chrome over the DevTools Protocol (CDP):
+
+1. **Probe.** It checks a short list of debug ports (default **`22135` and `22136`**) by fetching `http://localhost:<port>/json/version` and `/json/list` (500 ms timeout each, in parallel). Every port that answers becomes a candidate, tagged with its open page titles.
+2. **Select.**
+   - 1 candidate → attached automatically, no prompt.
+   - 2 or more → you (or Copilot) pick one.
+   - 0 → you're asked for the ports, which it then re-probes.
+3. **Attach.** Only *after* a browser is selected does the extension point playwright-mcp at it. Until then nothing is connected, so Copilot can't attach to the wrong window.
+
+**Using different ports.** If your framework launches Chrome on other ports, set the `QA_DEBUG_CDP_PORTS` environment variable (comma-separated, e.g. `QA_DEBUG_CDP_PORTS=9222,9223`) before launching VS Code. No spec, `.mocharc`, or launch-flag edits needed.
+
+> The old `QA_DEBUG_CDP_WS_URL` variable is gone. If you still have it set, the tool warns once on startup; switch to `QA_DEBUG_CDP_PORTS` instead.
+
+In short: **probe ports → pick a browser → attach.** No hard-coded URLs, and it re-discovers on every pause, so a restarted browser just works.
 
 ---
 
