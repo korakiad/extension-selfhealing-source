@@ -74,7 +74,7 @@ export interface StartSuiteRunOptions {
   specs?: readonly vscode.Uri[];
   /** Test selection used by qa-hooks to mark matching tests with the grep marker. */
   runSelection?: RunSelection;
-  /** v5.5 C2 — wired to mocha child via SIGTERM in SessionManager. */
+  /** v5.5 C2 — wired to a Ctrl-C-style process-group interrupt in SessionManager. */
   cancellationToken?: vscode.CancellationToken;
 }
 

@@ -30,7 +30,7 @@ export function registerRunStatusBar(
   );
   item.name = 'QA Debug — Running suite indicator';
   item.text = '$(debug-stop) Cancel Suite';
-  item.tooltip = 'QA Debug: cancel the running fixture suite (SIGTERM mocha).';
+  item.tooltip = 'QA Debug: cancel the running fixture suite — interrupts mocha and the browser it launched (like Ctrl-C).';
   item.command = 'qa-debug.cancelRun';
 
   const api: RunStatusBar = {

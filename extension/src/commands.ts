@@ -1,8 +1,10 @@
 /**
  * qa-debug.* commands per `extension/package.json contributes.commands`:
  *  - qa-debug.runFixture          — spawn the fixture suite (entry point)
- *  - qa-debug.cancelRun           — SIGTERM the active mocha child (recover from
- *                                   wrong-fixture selection mid-run)
+ *  - qa-debug.cancelRun           — interrupt the active run's whole process
+ *                                   group (mocha + launched browser), Ctrl-C
+ *                                   style; recover from a wrong-fixture pick
+ *                                   mid-run
  *  - qa-debug.giveUp              — commit give_up (reversible; no UI confirm)
  *  - qa-debug.markPassed          — commit mark_passed (irreversible; UI confirm
  *                                   for proposals, showInputBox prompt for cold clicks
@@ -60,7 +62,7 @@ async function runFixtureCmd(deps: CommandDeps): Promise<void> {
 
 /**
  * Recover from a wrong-fixture selection without waiting for mocha to fail.
- * Modal confirm because SIGTERM aborts every test in the current run.
+ * Modal confirm because the cancel aborts every test in the current run.
  */
 async function cancelRunCmd(deps: CommandDeps): Promise<void> {
   const choice = await vscode.window.showWarningMessage(

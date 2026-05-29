@@ -46,6 +46,7 @@ import { startCdpDownloadShim, type CdpShim } from './cdp-download-shim.js';
 import type { DecisionRouter } from './decision-router.js';
 import type { QaDebugMcpProvider } from './mcp-provider.js';
 import { appendInfo, createChildLogPump } from './output-channel.js';
+import { signalProcessGroup } from './process-group-kill.js';
 import type { PauseStatusBar } from './pause-status-bar.js';
 import type { MementoPauseStore } from './pause-store.js';
 import type { RunStatusBar } from './run-status-bar.js';
@@ -130,6 +131,11 @@ function buildAlternationGrep(selection: RunSelection): string {
 
 const HEARTBEAT_MS = Number(process.env.QA_DEBUG_HEARTBEAT_MS ?? 5_000);
 
+// PLAN-stop-button-process-group-kill — grace window between the polite group
+// signal (SIGINT, = Ctrl-C) and the hard SIGKILL escalation. Env override for
+// tests so they don't wait the full default.
+const KILL_GRACE_MS = Number(process.env.QA_DEBUG_KILL_GRACE_MS ?? 3_000);
+
 // v5.2 §2.1: absolute-path resolution for bundled hook + reporter. Resolved
 // once at module load from the extension's own location via createRequire.
 // fs.existsSync guard catches VSIX-misdeploy at extension activation (clearer
@@ -191,6 +197,12 @@ interface ActiveRun {
   mochaBin: string;
   /** Set by cancelActiveRun() so onMochaExit can attribute the exit to the user. */
   userCancelled: boolean;
+  /**
+   * PLAN-stop-button-process-group-kill — armed by terminateRun() after the
+   * polite group SIGINT; fires a group SIGKILL if the child hasn't exited
+   * within KILL_GRACE_MS. Cleared in onMochaExit().
+   */
+  killEscalationTimer?: NodeJS.Timeout;
 }
 
 export interface RunFixtureSuiteOptions {
@@ -211,9 +223,9 @@ export interface RunFixtureSuiteOptions {
    */
   runSelection?: RunSelection;
   /**
-   * v5.5 C2 — wired to `child.kill('SIGTERM')` on cancellation. The
-   * heartbeat-abandon path in qa-hooks resolves the IPC decision so the
-   * child exits cleanly.
+   * v5.5 C2 — wired to terminateRun() on cancellation (PLAN-stop-button-process-
+   * group-kill): a Ctrl-C-equivalent SIGINT to the whole process group, with a
+   * SIGKILL escalation if it hangs.
    */
   cancellationToken?: vscode.CancellationToken;
 }
@@ -333,11 +345,16 @@ export class SessionManager {
   /** Tear down everything; called from extension deactivate. */
   async dispose(): Promise<void> {
     if (this.activeRun) {
-      try {
-        this.activeRun.child.kill('SIGTERM');
-      } catch {
-        // best-effort
+      // PLAN-stop-button-process-group-kill — deactivate can't await the grace
+      // timer, so terminateRun's SIGINT is followed by an immediate group SIGKILL
+      // to avoid orphaning the launched browser when VS Code is closing.
+      const run = this.activeRun;
+      run.userCancelled = true;
+      this.terminateRun(run, 'extension deactivate');
+      if (run.child.pid != null) {
+        signalProcessGroup(run.child.pid, 'SIGKILL', (m) => appendInfo(this.deps.channel, m));
       }
+      clearTimeout(run.killEscalationTimer);
       this.activeRun = undefined;
       void vscode.commands.executeCommand('setContext', 'qa-debug.running', false);
       this.deps.runStatusBar.hide();
@@ -426,32 +443,22 @@ export class SessionManager {
       `\n──── mocha spawn ${new Date().toISOString()} cwd=${opts.cwd} ────`,
     );
     this.deps.mochaChannel.appendLine(`args=${JSON.stringify(args)}`);
+    // PLAN-stop-button-process-group-kill — `detached: true` makes the child a
+    // process-group leader (PID == PGID) so its descendants (the launched
+    // Electron / OpenFin / Chrome, any framework worker) inherit the group and
+    // a single group-signal reaches them all, the way a terminal Ctrl-C does.
+    // We deliberately do NOT unref() — exit is still tracked via child.on('exit').
     const child = spawn(opts.mochaBin, args, {
       cwd: opts.cwd,
       stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
       env,
+      detached: true,
     });
     child.stdout?.on('data', createChildLogPump(this.deps.mochaChannel, 'stdout'));
     child.stderr?.on('data', createChildLogPump(this.deps.mochaChannel, 'stderr'));
     // Reveal the channel without stealing focus so a stalled run is one click
     // (or already visible) instead of a scavenger hunt through the dropdown.
     this.deps.mochaChannel.show(/* preserveFocus */ true);
-
-    // v5.5 C2 — Test Explorer Cancel button reaches the mocha child via SIGTERM.
-    // The heartbeat-abandon path in qa-hooks resolves any open decision so the
-    // child exits cleanly; per §4.5 test #5 the exit log lands before the next
-    // heartbeat would have fired.
-    opts.cancellationToken?.onCancellationRequested(() => {
-      appendInfo(
-        this.deps.channel,
-        `[session-manager] cancellation requested; SIGTERM mocha pid=${child.pid}`,
-      );
-      try {
-        child.kill('SIGTERM');
-      } catch {
-        // already exited
-      }
-    });
 
     const connection = new JsonRpcConnection(nodeIpcTransport(child));
     const run: ActiveRun = {
@@ -467,6 +474,16 @@ export class SessionManager {
     this.activeRun = run;
     void vscode.commands.executeCommand('setContext', 'qa-debug.running', true);
     this.deps.runStatusBar.show();
+
+    // v5.5 C2 — Test Explorer native stop button. PLAN-stop-button-process-group-kill:
+    // route through terminateRun so the whole group (mocha + launched browser +
+    // workers) gets the Ctrl-C-equivalent SIGINT, with SIGKILL escalation. Mark
+    // userCancelled so onMochaExit attributes the exit to the user. Registered
+    // after `run` is built so the closure can reference it.
+    opts.cancellationToken?.onCancellationRequested(() => {
+      run.userCancelled = true;
+      this.terminateRun(run, 'Test Explorer cancellation token');
+    });
 
     this.wireConnection(run);
 
@@ -618,6 +635,10 @@ export class SessionManager {
     for (const timer of run.heartbeatTimers.values()) clearInterval(timer);
     run.heartbeatTimers.clear();
     run.pendingSessions.clear();
+    // PLAN-stop-button-process-group-kill — child exited (cleanly or via the
+    // polite SIGINT) before the grace window; cancel the pending SIGKILL.
+    clearTimeout(run.killEscalationTimer);
+    run.killEscalationTimer = undefined;
 
     if (this.activeRun === run) {
       this.activeRun = undefined;
@@ -629,7 +650,8 @@ export class SessionManager {
   }
 
   /**
-   * User-initiated cancel: SIGTERM the active mocha child. Returns false when
+   * User-initiated cancel: interrupt the active run's whole process group
+   * (Ctrl-C-equivalent SIGINT, then SIGKILL escalation). Returns false when
    * there is no active run. Cleanup (heartbeats, decision abandonment, context
    * keys) flows through the existing child.on('exit') → onMochaExit path.
    */
@@ -637,16 +659,47 @@ export class SessionManager {
     const run = this.activeRun;
     if (!run) return false;
     run.userCancelled = true;
+    this.terminateRun(run, reason);
+    return true;
+  }
+
+  /**
+   * PLAN-stop-button-process-group-kill — the single chokepoint for tearing a
+   * run down. Sends a Ctrl-C-equivalent SIGINT to the whole process group now,
+   * and arms a SIGKILL escalation in case the group ignores or hangs on it
+   * (e.g. a framework SIGINT handler blocked on the paused browser). The
+   * escalation is cancelled in onMochaExit if the child exits within the grace
+   * window. Idempotent: re-entry while a timer is armed only logs.
+   */
+  private terminateRun(run: ActiveRun, reason: string): void {
+    const pid = run.child.pid;
+    if (pid == null) {
+      // Spawn never produced a PID (failed before fork); child.on('error') owns
+      // that path. Nothing to signal.
+      return;
+    }
+    if (run.killEscalationTimer) {
+      appendInfo(
+        this.deps.channel,
+        `[session-manager] terminate re-entry pid=${pid} reason="${reason}" (escalation already armed)`,
+      );
+      return;
+    }
     appendInfo(
       this.deps.channel,
-      `[session-manager] user cancel requested; SIGTERM mocha pid=${run.child.pid} reason="${reason}"`,
+      `[session-manager] terminate run; SIGINT process group pid=-${pid} reason="${reason}"`,
     );
-    try {
-      run.child.kill('SIGTERM');
-    } catch {
-      // already exited; onMochaExit will fire (or already has)
-    }
-    return true;
+    signalProcessGroup(pid, 'SIGINT', (m) => appendInfo(this.deps.channel, m));
+    run.killEscalationTimer = setTimeout(() => {
+      // Guard: only escalate if THIS run is still the active, un-exited one — a
+      // recycled PID could otherwise belong to a different group by now.
+      if (this.activeRun !== run) return;
+      appendInfo(
+        this.deps.channel,
+        `[session-manager] group still alive after ${KILL_GRACE_MS}ms; SIGKILL process group pid=-${pid}`,
+      );
+      signalProcessGroup(pid, 'SIGKILL', (m) => appendInfo(this.deps.channel, m));
+    }, KILL_GRACE_MS);
   }
 
   /**
