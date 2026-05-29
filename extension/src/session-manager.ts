@@ -41,6 +41,7 @@ import {
 } from '@qa-debug/mocha-hooks/protocol';
 import type { ChromeSelection, PausePayload } from '@qa-debug/pause-store-types';
 
+import { sanitizeChildEnv } from './child-env.js';
 import { startCdpDownloadShim, type CdpShim } from './cdp-download-shim.js';
 import type { DecisionRouter } from './decision-router.js';
 import type { QaDebugMcpProvider } from './mcp-provider.js';
@@ -377,7 +378,21 @@ export class SessionManager {
 
     // v5.16 PLAN-cdp-port-discovery — QA_DEBUG_CDP_WS_URL is gone. qa-hooks
     // probes effectiveCdpPorts() per pause; ports override via QA_DEBUG_CDP_PORTS.
-    const env: NodeJS.ProcessEnv = { ...process.env };
+    //
+    // PLAN-env-leak-scrub — do NOT pass the ext-host env verbatim. VS Code runs
+    // the extension host with ELECTRON_RUN_AS_NODE=1; copied into the child it is
+    // inherited by the Electron/OpenFin app the test launches, which then boots
+    // in Node mode (no GUI, no CDP port). sanitizeChildEnv strips that family
+    // (mirrors VS Code's own sanitizeProcessEnvironment). PATH + the Node IPC fd
+    // are preserved, so mocha + the JSON-RPC channel are unaffected.
+    const { env, removed } = sanitizeChildEnv(process.env);
+    if (removed.length > 0) {
+      appendInfo(
+        this.deps.channel,
+        `[session-manager] scrubbed ${removed.length} leaked env var(s) from mocha child: ` +
+          `[${removed.join(', ')}]`,
+      );
+    }
 
     // v5.17 — anchored alternation `--grep`. Each entry is its own anchored
     // alternative so exact-match semantics hold (siblings under the same
