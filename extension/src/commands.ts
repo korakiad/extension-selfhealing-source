@@ -4,21 +4,21 @@
  *  - qa-debug.cancelRun           — interrupt the active run's whole process
  *                                   group (mocha + launched browser), Ctrl-C
  *                                   style; recover from a wrong-fixture pick
- *                                   mid-run
- *  - qa-debug.giveUp              — commit give_up (reversible; no UI confirm)
- *  - qa-debug.markPassed          — commit mark_passed (irreversible; UI confirm
- *                                   for proposals, showInputBox prompt for cold clicks
- *                                   per S4_DESIGN §8.2 case 3 [R#3-B1c])
+ *                                   mid-run AND the way to end an inspection
+ *                                   pause (the test stands at its Mocha outcome)
  *  - qa-debug.openChatForPaused   — open Copilot Chat with a prefilled prompt
  *                                   describing the pause (CR-v5.6 §2.2 / §3.8.1)
+ *  - qa-debug.selectChrome / .enterChromePorts — Mode C chrome selection
+ *
+ * Verdict commands removed (2026-05-31): qa-debug.giveUp / qa-debug.markPassed
+ * are gone. A pause is a pure inspection hold; there is no pass/fail verdict to
+ * commit. The QA re-runs from Test Explorer ▶ or ends the run with Stop.
  */
 
 import * as vscode from 'vscode';
 
-import type { DecisionKind } from '@qa-debug/mocha-hooks/protocol';
 import type { PausePayload } from '@qa-debug/pause-store-types';
 
-import type { DecisionRouter } from './decision-router.js';
 import { probePorts } from './lm-tools/probe-ports.js';
 import { appendInfo } from './output-channel.js';
 import type { MementoPauseStore } from './pause-store.js';
@@ -26,7 +26,6 @@ import type { SessionManager } from './session-manager.js';
 
 export interface CommandDeps {
   pauseStore: MementoPauseStore;
-  decisionRouter: DecisionRouter;
   sessionManager: SessionManager;
   channel: vscode.OutputChannel;
 }
@@ -38,8 +37,6 @@ export function registerCommands(context: vscode.ExtensionContext, deps: Command
   context.subscriptions.push(
     vscode.commands.registerCommand('qa-debug.runFixture', () => runFixtureCmd(deps)),
     vscode.commands.registerCommand('qa-debug.cancelRun', () => cancelRunCmd(deps)),
-    vscode.commands.registerCommand('qa-debug.giveUp', () => giveUpCmd(deps)),
-    vscode.commands.registerCommand('qa-debug.markPassed', () => markPassedCmd(deps)),
     vscode.commands.registerCommand('qa-debug.openChatForPaused', () => openChatForPausedCmd(deps)),
     // v5.16 PLAN-cdp-port-discovery §3.14 — status-bar surfaces these when
     // available_chromes.length !== 1 (no auto-select happened).
@@ -77,67 +74,6 @@ async function cancelRunCmd(deps: CommandDeps): Promise<void> {
     return;
   }
   appendInfo(deps.channel, '[command] cancelRun invoked');
-}
-
-/** give_up commits immediately through DecisionRouter. */
-async function giveUpCmd(deps: CommandDeps): Promise<void> {
-  let active;
-  try {
-    active = deps.pauseStore.getActivePause()!;
-  } catch {
-    void vscode.window.showErrorMessage('QA Debug: no Mocha test is currently paused.');
-    return;
-  }
-  const reason = 'user clicked Give Up in Test Explorer';
-  const ok = deps.decisionRouter.commit(active.session_id, 'give_up' as DecisionKind, reason, 'human');
-  if (!ok) {
-    void vscode.window.showErrorMessage('QA Debug: Pause already resolved.');
-  }
-}
-
-/** Mark-passed: proposal-driven path or cold-click with showInputBox guard. */
-async function markPassedCmd(deps: CommandDeps): Promise<void> {
-  let active;
-  try {
-    active = deps.pauseStore.getActivePause()!;
-  } catch {
-    void vscode.window.showErrorMessage('QA Debug: no Mocha test is currently paused.');
-    return;
-  }
-
-  const proposal = deps.pauseStore.pollProposal(active.session_id);
-  let rationale: string;
-  let by: 'human' | 'agent';
-
-  if (proposal && proposal.kind === 'mark_passed') {
-    // Proposal-driven: the agent already supplied the rationale; the human is
-    // committing it. We still attribute `by: 'human'` because the commit was a
-    // human click; the agent's role is captured in the proposal/rationale text.
-    rationale = proposal.rationale;
-    by = 'human';
-  } else {
-    // Cold click — prompt for a rationale. validateInput blocks OK-with-empty
-    // per S4_DESIGN §8.2 case 3 [R#3-B1c]; Escape returns undefined.
-    const input = await vscode.window.showInputBox({
-      prompt: 'Why mark this test as passed?',
-      placeHolder: 'Specific, falsifiable rationale — what makes this a real pass?',
-      ignoreFocusOut: true,
-      validateInput: (v) =>
-        v.trim().length === 0 ? 'Rationale required (be specific and falsifiable)' : null,
-    });
-    if (!input?.trim()) {
-      // User cancelled (Escape) — leave the pause open. validateInput should
-      // have prevented empty-OK, but belt-and-suspenders.
-      return;
-    }
-    rationale = input.trim();
-    by = 'human';
-  }
-
-  const ok = deps.decisionRouter.commit(active.session_id, 'mark_passed', rationale, by);
-  if (!ok) {
-    void vscode.window.showErrorMessage('QA Debug: Pause already resolved.');
-  }
 }
 
 /**
@@ -232,10 +168,17 @@ export function buildPausePrompt(pause: PausePayload): string {
     `Failure: ${pause.failing_assertion}`,
     chromeLine,
     '',
-    'Step 0 — Check with the user first. Before launching into investigation, ask once: ' +
-      '"Want me to investigate end-to-end, or is there a specific angle you\'d like me to look at first ' +
-      "(a suspect file / hypothesis / 'just check network' / 'just look at the DOM')?\" " +
-      'Wait for their reply. Skip this ask if their opening turn already named an angle, or if the session is in autopilot / auto-approve mode.',
+    'Step 0 — Ask ONE short question up front, then branch on the answer. Present it as an interactive choice popup with exactly two ' +
+      'SELECTABLE options the user clicks (a two-button / quick-pick popup is good here — use it). Do NOT ask an open-ended, free-text ' +
+      '"how would you like me to proceed? / enter your answer" question — that is the wrong shape; the answer is always one of these two:',
+    '  Option A — "Let me find the root cause for you": you\'re not sure why it failed — I\'ll investigate the held browser end-to-end, ' +
+      'diagnose the cause, and come back with the fix.',
+    '  Option B — "You already know the root cause": tell me what\'s wrong and the change you want, and I\'ll make the edit for you — ' +
+      'no investigation needed.',
+    'Then branch: pick A (or a vague "go ahead" / "you find it") → run the full Step 1 → Step 2 investigation. ' +
+      'Pick B → skip the browser investigation; ground with Step 1 only if you need file/line context, then propose or apply the edit they describe. ' +
+      'Skip the ask when their opening turn already decides it (they described the root cause → treat as B; they asked you to investigate → treat as A), ' +
+      'or in autopilot / auto-approve mode (default to A).',
     '',
     'GROUND TRUTH IS THE LIVE BROWSER, NOT THE SOURCE FILES.',
     "Do NOT shortcut by reading the page's .html / .js / .css source to guess what's on screen. " +
@@ -251,6 +194,11 @@ export function buildPausePrompt(pause: PausePayload): string {
       'match on the browser_ suffix, not on prefix. ' +
       'There is no connect/attach tool — the extension already pointed playwright-mcp at the held browser when the chrome was selected; just call browser_snapshot to inspect it, ' +
       'then use the rest of the playwright-mcp surface — DOM, targeted in-page JS, screenshots, plus interactive tools when read-only can\'t disambiguate. Prefer read-only moves first.',
+    'VERIFY playwright-mcp is visible before you investigate. Once the chrome selection has committed, confirm at least one browser_* tool ' +
+      'actually appears in your tool registry (match on the browser_ suffix, any prefix). If NO browser_* tool is present, playwright-mcp is not ' +
+      'running — do NOT silently fall back to reading source. Stop and tell the user: "I can\'t see the playwright-mcp browser tools, so I can\'t ' +
+      'inspect the live browser. The extension launches playwright-mcp via `npx @playwright/mcp@latest`; please make sure MCP support is enabled in ' +
+      'this editor and the playwright-mcp server is installed/trusted/started, then ask me to retry." Wait until they confirm it\'s available before continuing.',
     'Network and console reads are OFF-BY-DEFAULT in beta (noisy framework / HMR / dev-telemetry / hot-reload chatter drowns the signal). ' +
       'browser_network_requests and browser_console_messages (and browser_evaluate(console.*)-style log scrapes) are on-demand — ' +
       'call them only after the user explicitly asks ("show the console", "check the network", "any failed requests?"), ' +
@@ -259,20 +207,16 @@ export function buildPausePrompt(pause: PausePayload): string {
     'Do NOT call browser_close or browser_navigate — both destroy the post-failure state the pause is preserving.',
     '',
     'Default: propose, don\'t edit. Surface file:line / tool-call shape in chat and wait for the user before applying ' +
-      'any file edit, running state-changing playwright-mcp tools (anything that clicks, fills, navigates, presses keys), ' +
-      'or qa-debug_qa_propose_* / qa_request_* verbs. ' +
+      'any file edit or running state-changing playwright-mcp tools (anything that clicks, fills, navigates, presses keys). ' +
       'Skip the ask gate only if the session is in autopilot / auto-approve mode. ' +
       'Read-only investigation (DOM snapshot, targeted evaluate, screenshot) never needs the gate.',
     '',
-    'Keep the loop open. After proposing a fix (code-bug / test-bug), ASK explicitly: "Anything else you\'d like me to investigate, ' +
-      'add to the fix, or check before you re-run (e.g., pull network/console if you want them, check a sibling spec, ' +
-      'add a defensive guard)?" Do not end the turn after the diff. The user often has follow-up steps — let them voice those ' +
-      'before you stop. End the turn only when the user signals done or pivots.',
-    'Two-stage commit for qa-debug verbs. Before calling qa-debug_qa_propose_mark_passed (env-flake), ' +
-      'qa-debug_qa_propose_abort_suite (structural), or qa-debug_qa_request_give_up (ambiguous / out-of-scope), ' +
-      'first surface your classification and ASK: "Leaning <verb> because <rationale>. Before I commit, anything else to investigate or pull?" ' +
-      'Wait for the user. Only after they confirm do you call the verb and end the turn. ' +
-      'Do NOT jump to give_up — it is the last reach, not the first. The pause + playwright-mcp loop stays hot for follow-up investigation.',
+    'This pause is a pure inspection hold — there is NO pass/fail verdict to commit and no decision verb to call. ' +
+      'After investigating, propose any source/spec fix in chat (file:line + the change), then ASK explicitly: ' +
+      '"Anything else you\'d like me to investigate or check before you re-run (pull network/console, check a sibling spec, ' +
+      'add a defensive guard)?" Do not end the turn after the diff — the user often has follow-up steps. ' +
+      'When they\'re done they re-run from Test Explorer ▶ (a fresh pause arrives if it still fails) or end the run with Stop. ' +
+      'You never commit a result; the test stands at its natural Mocha outcome.',
   ].join('\n');
 }
 

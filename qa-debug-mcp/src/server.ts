@@ -1,31 +1,31 @@
 /**
  * qa-debug MCP server factory — transport-agnostic library.
  *
- * Consumed by:
- *  - `bin/stdio.ts` — the S3 stdio CLI used by the MCP Inspector and the
+ * Stdio/evals only. The extension no longer hosts qa-debug over MCP: as of
+ * v5.14 the qa-debug verbs are VS Code Language Model Tools
+ * (extension/src/lm-tools/), and the old in-extension `qa-debug-server.ts`
+ * Streamable-HTTP host was deleted. This factory now backs only:
+ *  - `bin/stdio.ts` — the stdio CLI used by the MCP Inspector and the
  *    `evals/` engagement harness (paired with `InMemoryPauseStore`).
- *  - `extension/src/qa-debug-server.ts` — the S4 in-extension Streamable HTTP
- *    host (paired with `MementoPauseStore` over `ExtensionContext.globalState`).
  *
- * The factory takes an options object (per S4_DESIGN.md §5.3 — was positional
- * `createQaDebugServer(store)` in S3; S4 BREAKS that signature to
- * `createQaDebugServer({ pauseStore })`).
+ * The factory takes an options object: `createQaDebugServer({ pauseStore })`.
  *
- * Self-identifies as MCP server name `qa-debug` per ARCHITECTURE §3.2 — the
- * agent-facing FQN is `qa-debug:qa_*` per Skills best-practices.
+ * Self-identifies as MCP server name `qa-debug`.
  */
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { PauseStore } from '@qa-debug/pause-store-types';
-import { toFailureContextView } from '@qa-debug/pause-store-types';
+import {
+  discoverChromesCore,
+  noChromesFoundMessage,
+  selectChromeCore,
+  toFailureContextView,
+} from '@qa-debug/pause-store-types';
 
 import { errorResult, QaToolError } from '@qa-debug/tool-contracts/errors';
 import {
   qa_discover_chromes,
   qa_get_failure_context,
-  qa_propose_abort_suite,
-  qa_propose_mark_passed,
-  qa_request_give_up,
   qa_select_chrome,
 } from '@qa-debug/tool-contracts/tools';
 
@@ -41,25 +41,6 @@ export interface CreateQaDebugServerOptions {
    * wire-side log. Optional so the stdio CLI (Inspector/evals) can ignore it.
    */
   onInvocation?: (toolName: string, sessionId: string) => void;
-  /**
-   * Commits a request-verb decision (give_up) through the live DecisionRouter
-   * so the mocha child's pending `decision.await` IPC resolves and the
-   * extension's pause-status-bar + Test Explorer hide.
-   *
-   * Returns `true` when a pending callback was found and resolved; `false`
-   * when the pause was already committed by another caller (UI-button race
-   * or stale-resume cleanup beat the agent by milliseconds). The server
-   * surfaces `false` to the caller as PAUSE_ALREADY_RESOLVED.
-   *
-   * Optional so the stdio CLI (Inspector / evals stub) can omit it; the
-   * in-memory PauseStore + scripted scenarios in evals have no live mocha
-   * decision.await IPC to drive.
-   */
-  onDecision?: (
-    sessionId: string,
-    kind: 'give_up',
-    reason: string,
-  ) => boolean;
 }
 
 export function createQaDebugServer(options: CreateQaDebugServerOptions): McpServer {
@@ -113,71 +94,6 @@ export function createQaDebugServer(options: CreateQaDebugServerOptions): McpSer
     },
   );
 
-  server.registerTool(
-    qa_request_give_up.name,
-    {
-      description: qa_request_give_up.description,
-      inputSchema: qa_request_give_up.inputSchemaZod,
-      annotations: qa_request_give_up.annotations,
-    },
-    async (args) => {
-      logInvocation(qa_request_give_up.name, args);
-      try {
-        const input = qa_request_give_up.inputSchemaZod.parse(args);
-        // v5.6 — store-first ordering: validate session_id + clear proposal
-        // slot before reaching for live runtime state.
-        const result = store.recordDecision(input.session_id, 'give_up', input.reason);
-        if (options.onDecision) {
-          const committed = options.onDecision(input.session_id, 'give_up', input.reason);
-          if (!committed) {
-            throw new QaToolError(
-              'PAUSE_ALREADY_RESOLVED',
-              'Pause already resolved by another caller; no give_up effect was triggered. ' +
-                'Call qa_get_failure_context (omit session_id) to ground in current state, ' +
-                'then re-classify if a new pause arrived. Do NOT re-issue against the stale session_id.',
-            );
-          }
-        }
-        return {
-          content: [{ type: 'text' as const, text: JSON.stringify(result) }],
-          structuredContent: result as unknown as { [key: string]: unknown },
-        };
-      } catch (err) {
-        return errorResult(err);
-      }
-    },
-  );
-
-  for (const tool of [
-    qa_propose_mark_passed,
-    qa_propose_abort_suite,
-  ] as const) {
-    const kind: 'mark_passed' | 'abort_suite' =
-      tool === qa_propose_mark_passed ? 'mark_passed' : 'abort_suite';
-    server.registerTool(
-      tool.name,
-      {
-        description: tool.description,
-        inputSchema: tool.inputSchemaZod,
-        annotations: tool.annotations,
-      },
-      async (args) => {
-        logInvocation(tool.name, args);
-        try {
-          const input = tool.inputSchemaZod.parse(args);
-          const proposal = store.proposeAction(input.session_id, kind, input.rationale);
-          const payload = { proposal_id: proposal.proposal_id, status: proposal.status };
-          return {
-            content: [{ type: 'text' as const, text: JSON.stringify(payload) }],
-            structuredContent: payload,
-          };
-        } catch (err) {
-          return errorResult(err);
-        }
-      },
-    );
-  }
-
   // ---- v5.16 PLAN-cdp-port-discovery — Mode C discovery + selection ----
 
   server.registerTool(
@@ -191,20 +107,20 @@ export function createQaDebugServer(options: CreateQaDebugServerOptions): McpSer
       logInvocation(qa_discover_chromes.name, args);
       try {
         const input = qa_discover_chromes.inputSchemaZod.parse(args);
-        // Validate session-id BEFORE the network probe so a stale session
-        // surfaces synchronously as NO_ACTIVE_PAUSE / SESSION_NOT_FOUND
-        // rather than after a 2.5s parallel timeout.
-        store.getActivePause(input.session_id);
-        const chromes = await probePorts(input.ports);
-        if (chromes.length === 0) {
-          throw new QaToolError(
-            'NO_CHROMES_FOUND',
-            `None of the supplied ports [${input.ports.join(', ')}] responded to /json/version. ` +
-              'Re-ask the user, or surface the framework launch failure.',
-          );
+        // Shared core validates the session BEFORE the network probe (stale
+        // session → NO_ACTIVE_PAUSE / SESSION_NOT_FOUND synchronously, not after
+        // a 2.5s parallel timeout) and only replaces available_chromes when ≥1
+        // responded.
+        const { available_chromes, selection_cleared } = await discoverChromesCore(
+          store,
+          probePorts,
+          input.session_id,
+          input.ports,
+        );
+        if (available_chromes.length === 0) {
+          throw new QaToolError('NO_CHROMES_FOUND', noChromesFoundMessage(input.ports));
         }
-        const { cleared } = await store.replaceAvailableChromes(input.session_id, chromes);
-        const payload = { available_chromes: chromes, selection_cleared: cleared };
+        const payload = { available_chromes, selection_cleared };
         return {
           content: [{ type: 'text' as const, text: JSON.stringify(payload) }],
           structuredContent: payload as unknown as { [key: string]: unknown },
@@ -226,15 +142,10 @@ export function createQaDebugServer(options: CreateQaDebugServerOptions): McpSer
       logInvocation(qa_select_chrome.name, args);
       try {
         const input = qa_select_chrome.inputSchemaZod.parse(args);
-        const selection = await store.recordChromeSelection(input.session_id, input.port, 'agent');
-        const payload = {
-          cdp_ws_url: selection.cdp_ws_url,
-          port: selection.port,
-          page_titles: selection.page_titles,
-        };
+        const payload = await selectChromeCore(store, input.session_id, input.port, 'agent');
         return {
           content: [{ type: 'text' as const, text: JSON.stringify(payload) }],
-          structuredContent: payload,
+          structuredContent: payload as unknown as { [key: string]: unknown },
         };
       } catch (err) {
         return errorResult(err);

@@ -3,13 +3,14 @@
  * `toFailureContextView` projection used by qa-debug-mcp tool handlers.
  *
  * Consumed by:
- *  - `qa-debug-mcp/` (S3 stdio CLI; backs with InMemoryPauseStore for evals/Inspector)
- *  - `extension/`    (S4 in-extension MCP host; backs with MementoPauseStore over
+ *  - `qa-debug-mcp/` (stdio CLI; backs with InMemoryPauseStore for evals/Inspector)
+ *  - `extension/`    (LM-tool host; backs with MementoPauseStore over
  *                     ExtensionContext.globalState)
  *
- * The PauseStore-error contract (NO_ACTIVE_PAUSE / SESSION_NOT_FOUND) is owned
- * by qa-debug-mcp/src/errors.ts; this package only defines the data shapes and
- * read/write surface.
+ * The PauseStore-error contract (NO_ACTIVE_PAUSE / SESSION_NOT_FOUND / etc.) is
+ * owned by @qa-debug/tool-contracts/errors; this package only defines the data
+ * shapes, the read/write surface, and the host-agnostic verb cores at the foot
+ * of this file.
  */
 
 export type ProposalKind = 'mark_passed' | 'abort_suite';
@@ -19,7 +20,8 @@ export type ProposalStatus = 'none' | 'awaiting_human' | 'accepted' | 'rejected'
  * v5.16 PLAN-cdp-port-discovery — chrome lifecycle ownership.
  *  - 'framework' — test framework launched chrome (Mode C; only path in current PLAN).
  *  - 'companion' — qa-debug-companion launched chrome (legacy migrated mode='B' only).
- * qa_propose_close_browser declines on 'framework' per propose-close-browser.ts.
+ * The companion never closes a framework-owned chrome; there is no close-browser
+ * verb (the framework's own teardown disposes it).
  */
 export type ChromeOwner = 'framework' | 'companion';
 
@@ -231,6 +233,75 @@ export function toFailureContextView(
     };
   }
   return view;
+}
+
+// ---- v5.16 PLAN-cdp-port-discovery — host-agnostic verb cores ----
+// The extension LM-tool host and the stdio MCP host call these so the
+// discover/select store logic + the NO_CHROMES_FOUND message live in one place.
+// `probePorts` is injected (rather than imported) so this package stays a leaf
+// — it does not depend on @qa-debug/mocha-hooks (where the probe lives). The
+// NO_CHROMES_FOUND throw stays in each host (via QaToolError, which both already
+// import) so this package also stays free of @qa-debug/tool-contracts; the core
+// signals "none found" by returning an empty `available_chromes` WITHOUT having
+// mutated the store (preserving the prior throw-before-replace behavior).
+
+export type ProbePortsFn = (ports: readonly number[]) => Promise<AvailableChrome[]>;
+
+export interface DiscoverChromesResult {
+  available_chromes: AvailableChrome[];
+  selection_cleared: boolean;
+}
+
+/**
+ * Validate the session, re-probe `ports`, and (only when ≥1 chrome responded)
+ * replace the pause's available_chromes. On an empty probe result the store is
+ * left untouched and `selection_cleared` is false — the caller surfaces
+ * NO_CHROMES_FOUND. `store.getActivePause` throws NO_ACTIVE_PAUSE /
+ * SESSION_NOT_FOUND for a stale session before any network call.
+ */
+export async function discoverChromesCore(
+  store: PauseStore,
+  probePorts: ProbePortsFn,
+  sessionId: string,
+  ports: readonly number[],
+): Promise<DiscoverChromesResult> {
+  store.getActivePause(sessionId);
+  const available_chromes = await probePorts(ports);
+  if (available_chromes.length === 0) {
+    return { available_chromes, selection_cleared: false };
+  }
+  const { cleared } = await store.replaceAvailableChromes(sessionId, available_chromes);
+  return { available_chromes, selection_cleared: cleared };
+}
+
+/** Standard NO_CHROMES_FOUND message — shared so both hosts word it identically. */
+export function noChromesFoundMessage(ports: readonly number[]): string {
+  return (
+    `None of the supplied ports [${ports.join(', ')}] responded to /json/version. ` +
+    'Re-ask the user, or surface the framework launch failure.'
+  );
+}
+
+export interface SelectChromeResult {
+  cdp_ws_url: string;
+  port: number;
+  page_titles: string[];
+}
+
+/** Commit a chrome selection and project the host-facing result fields.
+ *  `store.recordChromeSelection` validates the port (throws INVALID_PORT). */
+export async function selectChromeCore(
+  store: PauseStore,
+  sessionId: string,
+  port: number,
+  source: ChromeSelectionSource = 'agent',
+): Promise<SelectChromeResult> {
+  const selection = await store.recordChromeSelection(sessionId, port, source);
+  return {
+    cdp_ws_url: selection.cdp_ws_url,
+    port: selection.port,
+    page_titles: selection.page_titles,
+  };
 }
 
 /**

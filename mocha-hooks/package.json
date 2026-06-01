@@ -7,6 +7,7 @@
   "exports": {
     ".": { "types": "./src/qa-hooks.ts", "default": "./dist/qa-hooks.js" },
     "./protocol": { "types": "./src/protocol.ts", "default": "./dist/protocol.js" },
+    "./probe": { "types": "./src/probe.ts", "default": "./dist/probe.js" },
     "./register": { "types": "./src/qa-hooks.ts", "default": "./dist/qa-hooks.js" },
     "./qa-reporter": { "types": "./src/qa-reporter.ts", "default": "./dist/qa-reporter.js" }
   },

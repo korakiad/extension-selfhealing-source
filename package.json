@@ -8,7 +8,7 @@
   },
   "packageManager": "pnpm@10.7.0",
   "scripts": {
-    "build": "pnpm -r --filter ./mocha-hooks --filter ./qa-debug-mcp --filter ./extension run build",
+    "build": "pnpm -r run build",
     "build:hooks": "pnpm --filter ./mocha-hooks run build",
     "build:mcp": "pnpm --filter ./qa-debug-mcp run build",
     "build:extension": "pnpm --filter ./extension run build",

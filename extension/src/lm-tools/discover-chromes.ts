@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 
+import { discoverChromesCore, noChromesFoundMessage } from '@qa-debug/pause-store-types';
 import { QaToolError } from '@qa-debug/tool-contracts/errors';
 
 import { auditLog, jsonResult, toErrorResult, type LmToolDeps } from './base.js';
@@ -17,7 +18,8 @@ interface Input {
  * replaces the active pause's available_chromes. Side-effect on prior
  * selection: cleared iff prior port not in new list (fires onChromeDeselected
  * via pauseStore.replaceAvailableChromes). Callers must call qa_select_chrome
- * after this to commit a new selection.
+ * after this to commit a new selection. The store logic is shared with the
+ * stdio MCP host via discoverChromesCore.
  */
 export class DiscoverChromesTool implements vscode.LanguageModelTool<Input> {
   constructor(private readonly deps: LmToolDeps) {}
@@ -29,21 +31,16 @@ export class DiscoverChromesTool implements vscode.LanguageModelTool<Input> {
     auditLog(this.deps.auditChannel, TOOL_NAME, options.input);
     try {
       const { session_id, ports } = options.input;
-      // Validates session is active; throws NO_ACTIVE_PAUSE / SESSION_NOT_FOUND.
-      this.deps.pauseStore.getActivePause(session_id);
-      const chromes = await probePorts(ports);
-      if (chromes.length === 0) {
-        throw new QaToolError(
-          'NO_CHROMES_FOUND',
-          `None of the supplied ports [${ports.join(', ')}] responded to /json/version. ` +
-            'Re-ask the user, or surface the framework launch failure.',
-        );
+      const { available_chromes, selection_cleared } = await discoverChromesCore(
+        this.deps.pauseStore,
+        probePorts,
+        session_id,
+        ports,
+      );
+      if (available_chromes.length === 0) {
+        throw new QaToolError('NO_CHROMES_FOUND', noChromesFoundMessage(ports));
       }
-      const { cleared } = await this.deps.pauseStore.replaceAvailableChromes(session_id, chromes);
-      return jsonResult({
-        available_chromes: chromes,
-        selection_cleared: cleared,
-      });
+      return jsonResult({ available_chromes, selection_cleared });
     } catch (err) {
       if (err instanceof QaToolError) {
         return toErrorResult(new Error(`${err.code}: ${err.message}`));

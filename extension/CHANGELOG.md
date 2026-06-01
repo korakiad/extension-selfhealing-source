@@ -7,6 +7,36 @@ loosely based on [Keep a Changelog](https://keepachangelog.com/).
 in-extension update checker only surfaces **stable** releases, so QAs on a beta
 stay quiet until `0.0.5` ships.
 
+## 0.0.5-beta.14 — 2026-06-01
+
+### Added
+- **Chrome auto-discovery + selection (CDP port probe).** The companion now
+  probes the test framework's Chrome DevTools endpoint, surfaces the discovered
+  browsers (with page titles, tab count, and a best-effort runtime label), and
+  lets you pick which one `playwright-mcp` attaches to — via the Test Explorer UI
+  or the new `qa_discover_chromes` / `qa_select_chrome` agent tools. When the
+  default debug ports come up empty you can supply the framework's ports directly.
+
+### Changed
+- **A pause is now a pure inspection hold — the verdict verbs are gone.** The
+  `mark-passed`, `give-up`, and `abort-suite` tools were removed: there is no
+  pass/fail verdict for the agent to commit. You investigate the held browser,
+  the agent proposes a source/spec fix, and you re-run from Test Explorer ▶ (a
+  fresh pause arrives if it still fails) or end the run with **Stop**. The test
+  stands at its natural Mocha outcome.
+- **Chat prompt opens straight into a clear choice.** On a pause the agent now
+  asks one focused either/or — *"let me find the root cause"* vs *"you already
+  know it, I'll just make the edit"* — as a selectable popup, instead of an
+  open-ended free-text question.
+- **Agent verifies `playwright-mcp` is actually reachable** before investigating,
+  and tells you to enable/install it if the `browser_*` tools aren't visible —
+  rather than silently falling back to reading source.
+
+### Internal
+- Collapsed the three byte-identical CDP port-probe copies into a single shared
+  module, and made the `languageModelTools` block in `package.json` a derived
+  artifact generated from the `tool-contracts` SSOT (with a build-time drift guard).
+
 ## 0.0.5-beta.13 — 2026-05-29
 
 ### Fixed

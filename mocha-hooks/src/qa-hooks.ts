@@ -4,7 +4,6 @@
 // See ARCHITECTURE.md §3.1 / §3.5 and mocha-hooks/README.md.
 
 import {
-  AvailableChrome,
   DecisionAwaitParams,
   DecisionResult,
   FinalDecisionParams,
@@ -17,13 +16,13 @@ import {
   inProcBus,
   nodeIpcTransport,
 } from './protocol';
+import { probePorts } from './probe.js';
 
 // ---------- v5.16 PLAN-cdp-port-discovery — Mode C discovery ----------
 // Hard-coded defaults match consumer org's framework launch convention. Overridable
 // via QA_DEBUG_CDP_PORTS env (comma-separated). Hard-code accepted as transitional
 // trade-off per PLAN Q7 — promote to workspace setting before external distribution.
 const DEFAULT_CDP_PORTS: readonly number[] = [22135, 22136] as const;
-const PROBE_TIMEOUT_MS = 500;
 
 function effectiveCdpPorts(): readonly number[] {
   const env = process.env.QA_DEBUG_CDP_PORTS?.trim();
@@ -44,57 +43,8 @@ function effectiveCdpPorts(): readonly number[] {
   return valid.length > 0 ? valid : DEFAULT_CDP_PORTS;
 }
 
-// PLAN-runtime-tab-orient — best-effort runtime classification from the
-// /json/version User-Agent. MUST stay identical to the copies in
-// extension/src/lm-tools/probe-ports.ts and qa-debug-mcp/src/probe-ports.ts.
-export function classifyRuntime(
-  userAgent: string | undefined,
-): 'chrome' | 'electron' | 'openfin' | 'unknown' {
-  if (!userAgent) return 'unknown';
-  if (/openfin/i.test(userAgent)) return 'openfin';
-  if (/electron/i.test(userAgent)) return 'electron';
-  return 'chrome';
-}
-
-async function probeChromePort(port: number): Promise<AvailableChrome | null> {
-  try {
-    const versionRes = await fetch(`http://localhost:${port}/json/version`, {
-      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
-    });
-    if (!versionRes.ok) return null;
-    const versionJson = (await versionRes.json()) as {
-      webSocketDebuggerUrl?: string;
-      'User-Agent'?: string;
-    };
-    const wsRaw = versionJson.webSocketDebuggerUrl;
-    if (!wsRaw || typeof wsRaw !== 'string') return null;
-    const wsUrl = normalizeCdpWsUrl(wsRaw);
-    const runtime = classifyRuntime(versionJson['User-Agent']);
-    // /json/list → tab_count (orient trigger) + page_titles (display, capped 5).
-    // Best-effort: on failure keep tab_count=1 (we know ≥1 since /json/version probed).
-    let pageTitles: string[] = [];
-    let tabCount = 1;
-    try {
-      const listRes = await fetch(`http://localhost:${port}/json/list`, {
-        signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
-      });
-      if (listRes.ok) {
-        const listJson = (await listRes.json()) as Array<{ title?: string; type?: string }>;
-        const pages = listJson.filter((p) => p.type === 'page');
-        tabCount = pages.length;
-        pageTitles = pages
-          .filter((p) => typeof p.title === 'string')
-          .map((p) => p.title as string)
-          .slice(0, 5);
-      }
-    } catch {
-      // /json/list optional; missing titles/count is not fatal.
-    }
-    return { port, ws_url: wsUrl, page_titles: pageTitles, tab_count: tabCount, runtime };
-  } catch {
-    return null;
-  }
-}
+// classifyRuntime / probeChromePort / probePorts now live in ./probe (the single
+// shared copy used by qa-hooks, the extension LM tools, and the stdio MCP server).
 
 // Heartbeat interval expected from the parent (extension / oracle). Parent should
 // send a `heartbeat` notification every HEARTBEAT_MS while it's still alive holding
@@ -253,17 +203,6 @@ function serializeError(err: unknown): SerializedError {
   return { name: 'NonError', message: message || '(non-Error throw with no representation)' };
 }
 
-/**
- * Normalize CDP WebSocket host so downstream clients (playwright-mcp) can connect.
- * Chrome bound to `0.0.0.0` (INADDR_ANY) reports back `ws://0.0.0.0:<port>/...` from
- * getPuppeteer().wsEndpoint(); some clients refuse `0.0.0.0` as a target. Substitute
- * the loopback address so the URL is dialable. The actual TCP socket on 0.0.0.0
- * accepts connections from 127.0.0.1 by definition.
- */
-function normalizeCdpWsUrl(raw: string): string {
-  return raw.replace(/^ws:\/\/0\.0\.0\.0(:|\/)/, 'ws://127.0.0.1$1');
-}
-
 function fileLineFromStack(stack: string | undefined): number | null {
   if (!stack) return null;
   const m = stack.match(/:(\d+):\d+\)?$/m);
@@ -352,12 +291,9 @@ async function qaAfterEachImpl(this: Mocha.Context): Promise<void> {
   // See Mocha docs: https://mochajs.org/#timeouts ("To disable timeouts ... pass 0").
   this.timeout(0);
 
-  // v5.16 Mode C — parallel probe effectiveCdpPorts() per pause.
+  // v5.16 Mode C — parallel probe effectiveCdpPorts() per pause (shared ./probe).
   const ports = effectiveCdpPorts();
-  const probeResults = await Promise.all(ports.map((p) => probeChromePort(p)));
-  const availableChromes: AvailableChrome[] = probeResults.filter(
-    (r): r is AvailableChrome => r !== null,
-  );
+  const availableChromes = await probePorts(ports);
   const foundPorts = availableChromes.map((c) => c.port);
   const failedPorts = ports.filter((p) => !foundPorts.includes(p));
   process.stderr.write(

@@ -3,9 +3,9 @@
  *
  * Reads MementoPauseStore.peekActivePause() (returns undefined cleanly when
  * no pause exists). Streams deterministic Markdown context for the active
- * pause and surfaces a Give Up commit button. The user re-runs the test
- * via the standard ▶ Run button in Test Explorer once the underlying
- * cause is addressed.
+ * pause. A pause is a pure inspection hold — there is no verdict to commit;
+ * the user re-runs the test via the standard ▶ Run button in Test Explorer
+ * once the underlying cause is addressed, or ends the run with Stop.
  */
 
 import * as vscode from 'vscode';
@@ -45,15 +45,11 @@ export function registerQaDebugChatParticipant(
         `The qa-debug + playwright-mcp tool surface is registered — I can attach to the held browser and inspect it ` +
         `(DOM, targeted in-page JS, screenshots). ` +
         `_Network and console reads are on-demand in beta — ask if you want them pulled._\n\n` +
-        `Tell me what you'd like to investigate. After I propose a fix I'll ask if there's anything else to investigate or add ` +
-        `before you re-run; I won't jump to give-up. I'll propose edits in chat before applying them unless the session is on autopilot. ` +
-        `When the underlying issue is addressed, re-run the test via ▶ Run in Test Explorer.`,
+        `This pause is a pure inspection hold — there's no pass/fail verdict to commit. ` +
+        `Tell me what you'd like to investigate. After I propose a fix I'll ask if there's anything else to look at ` +
+        `before you re-run; I'll propose edits in chat before applying them unless the session is on autopilot. ` +
+        `When the underlying issue is addressed, re-run the test via ▶ Run in Test Explorer, or end the run with Stop.`,
     );
-
-    stream.button({
-      command: 'qa-debug.giveUp',
-      title: 'Give Up (commit)',
-    });
 
     appendInfo(channel, `[chat-participant] handled request for session=${active.session_id}`);
     return {};

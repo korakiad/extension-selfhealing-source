@@ -78,12 +78,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.lm.registerMcpServerDefinitionProvider('qa-debug.mcp-servers', mcpProvider),
   );
 
-  // CR-v5.14 §3.1 — register the six qa-debug LanguageModelTool classes. The
-  // per-tool `when: "qa-debug.paused"` clause in package.json gates visibility;
-  // these registrations are always live across activations.
+  // CR-v5.14 §3.1 — register the qa-debug LanguageModelTool classes
+  // (get_failure_context + discover/select chrome; verdict verbs removed
+  // 2026-05-31). The per-tool `when: "qa-debug.paused"` clause in package.json
+  // gates visibility; these registrations are always live across activations.
   registerQaDebugLmTools(context, {
     pauseStore,
-    decisionRouter,
     auditChannel: channel,
   });
 
@@ -203,7 +203,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     sessionManagerSingleton = sessionMgr;
     registerCommands(context, {
       pauseStore,
-      decisionRouter,
       sessionManager: sessionMgr,
       channel,
     });

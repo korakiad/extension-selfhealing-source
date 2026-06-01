@@ -129,8 +129,6 @@ function buildAlternationGrep(selection: RunSelection): string {
   return alts.length === 1 ? alts[0] : `(?:${alts.join('|')})`;
 }
 
-const HEARTBEAT_MS = Number(process.env.QA_DEBUG_HEARTBEAT_MS ?? 5_000);
-
 // PLAN-stop-button-process-group-kill — grace window between the polite group
 // signal (SIGINT, = Ctrl-C) and the hard SIGKILL escalation. Env override for
 // tests so they don't wait the full default.
@@ -197,6 +195,13 @@ interface ActiveRun {
   mochaBin: string;
   /** Set by cancelActiveRun() so onMochaExit can attribute the exit to the user. */
   userCancelled: boolean;
+  /**
+   * Set once pause teardown (clear store + context key + MCP gate + shim +
+   * finalize the Test Explorer item) has run for this run's active pause —
+   * whether via the `final_decision` notification (normal path) or the
+   * child-exit fallback in onMochaExit (kill / crash). Dedupes the two paths.
+   */
+  pauseToreDown: boolean;
   /**
    * PLAN-stop-button-process-group-kill — armed by terminateRun() after the
    * polite group SIGINT; fires a group SIGKILL if the child hasn't exited
@@ -470,6 +475,7 @@ export class SessionManager {
       cwd: opts.cwd,
       mochaBin: opts.mochaBin,
       userCancelled: false,
+      pauseToreDown: false,
     };
     this.activeRun = run;
     void vscode.commands.executeCommand('setContext', 'qa-debug.running', true);
@@ -495,8 +501,18 @@ export class SessionManager {
       this.onMochaExit(run);
     });
     child.on('error', (err) => {
-      appendInfo(this.deps.channel, `[session-manager] mocha spawn error: ${err.message}`);
-      void vscode.window.showErrorMessage(`QA Debug: mocha spawn error — ${err.message}`);
+      // `Channel closed` (ERR_IPC_CHANNEL_CLOSED) is the expected aftermath of
+      // killing the child mid-pause: onMochaExit resolves the dangling
+      // decision.await, whose JSON-RPC response can no longer reach the dead
+      // child. Log it, but don't alarm the user with an error toast for a
+      // teardown we initiated. Real spawn failures (ENOENT, etc.) still surface.
+      const benignClosedChannel =
+        (err as NodeJS.ErrnoException).code === 'ERR_IPC_CHANNEL_CLOSED' ||
+        /channel closed/i.test(err.message);
+      appendInfo(this.deps.channel, `[session-manager] mocha child error: ${err.message}`);
+      if (!benignClosedChannel) {
+        void vscode.window.showErrorMessage(`QA Debug: mocha spawn error — ${err.message}`);
+      }
     });
   }
 
@@ -591,15 +607,36 @@ export class SessionManager {
     connection.onNotification(METHOD.finalDecision, async (raw) => {
       const decision = FinalDecisionParams.parse(raw);
       const pause = this.peekPauseForFinalDecision(decision);
-      run.testHandle.recordDecision(decision, pause);
-
-      await this.deps.pauseStore.clearActivePause();
-      await vscode.commands.executeCommand('setContext', 'qa-debug.paused', false);
-      await refreshPausedTestIdsContext(this.deps.pauseStore);
-      this.deps.mcpProvider.setIdle();
-      // PLAN-cdp-electron-shim — pause ended; release the shim proxy port.
-      await this.stopCdpShim();
+      await this.teardownPause(run, decision, pause);
     });
+  }
+
+  /**
+   * Single chokepoint for ending an active pause: finalize the Test Explorer
+   * item (clears the ⏸ busy spinner), clear the pause store + `qa-debug.paused`
+   * context key, close the playwright-mcp gate, and release the CDP shim port.
+   *
+   * Called from two places:
+   *  - the `final_decision` IPC notification (normal commit via UI / agent verb);
+   *  - onMochaExit's fallback, when a killed / crashed child died before it could
+   *    send `final_decision` and the pause is still active.
+   * `run.pauseToreDown` dedupes the two so a final_decision that lands just
+   * before child-exit doesn't get a redundant second teardown.
+   */
+  private async teardownPause(
+    run: ActiveRun,
+    decision: FinalDecisionParams,
+    pause: PausePayload | undefined,
+  ): Promise<void> {
+    if (run.pauseToreDown) return;
+    run.pauseToreDown = true;
+    run.testHandle.recordDecision(decision, pause);
+    await this.deps.pauseStore.clearActivePause();
+    await vscode.commands.executeCommand('setContext', 'qa-debug.paused', false);
+    await refreshPausedTestIdsContext(this.deps.pauseStore);
+    this.deps.mcpProvider.setIdle();
+    // PLAN-cdp-electron-shim — pause ended; release the shim proxy port.
+    await this.stopCdpShim();
   }
 
   private peekPauseForFinalDecision(decision: FinalDecisionParams): PausePayload | undefined {
@@ -639,6 +676,26 @@ export class SessionManager {
     // polite SIGINT) before the grace window; cancel the pending SIGKILL.
     clearTimeout(run.killEscalationTimer);
     run.killEscalationTimer = undefined;
+
+    // Fallback pause teardown: the normal teardown rides the `final_decision`
+    // IPC notification, but a killed / crashed child dies before sending it,
+    // which previously left the pause store, the `qa-debug.paused` context key,
+    // the playwright-mcp gate, the CDP shim, and the Test Explorer ⏸ spinner all
+    // stuck. If a pause is still active here, tear it down with a synthesized
+    // give_up. No-op on the normal path (final_decision already set
+    // pauseToreDown / cleared the store).
+    const orphanPause = this.deps.pauseStore.peekActivePause();
+    if (orphanPause && !run.pauseToreDown) {
+      const synthetic: FinalDecisionParams = {
+        session_id: orphanPause.session_id,
+        kind: 'give_up',
+        reason: abandonReason,
+        by: 'hook',
+        full_title: orphanPause.full_title,
+        test_file: orphanPause.file,
+      };
+      await this.teardownPause(run, synthetic, orphanPause);
+    }
 
     if (this.activeRun === run) {
       this.activeRun = undefined;
@@ -791,5 +848,3 @@ function wireToStored(wire: WirePausePayload, sessionId: string): PausePayload {
     max_retries_remaining: 0,
   };
 }
-
-void HEARTBEAT_MS;

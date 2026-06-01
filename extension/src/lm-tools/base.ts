@@ -1,6 +1,6 @@
 /**
- * Shared types + small helpers for the six qa-debug LanguageModelTool classes.
- * Module-level deps (pauseStore, decisionRouter, channel) are passed into the
+ * Shared types + small helpers for the qa-debug LanguageModelTool classes.
+ * Module-level deps (pauseStore, channel) are passed into the
  * registerQaDebugLmTools entry point and stamped on each tool instance via
  * constructor injection.
  *
@@ -18,13 +18,11 @@
 
 import * as vscode from 'vscode';
 
-import type { DecisionRouter } from '../decision-router.js';
 import type { MementoPauseStore } from '../pause-store.js';
 import { appendInfo } from '../output-channel.js';
 
 export interface LmToolDeps {
   pauseStore: MementoPauseStore;
-  decisionRouter: DecisionRouter;
   auditChannel: vscode.OutputChannel;
 }
 

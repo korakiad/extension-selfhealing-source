@@ -3,12 +3,12 @@
  * per S4_DESIGN §7, extended for ARCHITECTURE-CR-v5.5 (test discovery +
  * selective run).
  *
- * Tri-state mapping (S4 §7.2 [R#2-B1]):
- *   passed         → run.passed
- *   failed         → run.failed (already in that state from pause-publish)
- *   marked-passed  → keep the failed TestMessage attached + set description
- *                    '(marked passed)' + transition run.passed + appendOutput
- *                    rationale row.
+ * Outcome rendering (verdict verbs removed 2026-05-31): a pause is a pure
+ * inspection hold, so there is no mark-passed override and no tri-state. A
+ * paused test stays `started` (⏸ busy) while held; when the pause ends — the
+ * only path now is the run being stopped, which synthesizes a give_up — the
+ * test is rendered `run.failed` (its natural Mocha outcome). The QA fixes the
+ * cause and re-runs from Test Explorer ▶.
  *
  * v5.5 — TestItem id formula (CR §2.3 / §3.8):
  *   File     = `${fileUri.toString()}`
@@ -665,7 +665,6 @@ export function createTestControllerWrapper(
             return;
           }
 
-          const durationMs = pause ? Date.now() - pause.paused_at_ms : 0;
           const reasonOrRationale = decision.reason;
           appendDecision(channel, {
             sessionId: decision.session_id,
@@ -675,47 +674,19 @@ export function createTestControllerWrapper(
             reasonOrRationale,
           });
 
-          switch (decision.kind) {
-            case 'mark_passed': {
-              item.description = '(marked passed)';
-              const msgs = failureMessages.get(item.id) ?? [];
-              const stickyMd = new vscode.MarkdownString(
-                `## Marked passed by ${decision.by}\n\n${reasonOrRationale}\n\n` +
-                  `_Original failure shown below for the audit trail._`,
-              );
-              stickyMd.isTrusted = false;
-              const stickyMsg = new vscode.TestMessage(stickyMd);
-              stickyMsg.contextValue = 'qaDebugMarkedPassed';
-              msgs.unshift(stickyMsg);
-              run.failed(item, msgs);
-              run.passed(item, durationMs);
-              run.appendOutput(
-                `✓ marked-passed by ${decision.by}: ${reasonOrRationale}\r\n`,
-                undefined,
-                item,
-              );
-              // CR-v5.6 §3.5.1 — clear pause-time busy. F-v5.6-b verifies
-              // the failed→passed transition produces no perceptible flash
-              // > 1 frame at 60Hz; if observed, re-sequence per I2#D.
-              item.busy = false;
-              break;
-            }
-            case 'give_up': {
-              // CR-v5.6 §3.5.1 (R6#A) — first-and-only `run.failed()` call
-              // in this path; pause-publish no longer reports failed. ✨
-              // appears here in its correct bibliographic context.
-              const giveUpMsgs = failureMessages.get(item.id) ?? [];
-              run.failed(item, giveUpMsgs);
-              run.appendOutput(
-                `✗ give-up by ${decision.by}: ${reasonOrRationale}\r\n`,
-                undefined,
-                item,
-              );
-              item.description = undefined;
-              item.busy = false;
-              break;
-            }
-          }
+          // Verdict verbs removed 2026-05-31 — a pause ends only when the run is
+          // stopped, which synthesizes a give_up. Render the test at its natural
+          // failed outcome (the failure was real); the QA fixes + re-runs. No
+          // mark-passed override, no tri-state.
+          const giveUpMsgs = failureMessages.get(item.id) ?? [];
+          run.failed(item, giveUpMsgs);
+          run.appendOutput(
+            `✗ pause ended (${decision.by}): ${reasonOrRationale}\r\n`,
+            undefined,
+            item,
+          );
+          item.description = undefined;
+          item.busy = false;
         },
 
         end: (): void => {

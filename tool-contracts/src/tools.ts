@@ -1,16 +1,22 @@
 /**
- * Source of truth for the 6 qa_* tool definitions.
+ * Source of truth for the qa_* tool definitions.
  * Imported by:
- *  - qa-debug-mcp.ts to register tools on the McpServer
+ *  - qa-debug-mcp server.ts to register tools on the McpServer (stdio/evals host)
+ *  - extension/tools/gen-lm-tools.mjs to generate package.json languageModelTools
  *  - @qa-debug/evals to build Anthropic.Tool[] for the engagement evals
  *
+ * Verdict verbs removed (2026-05-31): qa_propose_mark_passed, qa_request_give_up,
+ * and qa_propose_abort_suite are gone. A pause is now a pure inspection hold (a
+ * breakpoint): the agent investigates the held browser, proposes a fix in chat,
+ * and the QA re-runs from Test Explorer ▶ or ends the run with Stop. There is no
+ * agent- or human-committed pass/fail verdict — the test stands at its natural
+ * Mocha outcome. Surviving tools: get_failure_context (read-only grounding) +
+ * the discover/select chrome pair.
+ *
  * Description rules:
- *  - Third-person voice (ARCHITECTURE §3.2 R2#NB1; Skills best-practices "Always write in third person").
+ *  - Third-person voice (Skills best-practices "Always write in third person").
  *  - "Describe to a new hire" format: (i) when to call, (ii) return shape, (iii) ≥1 named error
  *    per anthropic.com/engineering/writing-tools-for-agents.
- *  - Disambiguates qa_propose_close_browser from playwright-mcp:browser_close to avoid
- *    overlap-induced distraction per Anthropic's "more tools don't always lead to better
- *    outcomes" warning in the same article.
  */
 
 import { z } from 'zod';
@@ -81,8 +87,9 @@ export const qa_get_failure_context: QaToolDef<{
     'cdp_ws_url (DERIVED from selection; null until a chrome is selected — see selection branching below), ' +
     'available_chromes: [{port, ws_url, page_titles, tab_count, runtime}, ...] (discovered via /json/version + /json/list probe at pause time; runtime is a best-effort chrome|electron|openfin|unknown label, tab_count is the page-target count), ' +
     "selected_cdp_port (null until qa_select_chrome commits), screenshot_path?, " +
-    'console_logs: { lines (<=100 inline; concise mode <=20), more_at? }, paused_for_ms, retry_count, max_retries_remaining, ' +
-    "last_proposal_status: 'none' | 'awaiting_human' | 'accepted' | 'rejected' for any in-flight qa_propose_* }. " +
+    'console_logs: { lines (<=100 inline; concise mode <=20), more_at? }, paused_for_ms, retry_count, max_retries_remaining }. ' +
+    'A pause is a pure inspection hold (a breakpoint): there is no pass/fail verdict to commit and no decision verb to call. ' +
+    'After investigating, propose any fix in chat; the QA re-runs from Test Explorer or ends the run with Stop. ' +
     'Chrome selection branching (v5.16 PLAN-cdp-port-discovery): ' +
     '(1) selected_cdp_port non-null AND cdp_ws_url non-null → selection already committed; playwright-mcp is auto-registered against the held browser — just call browser_snapshot (no attach step; cdp_ws_url is informational, not passed to any tool). ' +
     '(2) selected_cdp_port null AND available_chromes.length === 1 → call qa_select_chrome(session_id, available_chromes[0].port); no user confirmation needed. ' +
@@ -113,117 +120,6 @@ export const qa_get_failure_context: QaToolDef<{
   // readOnlyHint == false". openWorldHint=false: the tool's domain of
   // interaction is closed (pause store only).
   annotations: { readOnlyHint: true, openWorldHint: false },
-};
-
-export const qa_request_give_up: QaToolDef<{ session_id: string; reason: string }> = {
-  name: 'qa_request_give_up',
-  description:
-    'Marks the paused Mocha test as a final failure and lets Mocha proceed to the next test. The held browser is released and the MCP gate closes. ' +
-    'Reversible only by re-running the suite. ' +
-    'Callers should invoke this when the failure is genuine and no retry is warranted (e.g., the asserted product behavior is wrong and requires a fix in source). ' +
-    'The supplied reason is surfaced verbatim in the chat notification, the Test Explorer annotation, and the audit log. ' +
-    "Returns: { decision: 'give_up', accepted_at_ms }. " +
-    'Errors: NO_ACTIVE_PAUSE when no pause is active; SESSION_NOT_FOUND when session_id is stale; ' +
-    'PAUSE_ALREADY_RESOLVED when another caller committed the verb first.',
-  inputSchemaJson: {
-    type: 'object',
-    properties: {
-      session_id: { ...sessionIdProp, description: 'The session_id from the pause notification.' },
-      reason: {
-        type: 'string',
-        description:
-          'Free-text rationale (1–2 sentences) surfaced to the QA verbatim. State the root cause concretely.',
-      },
-    },
-    required: ['session_id', 'reason'],
-    additionalProperties: false,
-  },
-  inputSchemaZod: z.object({
-    session_id: z.string(),
-    reason: z.string(),
-  }),
-  // v5.6 — request verb (see qa_request_retry rationale): auto-commits via
-  // DecisionRouter; returns PAUSE_ALREADY_RESOLVED on lost-race.
-  annotations: {
-    readOnlyHint: false,
-    destructiveHint: false,
-    idempotentHint: false,
-    openWorldHint: false,
-  },
-};
-
-export const qa_propose_mark_passed: QaToolDef<{ session_id: string; rationale: string }> = {
-  name: 'qa_propose_mark_passed',
-  description:
-    'Proposes marking the failing test as passed without re-running. Does NOT commit. ' +
-    'Surfaces a confirmation button in the Test Explorer and the chat for the human to accept or reject. ' +
-    'Callers should reserve this for environmental flake signals (upstream API hiccup, transient infra error, known-broken staging fixture). ' +
-    "Callers MUST NOT invoke when the failing assertion's value is derived from production code paths — that is a real bug and should follow qa_request_give_up or a fix-and-retry. " +
-    'The supplied rationale is what the QA reads when deciding; be specific and falsifiable (e.g., "intermittent 503 from auth-service at 14:03; subsequent /healthz returns 200"). ' +
-    "After calling, the next correct step is to stop and report the proposal in chat; the verdict surfaces via qa_get_failure_context.last_proposal_status: 'accepted' | 'rejected'. " +
-    "Returns: { proposal_id, status: 'awaiting_human' }. " +
-    'Errors: NO_ACTIVE_PAUSE when no pause is active; SESSION_NOT_FOUND when session_id is stale.',
-  inputSchemaJson: {
-    type: 'object',
-    properties: {
-      session_id: { ...sessionIdProp, description: 'The session_id from the pause notification.' },
-      rationale: {
-        type: 'string',
-        description:
-          'Specific, falsifiable rationale the human reads verbatim. Cite concrete signals (timestamps, log lines, observed behavior) — not "looks flaky".',
-      },
-    },
-    required: ['session_id', 'rationale'],
-    additionalProperties: false,
-  },
-  inputSchemaZod: z.object({
-    session_id: z.string(),
-    rationale: z.string(),
-  }),
-  // v5.4 §2.3 — propose verb (see qa_request_retry rationale).
-  annotations: {
-    readOnlyHint: false,
-    destructiveHint: false,
-    idempotentHint: false,
-    openWorldHint: false,
-  },
-};
-
-export const qa_propose_abort_suite: QaToolDef<{ session_id: string; rationale: string }> = {
-  name: 'qa_propose_abort_suite',
-  description:
-    'Proposes aborting the remaining Mocha suite. Does NOT commit. Surfaces a confirmation button for the human. ' +
-    'Destroys remaining test work in the current run. ' +
-    'Callers should reserve this for cases where continuing the suite is clearly wasted effort: ' +
-    'global misconfiguration (wrong staging URL, missing seed data), license/credential failures that block every downstream test, ' +
-    'or catastrophic infra outage. NOT for a single failed assertion. ' +
-    'After calling, stop and report in chat; the verdict surfaces via qa_get_failure_context.last_proposal_status. ' +
-    "Returns: { proposal_id, status: 'awaiting_human' }. " +
-    'Errors: NO_ACTIVE_PAUSE when no pause is active; SESSION_NOT_FOUND when session_id is stale.',
-  inputSchemaJson: {
-    type: 'object',
-    properties: {
-      session_id: { ...sessionIdProp, description: 'The session_id from the pause notification.' },
-      rationale: {
-        type: 'string',
-        description:
-          'Specific rationale citing the cross-test signal (e.g., "all tests fail at fixture seed: pg_connection_refused").',
-      },
-    },
-    required: ['session_id', 'rationale'],
-    additionalProperties: false,
-  },
-  inputSchemaZod: z.object({
-    session_id: z.string(),
-    rationale: z.string(),
-  }),
-  // v5.4 §2.3 — propose verb (see qa_request_retry rationale).
-  annotations: {
-    readOnlyHint: false,
-    destructiveHint: false,
-    idempotentHint: false,
-    openWorldHint: false,
-  },
 };
 
 // ---- v5.16 PLAN-cdp-port-discovery — Mode C chrome discovery + selection ----
@@ -310,9 +206,6 @@ export const qa_select_chrome: QaToolDef<{ session_id: string; port: number }> =
 
 export const qaTools = [
   qa_get_failure_context,
-  qa_request_give_up,
-  qa_propose_mark_passed,
-  qa_propose_abort_suite,
   qa_discover_chromes,
   qa_select_chrome,
 ] as const;

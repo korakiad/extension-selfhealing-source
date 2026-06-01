@@ -3,11 +3,10 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Anthropic-style Skill / tool engagement evals. S3 lands the 6 scenarios; S5 adds the decision-tree alignment eval.",
+  "description": "Anthropic-style Skill / tool engagement evals. S3 lands the 6 engagement scenarios.",
   "scripts": {
     "build:check": "tsc -p tsconfig.json --noEmit",
     "engagement": "tsx src/engagement.ts",
-    "decision-tree": "tsx src/decision-tree.ts",
     "budget": "tsx src/budget.ts",
     "race-test": "tsx src/race-test.ts",
     "qa-reporter-test-err": "tsx src/qa-reporter-test-err.test.ts",

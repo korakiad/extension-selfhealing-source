@@ -23,11 +23,19 @@ await esbuild.build({
 });
 
 await Promise.all([
+  // Shared CDP probe — standalone bundle so extension/qa-debug-mcp can resolve
+  // `@qa-debug/mocha-hooks/probe`. Zero runtime deps (the `./protocol` import is
+  // type-only), so no `external` needed.
+  esbuild.build({
+    ...shared,
+    entryPoints: ['src/probe.ts'],
+    outfile: 'dist/probe.js',
+  }),
   esbuild.build({
     ...shared,
     entryPoints: ['src/qa-hooks.ts'],
     outfile: 'dist/qa-hooks.js',
-    external: ['mocha', './protocol'],
+    external: ['mocha', './protocol', './probe.js'],
   }),
   // qa-reporter must be loadable by mocha via `require(<path>)` returning the class
   // directly. With `export default Class`, esbuild's CJS output puts the class under
