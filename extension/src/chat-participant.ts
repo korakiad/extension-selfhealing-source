@@ -38,12 +38,15 @@ export function registerQaDebugChatParticipant(
       return {};
     }
 
+    const browserLine =
+      active.selected_cdp_port != null
+        ? `A Chrome is selected (port ${active.selected_cdp_port}) and playwright-mcp is registered against the held browser — I can inspect it (DOM, targeted in-page JS, screenshots). `
+        : `playwright-mcp isn't registered yet — a Chrome has to be selected first (the qa-debug skill handles this in Step 1b). Once that commits I can inspect the held browser (DOM, targeted in-page JS, screenshots). `;
     stream.markdown(
       `### Active pause: \`${active.test_title}\`\n\n` +
         `**File:** \`${active.file}\`${active.line ? ` (line ${active.line})` : ''}\n\n` +
         `**Failure:** ${active.failing_assertion}\n\n` +
-        `The qa-debug + playwright-mcp tool surface is registered — I can attach to the held browser and inspect it ` +
-        `(DOM, targeted in-page JS, screenshots). ` +
+        browserLine +
         `_Network and console reads are on-demand in beta — ask if you want them pulled._\n\n` +
         `This pause is a pure inspection hold — there's no pass/fail verdict to commit. ` +
         `Tell me what you'd like to investigate. After I propose a fix I'll ask if there's anything else to look at ` +

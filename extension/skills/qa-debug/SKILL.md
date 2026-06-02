@@ -34,7 +34,7 @@ Then branch:
 - **A** (or a vague *"go ahead"* / *"you find it"*) → run the full Step 1 → Step 2 investigation.
 - **B** → skip the browser investigation; ground with Step 1 only if you need file/line context, then propose or apply the edit they describe.
 
-Skip the ask when the opening turn already decides it (they described the root cause → treat as **B**; they asked you to investigate → treat as **A**), or in autopilot / auto-approve mode (default to **A**).
+Skip the ask only when the user's **own words** decide it (they described the root cause → treat as **B**; they explicitly told you to just go investigate → treat as **A**), or in autopilot / auto-approve mode (default to **A**). The prefilled launch message (*"A Mocha test just paused…"*) is the session entry point, **not** a user decision — do **not** read it as "asked you to investigate." On the first turn of a pause, run the Step 0 ask unless one of those genuine conditions holds.
 
 ## Step 1 — Ground in the failure
 

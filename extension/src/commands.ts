@@ -122,26 +122,21 @@ async function openChatForPausedCmd(deps: CommandDeps): Promise<void> {
 }
 
 export function buildPausePrompt(pause: PausePayload): string {
-  // v5.16 PLAN-cdp-port-discovery — cdp_ws_url is derived after a chrome
-  // selection commits; it is null until then. The prompt no longer inlines a
-  // (possibly stale) endpoint and instead tells the agent how to land on a
-  // dialable one via the new discover/select tools.
+  // The investigation workflow (Step 0 A/B branch, chrome discovery/selection,
+  // live-browser ground-truth, playwright-mcp visibility check, propose-don't-edit,
+  // pure-inspection-hold) lives ONCE in skills/qa-debug/SKILL.md and loads via
+  // progressive disclosure when this prompt matches the skill's description. This
+  // prompt carries only the per-pause data + an explicit skill invocation, so the
+  // workflow has a single source of truth and can't drift against the skill.
   const chromes = pause.available_chromes ?? [];
   const selectedPort = pause.selected_cdp_port ?? null;
   const selected = selectedPort != null ? chromes.find((c) => c.port === selectedPort) : undefined;
 
   let chromeLine: string;
-  let nextStep: string;
   if (selected) {
     chromeLine = `Browser: chrome already selected at port ${selected.port} (cdp_ws_url=${selected.ws_url}).`;
-    nextStep =
-      'Call qa-debug_qa_get_failure_context to ground. playwright-mcp is already registered against the held browser — start inspecting with browser_snapshot (there is no attach step and no cdp_ws_url to pass anywhere). ' +
-      'The browser it drives is the same Chrome the failing test was driving — DOM, console, network state are live.';
   } else if (chromes.length === 1) {
     chromeLine = `Browser: 1 chrome discovered (port ${chromes[0].port}); no selection committed yet.`;
-    nextStep =
-      `Call qa-debug_qa_get_failure_context first to ground, then qa-debug_qa_select_chrome with session_id and port=${chromes[0].port} ` +
-      '(no user confirmation needed for a single candidate). Once selection commits, playwright-mcp is auto-registered against the held browser — start inspecting with browser_snapshot (no attach step).';
   } else if (chromes.length >= 2) {
     const summary = chromes
       .map(
@@ -150,73 +145,17 @@ export function buildPausePrompt(pause: PausePayload): string {
       )
       .join('; ');
     chromeLine = `Browser: ${chromes.length} chromes discovered — ${summary}; no selection committed.`;
-    nextStep =
-      'Call qa-debug_qa_get_failure_context first to ground. Then ask the user which chrome to inspect (surface page_titles as context). ' +
-      'Once they pick, call qa-debug_qa_select_chrome with their port. After it commits, playwright-mcp is auto-registered against the held browser — start inspecting with browser_snapshot (no attach step).';
   } else {
     chromeLine = 'Browser: no chromes discovered at the default debug ports.';
-    nextStep =
-      "Call qa-debug_qa_get_failure_context first to ground. Then ask the user: \"I couldn't find Chrome at the default debug ports — what port(s) does your test framework launch Chrome on?\" " +
-      'Call qa-debug_qa_discover_chromes(session_id, [user-ports]); if it returns chromes, call qa-debug_qa_select_chrome next; once it commits, playwright-mcp is auto-registered against the held browser — start inspecting with browser_snapshot.';
   }
 
   return [
-    'A Mocha test is paused at the failure point. Investigate using the qa-debug + playwright-mcp tools.',
+    'A Mocha test just paused at a failure. Engage the qa-debug skill and run its Step 0 first.',
     '',
     `Test: ${pause.full_title}`,
     `File: ${pause.file}:${pause.line ?? '?'}`,
     `Failure: ${pause.failing_assertion}`,
     chromeLine,
-    '',
-    'Step 0 — Ask ONE short question up front, then branch on the answer. Present it as an interactive choice popup with exactly two ' +
-      'SELECTABLE options the user clicks (a two-button / quick-pick popup is good here — use it). Do NOT ask an open-ended, free-text ' +
-      '"how would you like me to proceed? / enter your answer" question — that is the wrong shape; the answer is always one of these two:',
-    '  Option A — "Let me find the root cause for you": you\'re not sure why it failed — I\'ll investigate the held browser end-to-end, ' +
-      'diagnose the cause, and come back with the fix.',
-    '  Option B — "You already know the root cause": tell me what\'s wrong and the change you want, and I\'ll make the edit for you — ' +
-      'no investigation needed.',
-    'Then branch: pick A (or a vague "go ahead" / "you find it") → run the full Step 1 → Step 2 investigation. ' +
-      'Pick B → skip the browser investigation; ground with Step 1 only if you need file/line context, then propose or apply the edit they describe. ' +
-      'Skip the ask when their opening turn already decides it (they described the root cause → treat as B; they asked you to investigate → treat as A), ' +
-      'or in autopilot / auto-approve mode (default to A).',
-    '',
-    'GROUND TRUTH IS THE LIVE BROWSER, NOT THE SOURCE FILES.',
-    "Do NOT shortcut by reading the page's .html / .js / .css source to guess what's on screen. " +
-      'The browser at the CDP endpoint above is the exact Chrome window the test was driving when it failed — ' +
-      'post-JS DOM, computed styles, in-flight network responses, console errors, framework state, async timers, ' +
-      'dynamically-injected nodes — none of which exist in the source files. Source can be stale, can be conditionally rendered, ' +
-      'can be overridden at runtime. Inspect the live browser first (browser_snapshot); read source only to corroborate something you already observed live.',
-    '',
-    nextStep,
-    '',
-    'playwright-mcp is available in your registry. Find its child tools by the browser_* SUFFIX — the server may be registered ' +
-      'under various prefixes (mcp_<server>_browser_*, com.microsoft/playwright-mcp/browser_*, mcp__<server>__browser_*); ' +
-      'match on the browser_ suffix, not on prefix. ' +
-      'There is no connect/attach tool — the extension already pointed playwright-mcp at the held browser when the chrome was selected; just call browser_snapshot to inspect it, ' +
-      'then use the rest of the playwright-mcp surface — DOM, targeted in-page JS, screenshots, plus interactive tools when read-only can\'t disambiguate. Prefer read-only moves first.',
-    'VERIFY playwright-mcp is visible before you investigate. Once the chrome selection has committed, confirm at least one browser_* tool ' +
-      'actually appears in your tool registry (match on the browser_ suffix, any prefix). If NO browser_* tool is present, playwright-mcp is not ' +
-      'running — do NOT silently fall back to reading source. Stop and tell the user: "I can\'t see the playwright-mcp browser tools, so I can\'t ' +
-      'inspect the live browser. The extension launches playwright-mcp via `npx @playwright/mcp@latest`; please make sure MCP support is enabled in ' +
-      'this editor and the playwright-mcp server is installed/trusted/started, then ask me to retry." Wait until they confirm it\'s available before continuing.',
-    'Network and console reads are OFF-BY-DEFAULT in beta (noisy framework / HMR / dev-telemetry / hot-reload chatter drowns the signal). ' +
-      'browser_network_requests and browser_console_messages (and browser_evaluate(console.*)-style log scrapes) are on-demand — ' +
-      'call them only after the user explicitly asks ("show the console", "check the network", "any failed requests?"), ' +
-      'OR after you asked them yourself ("Want me to pull network requests for an upstream check?") and they confirmed. ' +
-      'For runtime-state queries, use browser_evaluate against a specific expression (window.__lastError, framework state) instead.',
-    'Do NOT call browser_close or browser_navigate — both destroy the post-failure state the pause is preserving.',
-    '',
-    'Default: propose, don\'t edit. Surface file:line / tool-call shape in chat and wait for the user before applying ' +
-      'any file edit or running state-changing playwright-mcp tools (anything that clicks, fills, navigates, presses keys). ' +
-      'Skip the ask gate only if the session is in autopilot / auto-approve mode. ' +
-      'Read-only investigation (DOM snapshot, targeted evaluate, screenshot) never needs the gate.',
-    '',
-    'This pause is a pure inspection hold — there is NO pass/fail verdict to commit and no decision verb to call. ' +
-      'After investigating, propose any source/spec fix in chat (file:line + the change), then ASK explicitly: ' +
-      '"Anything else you\'d like me to investigate or check before you re-run (pull network/console, check a sibling spec, ' +
-      'add a defensive guard)?" Do not end the turn after the diff — the user often has follow-up steps. ' +
-      'When they\'re done they re-run from Test Explorer ▶ (a fresh pause arrives if it still fails) or end the run with Stop. ' +
-      'You never commit a result; the test stands at its natural Mocha outcome.',
   ].join('\n');
 }
 
