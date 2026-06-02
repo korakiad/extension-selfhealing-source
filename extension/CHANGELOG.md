@@ -7,6 +7,21 @@ loosely based on [Keep a Changelog](https://keepachangelog.com/).
 in-extension update checker only surfaces **stable** releases, so QAs on a beta
 stay quiet until `0.0.5` ships.
 
+## 0.0.5-beta.15 — 2026-06-02
+
+### Added
+- **Visual element picker via Chrome's native inspector (`qa_pick_element`).**
+  During a pause you can have the agent arm Chrome's own "inspect element"
+  cursor in the held browser — hover to highlight, click once, anywhere — and it
+  returns the clicked element's attributes plus a suggested locator. Because the
+  hit-test runs in the browser process, it reaches elements inside **cross-origin
+  iframes, shadow DOM / web components, and canvas overlays** that a page-script
+  picker can't. The `/identify-element` skill now routes to this tool.
+
+### Removed
+- The old page-script element picker (injected via `browser_evaluate`) plus its
+  manual playground and mock eval — fully superseded by `qa_pick_element`.
+
 ## 0.0.5-beta.14 — 2026-06-01
 
 ### Added
