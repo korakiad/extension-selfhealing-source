@@ -7,6 +7,17 @@ loosely based on [Keep a Changelog](https://keepachangelog.com/).
 in-extension update checker only surfaces **stable** releases, so QAs on a beta
 stay quiet until `0.0.5` ships.
 
+## 0.0.5-beta.17 — 2026-06-02
+
+### Fixed
+- **Step 0 Option B ("I'll tell you the fix") no longer auto-edits your spec.**
+  Picking B used to make the agent infer its *own* fix and apply it to the file.
+  B now means *"I describe, you apply"*: the agent first asks you for the root
+  cause and the exact change you want, then applies **only** what you dictated —
+  it won't guess a fix or touch anything you didn't ask for. The ambiguous
+  *"I'll just edit"* wording that caused this was removed from the Step 0 labels
+  and checklist.
+
 ## 0.0.5-beta.16 — 2026-06-02
 
 ### Changed
