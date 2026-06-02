@@ -7,6 +7,24 @@ loosely based on [Keep a Changelog](https://keepachangelog.com/).
 in-extension update checker only surfaces **stable** releases, so QAs on a beta
 stay quiet until `0.0.5` ships.
 
+## 0.0.5-beta.16 — 2026-06-02
+
+### Changed
+- **Pause guidance consolidated into the `qa-debug` skill.** The prefilled pause
+  prompt no longer duplicates the investigation workflow — it now carries just
+  the per-pause failure data and hands off to the skill, which owns the
+  Step 0 → ground → select-Chrome → inspect → propose flow as the single source
+  of truth. This removes drift between the prompt and the skill. The skill's
+  Step 0 (the *"let me find the root cause"* / *"you already know it"* either/or)
+  was hardened so it reliably opens the investigation, and the prompt wording was
+  aligned so it doesn't accidentally skip that question.
+
+### Fixed
+- **The `@qa-debug` card no longer claims `playwright-mcp` is attached before a
+  Chrome is selected.** It now reflects selection state — the live-browser tools
+  become available once a Chrome is picked, matching how registration actually
+  works.
+
 ## 0.0.5-beta.15 — 2026-06-02
 
 ### Added
