@@ -7,6 +7,17 @@ loosely based on [Keep a Changelog](https://keepachangelog.com/).
 in-extension update checker only surfaces **stable** releases, so QAs on a beta
 stay quiet until `0.0.5` ships.
 
+## 0.0.5-beta.18 — 2026-06-02
+
+### Internal
+- Repository cleanup with **no QA-facing behavior change** — the tool surface,
+  UI, and runtime behavior are identical to beta.17. Removed dead code left over
+  after the verdict verbs were dropped (the unused proposal layer and the
+  `PAUSE_ALREADY_RESOLVED` error code), retired the per-feature `PLAN-*.md`
+  working docs and the `archive/` directory (`ARCHITECTURE.md` is now the single
+  source of truth), and scrubbed dangling citations to those deleted design docs
+  from code comments and the package READMEs.
+
 ## 0.0.5-beta.17 — 2026-06-02
 
 ### Fixed
