@@ -16,6 +16,7 @@ import * as vscode from 'vscode';
 
 import { DiscoverChromesTool } from './discover-chromes.js';
 import { GetFailureContextTool } from './get-failure-context.js';
+import { PickElementTool } from './pick-element.js';
 import { SelectChromeTool } from './select-chrome.js';
 import type { LmToolDeps } from './base.js';
 
@@ -28,5 +29,7 @@ export function registerQaDebugLmTools(
     // v5.16 PLAN-cdp-port-discovery — Mode C discovery + selection.
     vscode.lm.registerTool('qa-debug_qa_discover_chromes', new DiscoverChromesTool(deps)),
     vscode.lm.registerTool('qa-debug_qa_select_chrome', new SelectChromeTool(deps)),
+    // CDP-native element inspector (Overlay) — pierces iframes + shadow DOM.
+    vscode.lm.registerTool('qa-debug_qa_pick_element', new PickElementTool(deps)),
   );
 }

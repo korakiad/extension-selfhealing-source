@@ -5,7 +5,9 @@ export type QaErrorCode =
   // v5.16 PLAN-cdp-port-discovery
   | 'INVALID_PORT'
   | 'NO_CHROMES_FOUND'
-  | 'BROWSER_NOT_SELECTED';
+  | 'BROWSER_NOT_SELECTED'
+  // qa_pick_element (CDP-native Overlay inspector)
+  | 'CDP_CONNECT_FAILED';
 
 export class QaToolError extends Error {
   constructor(public readonly code: QaErrorCode, message: string) {

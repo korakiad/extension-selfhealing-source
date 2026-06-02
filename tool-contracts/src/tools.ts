@@ -204,10 +204,36 @@ export const qa_select_chrome: QaToolDef<{ session_id: string; port: number }> =
   },
 };
 
+export const qa_pick_element: QaToolDef<{ session_id?: string }> = {
+  name: 'qa_pick_element',
+  description:
+    "Arms Chrome's native DevTools element inspector on the pause's selected held browser so the QA can point at the exact element a failing selector should match, then returns that element's structured attributes. " +
+    'Call during a pause AFTER a chrome is selected (selected_cdp_port non-null) when the failure is selector-anchored and the right DOM node is not obvious from browser_snapshot, or when the QA says "let me show you which element". ' +
+    'Unlike a page-script picker, the inspector runs in the browser process, so it pierces cross-origin iframes, open AND closed shadow DOM, web components, and canvas overlays — the QA just hovers (Chrome highlights the element) and clicks once, anywhere, with no awareness of frames or shadow roots. ' +
+    'Blocks until the QA clicks or ~120s elapse. ' +
+    'Returns on click: { picked: { tag, id, name, classes, data (data-* map, e.g. data-e2e), aria (incl. role), text, inFrame, frameUrl, suggestedLocator } }. On timeout/cancel: { cancelled: true, reason }. ' +
+    'Build the final selector from the returned attributes in the project\'s pattern (e.g. data-e2e/data-test → id → role → class); suggestedLocator is a hint, not authoritative. If inFrame is true, wrap the locator in a frameLocator anchored on frameUrl. ' +
+    'Errors: NO_ACTIVE_PAUSE (no Mocha test paused); SESSION_NOT_FOUND (session_id does not match the active pause); BROWSER_NOT_SELECTED (no chrome committed — call qa_select_chrome first); CDP_CONNECT_FAILED (the held browser CDP endpoint was unreachable or exposed no page target).',
+  inputSchemaJson: {
+    type: 'object',
+    properties: {
+      session_id: sessionIdProp,
+    },
+    additionalProperties: false,
+  },
+  inputSchemaZod: z.object({
+    session_id: z.string().optional(),
+  }),
+  // Pure inspection: arms a transient browser overlay and reads what the QA
+  // clicks; no page DOM mutation. openWorldHint=false (closed: the held browser).
+  annotations: { readOnlyHint: true, openWorldHint: false },
+};
+
 export const qaTools = [
   qa_get_failure_context,
   qa_discover_chromes,
   qa_select_chrome,
+  qa_pick_element,
 ] as const;
 
 export type QaToolName = (typeof qaTools)[number]['name'];

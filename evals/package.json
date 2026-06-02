@@ -10,8 +10,7 @@
     "budget": "tsx src/budget.ts",
     "race-test": "tsx src/race-test.ts",
     "qa-reporter-test-err": "tsx src/qa-reporter-test-err.test.ts",
-    "retry-pass-recovery": "tsx src/retry-pass-recovery.ts",
-    "picker-smoke": "tsx src/identify-element.test.ts"
+    "retry-pass-recovery": "tsx src/retry-pass-recovery.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.97.1",
