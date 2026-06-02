@@ -18,10 +18,10 @@ import {
 } from './protocol';
 import { probePorts } from './probe.js';
 
-// ---------- v5.16 PLAN-cdp-port-discovery — Mode C discovery ----------
+// ---------- v5.16 — Mode C discovery ----------
 // Hard-coded defaults match consumer org's framework launch convention. Overridable
 // via QA_DEBUG_CDP_PORTS env (comma-separated). Hard-code accepted as transitional
-// trade-off per PLAN Q7 — promote to workspace setting before external distribution.
+// trade-off — promote to workspace setting before external distribution.
 const DEFAULT_CDP_PORTS: readonly number[] = [22135, 22136] as const;
 
 function effectiveCdpPorts(): readonly number[] {
@@ -58,24 +58,23 @@ let conn: JsonRpcConnection | undefined;
 let connDisabledReason: string | undefined;
 
 // ---------- v5.15 hook-order injection state ----------
-// See PLAN-hook-order-injection.md. Tag identifies our afterEach when it
-// re-enters the patched Suite.prototype.afterEach via rootHooks (mocha.js:1082).
-// QA_PATCH_INSTALLED on Suite.prototype guards against double --require of
-// qa-hooks (the IIFE no-ops on the second pass).
-// WeakSet dedupes pause.publish across the multiple suite levels our injected
-// hook fires from (Mocha walks innermost-first per runner.js:610, AND hookErr
-// re-enters hookUp from errSuite.parent per runner.js:695-718). Identity is
-// stable within one attempt (runner.js:494).
+// Tag identifies our afterEach when it re-enters the patched
+// Suite.prototype.afterEach via rootHooks (mocha.js:1082). QA_PATCH_INSTALLED
+// on Suite.prototype guards against double --require of qa-hooks (the IIFE
+// no-ops on the second pass). WeakSet dedupes pause.publish across the multiple
+// suite levels our injected hook fires from (Mocha walks innermost-first per
+// runner.js:610, AND hookErr re-enters hookUp from errSuite.parent per
+// runner.js:695-718). Identity is stable within one attempt (runner.js:494).
 const OUR_HOOK_TAG: unique symbol = Symbol('qa-hooks.afterEach');
 const QA_PATCH_INSTALLED: unique symbol = Symbol('qa-hooks.patchInstalled');
 const pausedTests = new WeakSet<Mocha.Test>();
 
 // ---------- v5.15 Suite.prototype.afterEach monkey-patch ----------
-// Per PLAN-hook-order-injection.md §3. Mocha's hookUp (runner.js:610-619)
-// runs afterEach innermost-first → root last. If a user has an afterEach in
-// any describe block that closes the browser, our root mochaHooks fires too
-// late to capture the CDP URL. Fix: inject our hook at _afterEach[0] of any
-// suite where afterEach is registered, so we always run first.
+// Mocha's hookUp (runner.js:610-619) runs afterEach innermost-first → root
+// last. If a user has an afterEach in any describe block that closes the
+// browser, our root mochaHooks fires too late to capture the CDP URL. Fix:
+// inject our hook at _afterEach[0] of any suite where afterEach is registered,
+// so we always run first.
 //
 // Verified invariants (mocha@10.8.2):
 //   I1 mocha.js:1082 — rootHooks → this.suite.afterEach(hook) flows through us
@@ -98,9 +97,9 @@ const pausedTests = new WeakSet<Mocha.Test>();
   if ((Suite.prototype as unknown as Record<symbol, unknown>)[QA_PATCH_INSTALLED]) return;
 
   // I7 positive schema probe — instance-level _afterEach must exist as an array.
-  // Hard-fails loud on mocha version drift (per PLAN Q2 resolution): silent
-  // degradation gives engineers a "Chrome unreachable" red herring when the
-  // pause-publish path falls back to a stale Mode B endpoint.
+  // Hard-fails loud on mocha version drift: silent degradation gives engineers
+  // a "Chrome unreachable" red herring when the pause-publish path falls back
+  // to a stale Mode B endpoint.
   const probe = new Suite('__qa_probe__');
   if (!Array.isArray((probe as unknown as { _afterEach: unknown })._afterEach)) {
     throw new Error(
@@ -291,7 +290,7 @@ async function qaAfterEachImpl(this: Mocha.Context): Promise<void> {
   // See Mocha docs: https://mochajs.org/#timeouts ("To disable timeouts ... pass 0").
   this.timeout(0);
 
-  // v5.16 Mode C — parallel probe effectiveCdpPorts() per pause (shared ./probe).
+  // v5.16 — parallel probe effectiveCdpPorts() per pause (shared ./probe).
   const ports = effectiveCdpPorts();
   const availableChromes = await probePorts(ports);
   const foundPorts = availableChromes.map((c) => c.port);
@@ -358,7 +357,7 @@ async function qaAfterEachImpl(this: Mocha.Context): Promise<void> {
     kind: decision.kind,
     reason: decision.reason,
     by: decision.by,
-    // v5.5 §2.4: renamed test_title → full_title (always was test.fullTitle()).
+    // v5.5: renamed test_title → full_title (always was test.fullTitle()).
     full_title: test.fullTitle(),
     test_file: test.file ?? null,
   };
@@ -382,7 +381,7 @@ async function qaAfterEachImpl(this: Mocha.Context): Promise<void> {
 // Mocha v10 retries from beforeEach mutate the hook's runnable, not the test;
 // and even if we did set retries on the test, the clone-on-retry semantics in
 // runner.js:814–823 make state mutation in afterEach unable to stop the loop.
-// Outcome translation lives in qa-reporter (§3.6); retry decisions are honored
+// Outcome translation lives in qa-reporter; retry decisions are honored
 // by the extension respawning mocha with `--grep` (S4) or by the S2 oracle
 // simulating the same.
 export const mochaHooks = {

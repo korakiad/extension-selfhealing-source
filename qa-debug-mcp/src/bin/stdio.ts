@@ -7,8 +7,7 @@
  *
  * The extension does NOT use this binary — it imports `createQaDebugServer`
  * from `../server.js` and hosts the server in-process over Streamable HTTP
- * with a Memento-backed PauseStore. See `extension/src/qa-debug-server.ts`
- * and S4_DESIGN.md §5.
+ * with a Memento-backed PauseStore. See `extension/src/qa-debug-server.ts`.
  */
 
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';

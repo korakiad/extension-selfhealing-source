@@ -18,7 +18,6 @@ The hook does **NOT** mutate `test.state` / `test.err` / `parent.retries` /
 `currentTest.retries`. ARCHITECTURE v5 §3.1 documents why — Mocha v10's
 `Runner.fail` emits `EVENT_TEST_FAIL` synchronously at runner.js:825 *before*
 `hookUp(afterEach)` at runner.js:828, so afterEach can't retract the failure.
-See `ARCHITECTURE-CR-v5.md` for the empirical investigation history.
 
 ## IPC channel choice
 
@@ -60,7 +59,7 @@ exits cleanly.
 ## Q2 follow-up: `require.cache` invalidation for retry decisions (v5.1 removed)
 
 **Status (v5.1, 2026-05-21).** The `invalidateRequireCache(file)` call has been
-removed from `qa-hooks.ts` and from ARCHITECTURE.md §3.1 per `ARCHITECTURE-CR-v5.1.md`
+removed from `qa-hooks.ts` and from ARCHITECTURE.md §3.1
 (Ralph-loop reviewer #6 APPROVE clean). The evidence below explains *why* it was
 safe to remove and *what would re-introduce the need*.
 
@@ -84,7 +83,7 @@ the retry by spawning a new mocha invocation.
 ### Phase 2 follow-up — restore on in-process retry
 
 **If Phase 2 introduces an in-process Mocha retry mechanism** (not currently
-designed, not in Phase 1 scope per SLICE_PLAN.md §4), the require.cache
+designed, not in Phase 1 scope), the require.cache
 invalidation becomes load-bearing again: an in-process retry runs in the same
 Node process whose `require.cache` may hold stale modules from the first
 attempt, and the QA may have edited a source file between attempts.
@@ -97,10 +96,9 @@ In that future, the re-add steps are:
    branch?" paragraph to reflect the new in-process retry pathway.
 4. Document the re-add as a v5.x CR per ARCHITECTURE.md §0.3.
 
-The Phase 2 backlog entry tracking this requirement lives in `SLICE_PLAN.md §4
-"Out of phase 1 (binding)"` with a bidirectional cross-reference to this block
-and ARCHITECTURE.md §3.1 — both entry points (Phase 2 design reading SLICE_PLAN,
-and someone reading ARCHITECTURE §3.1) surface the requirement, so the re-add
+The Phase 2 backlog entry tracking this requirement has a bidirectional
+cross-reference to this block and ARCHITECTURE.md §3.1 — both entry points
+(Phase 2 design and ARCHITECTURE §3.1) surface the requirement, so the re-add
 cannot be silently skipped.
 
 ## Build

@@ -1,4 +1,4 @@
-// Pre-implementation spike per PLAN-cdp-port-discovery.md §"Pre-implementation spike".
+// Pre-implementation spike.
 // Verifies wdio (attach mode via debuggerAddress) and puppeteer-core can coexist as
 // concurrent CDP clients on the same Chrome under read AND active commands.
 //

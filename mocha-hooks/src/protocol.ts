@@ -16,14 +16,14 @@ export const SerializedError = z.object({
 });
 export type SerializedError = z.infer<typeof SerializedError>;
 
-// v5.16 PLAN-cdp-port-discovery — chrome lifecycle ownership.
+// v5.16 — chrome lifecycle ownership.
 export const ChromeOwner = z.enum(['framework', 'companion']);
 export type ChromeOwner = z.infer<typeof ChromeOwner>;
 
-// PLAN-runtime-tab-orient — best-effort runtime label from /json/version
-// User-Agent. `unknown` when the UA is absent or app-overridden (an Electron app
-// can replace its UA via app.userAgentFallback, stripping the "Electron" token).
-// Behavior never depends on this label — tab_count is the load-bearing signal.
+// Best-effort runtime label from /json/version User-Agent. `unknown` when the
+// UA is absent or app-overridden (an Electron app can replace its UA via
+// app.userAgentFallback, stripping the "Electron" token). Behavior never
+// depends on this label — tab_count is the load-bearing signal.
 export const ChromeRuntime = z.enum(['chrome', 'electron', 'openfin', 'unknown']);
 export type ChromeRuntime = z.infer<typeof ChromeRuntime>;
 
@@ -33,7 +33,7 @@ export const AvailableChrome = z.object({
     message: 'ws_url must use ws:// or wss:// scheme',
   }),
   page_titles: z.array(z.string()).max(5),
-  // PLAN-runtime-tab-orient — count of `type==='page'` targets from /json/list.
+  // Count of `type==='page'` targets from /json/list.
   // The orient/tab-switch trigger (>1). Override-proof (Electron/OpenFin always
   // expose page targets). `/json/list` fail → 1 (we know ≥1 since version probed).
   tab_count: z.number().int().nonnegative(),
@@ -91,7 +91,7 @@ export type HeartbeatParams = z.infer<typeof HeartbeatParams>;
 // IPC channel as the oracle/extension) consumes this to render the tri-state outcome at
 // EVENT_TEST_END. full_title + test_file are included so the reporter can correlate
 // without a separate PauseStore lookup.
-// v5.5 §2.4 / NB8: renamed `test_title` → `full_title` for symmetry with
+// v5.5 NB8: renamed `test_title` → `full_title` for symmetry with
 // PausePayload.full_title. The field has always been populated with
 // test.fullTitle() (qa-hooks.ts) — the rename clarifies semantics.
 export const FinalDecisionParams = z.object({

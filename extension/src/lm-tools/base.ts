@@ -7,8 +7,8 @@
  * Tool body semantics:
  *  - Audit log: every invoke emits `[qa-debug-lm] <name> called session=<id>`
  *    via auditLog() — replaces the v5.6 `[qa-debug-mcp]` wire+host log pair.
- *    Implementor: this is the single audit-line site; ARCHITECTURE-CR-v5.14 §3.5
- *    Q-F resolution confirms no lm.onDidInvokeTool event exists.
+ *    Implementor: this is the single audit-line site; no lm.onDidInvokeTool
+ *    event exists.
  *  - Errors: invoke throws Error('CODE: message') for QaToolError; VS Code
  *    surfaces .message to the LLM. The MCP-shaped errorResult helper in
  *    @qa-debug/tool-contracts/errors is NOT used here; it remains for the

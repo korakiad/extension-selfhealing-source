@@ -26,8 +26,7 @@ export class GetFailureContextTool implements vscode.LanguageModelTool<Input> {
       if (!active) {
         throw new QaToolError('NO_ACTIVE_PAUSE', 'No Mocha test is currently paused.');
       }
-      const proposal = this.deps.pauseStore.pollProposal(active.session_id);
-      const view = toFailureContextView(active, proposal, input.response_format ?? 'concise');
+      const view = toFailureContextView(active, input.response_format ?? 'concise');
       return jsonResult(view);
     } catch (err) {
       if (err instanceof QaToolError) {

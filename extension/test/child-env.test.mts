@@ -1,5 +1,5 @@
 /**
- * Unit test for sanitizeChildEnv (PLAN-env-leak-scrub).
+ * Unit test for sanitizeChildEnv.
  *
  * Run from the extension dir:
  *   node --import tsx test/child-env.test.mts

@@ -3,13 +3,11 @@
  * traffic between hook (`qa-hooks.ts`) and extension state (PauseStore +
  * DecisionRouter + TestController + MCP provider).
  *
- * S4_DESIGN.md §6, §10, §11.
  * v5.2 alignment: injects `--require` + `--reporter` as absolute paths
- * resolved via `createRequire(__filename)` from the extension's location
- * (CR §2.1 [R#3-NB2 + R#3-NB6]). User's `.mocharc.cjs` needs zero edits.
- * CWD selection per CR §2.1 NB6: spec-URI-derived when invoked from
- * TestController; falls back to `<workspaceRoot>/fixture-tests` (demo) or
- * `<workspaceRoot>` for run-all.
+ * resolved via `createRequire(__filename)` from the extension's location.
+ * User's `.mocharc.cjs` needs zero edits. CWD selection: spec-URI-derived
+ * when invoked from TestController; falls back to
+ * `<workspaceRoot>/fixture-tests` (demo) or `<workspaceRoot>` for run-all.
  *
  * Suite-run sequence:
  *   1. runFixtureSuite() called via qa-debug.runFixture command or
@@ -20,7 +18,7 @@
  *      --reporter qa-reporter (both absolute paths to bundled extension files).
  *   5. Construct JsonRpcConnection on the child. Register handlers.
  *   6. Wait for child exit. On clean exit with no outstanding pause, tear down
- *      Chrome. On exit with outstanding pause, leave Chrome up (per §6.3).
+ *      Chrome. On exit with outstanding pause, leave Chrome up.
  */
 
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -52,9 +50,9 @@ import type { MementoPauseStore } from './pause-store.js';
 import type { RunStatusBar } from './run-status-bar.js';
 import type { RunSelection, TestControllerWrapper, TestRunHandle } from './test-controller.js';
 
-// CR-v5.6 §3.8 / I2#A — v5.5 unified-id formula `file::it::full_title`. Must
-// match test-controller's lookupOrCreateTestItem so the context-key array set
-// here intersects with the testId VS Code passes through testing/item/context.
+// v5.5 unified-id formula `file::it::full_title`. Must match
+// test-controller's lookupOrCreateTestItem so the context-key array set here
+// intersects with the testId VS Code passes through testing/item/context.
 function computeTestItemId(pause: PausePayload): string {
   return `${vscode.Uri.file(pause.file).toString()}::it::${pause.full_title}`;
 }
@@ -129,15 +127,14 @@ function buildAlternationGrep(selection: RunSelection): string {
   return alts.length === 1 ? alts[0] : `(?:${alts.join('|')})`;
 }
 
-// PLAN-stop-button-process-group-kill — grace window between the polite group
-// signal (SIGINT, = Ctrl-C) and the hard SIGKILL escalation. Env override for
-// tests so they don't wait the full default.
+// Grace window between the polite group signal (SIGINT, = Ctrl-C) and the hard
+// SIGKILL escalation. Env override for tests so they don't wait the full default.
 const KILL_GRACE_MS = Number(process.env.QA_DEBUG_KILL_GRACE_MS ?? 3_000);
 
-// v5.2 §2.1: absolute-path resolution for bundled hook + reporter. Resolved
+// v5.2: absolute-path resolution for bundled hook + reporter. Resolved
 // once at module load from the extension's own location via createRequire.
 // fs.existsSync guard catches VSIX-misdeploy at extension activation (clearer
-// than failing inside mocha child later). Per CR §5 VSIX-packaging risk row.
+// than failing inside mocha child later). Per the VSIX-packaging risk row.
 const extReq = createRequire(__filename);
 const REGISTER_PATH: string = extReq.resolve('@qa-debug/mocha-hooks/register');
 const REPORTER_PATH: string = extReq.resolve('@qa-debug/mocha-hooks/qa-reporter');
@@ -149,7 +146,7 @@ for (const [label, p] of [
     throw new Error(
       `qa-debug-companion bundled hook ${label} not found at ${p}. ` +
         `Likely VSIX was built without including @qa-debug/mocha-hooks workspace dist. ` +
-        `See ARCHITECTURE-CR-v5.2 §5 risk row "VSIX packaging discipline".`,
+        `See ARCHITECTURE.md §5 risk row "VSIX packaging discipline".`,
     );
   }
 }
@@ -170,13 +167,13 @@ export interface SessionManagerDeps {
   /** Workspace root used to resolve mocha bin + fallback CWD. */
   workspaceRoot: string;
   /**
-   * Retained from v5.3 deps shape per ARCHITECTURE-CR-v5.4 §2.1; no longer
-   * read by the notification handler (v5.4 dropped the "Ask Copilot" button).
-   * Probed at activation for future re-use by other engagement paths.
+   * Retained from v5.3 deps shape; no longer read by the notification handler
+   * (v5.4 dropped the "Ask Copilot" button). Probed at activation for future
+   * re-use by other engagement paths.
    */
   chatOpenAvailable: boolean;
   chatOpenFallbackAvailable: boolean;
-  /** v5.4 §2.2 — ambient pause indicator; show on pause-publish, hide on decision commit. */
+  /** v5.4 — ambient pause indicator; show on pause-publish, hide on decision commit. */
   pauseStatusBar: PauseStatusBar;
   /** Ambient run indicator; show on spawnMochaChild, hide on onMochaExit. */
   runStatusBar: RunStatusBar;
@@ -203,9 +200,9 @@ interface ActiveRun {
    */
   pauseToreDown: boolean;
   /**
-   * PLAN-stop-button-process-group-kill — armed by terminateRun() after the
-   * polite group SIGINT; fires a group SIGKILL if the child hasn't exited
-   * within KILL_GRACE_MS. Cleared in onMochaExit().
+   * Armed by terminateRun() after the polite group SIGINT; fires a group
+   * SIGKILL if the child hasn't exited within KILL_GRACE_MS. Cleared in
+   * onMochaExit().
    */
   killEscalationTimer?: NodeJS.Timeout;
 }
@@ -213,7 +210,7 @@ interface ActiveRun {
 export interface RunFixtureSuiteOptions {
   /**
    * Spec file URIs to run. If non-empty, CWD is derived from path.dirname
-   * of the first URI's fsPath (per CR §2.1 NB6 recommended default).
+   * of the first URI's fsPath (per NB6 recommended default).
    * If empty/undefined, CWD falls back to `<workspaceRoot>/fixture-tests`
    * (legacy demo flow) or `<workspaceRoot>` (generic run-all).
    */
@@ -228,9 +225,8 @@ export interface RunFixtureSuiteOptions {
    */
   runSelection?: RunSelection;
   /**
-   * v5.5 C2 — wired to terminateRun() on cancellation (PLAN-stop-button-process-
-   * group-kill): a Ctrl-C-equivalent SIGINT to the whole process group, with a
-   * SIGKILL escalation if it hangs.
+   * v5.5 C2 — wired to terminateRun() on cancellation: a Ctrl-C-equivalent
+   * SIGINT to the whole process group, with a SIGKILL escalation if it hangs.
    */
   cancellationToken?: vscode.CancellationToken;
 }
@@ -239,19 +235,19 @@ export class SessionManager {
   private activeRun?: ActiveRun;
   private readonly chromeEventSubscriptions: { dispose(): void }[] = [];
   /**
-   * PLAN-cdp-electron-shim — active CDP download-shim, if any. 1:1 with the
-   * current chrome selection. The MCP is pointed at `shim.httpRoot` rather than
-   * the raw endpoint so `Browser.setDownloadBehavior` is swallowed (lets
-   * playwright-mcp attach to old Electron / embedded Chromium).
+   * Active CDP download-shim, if any. 1:1 with the current chrome selection.
+   * The MCP is pointed at `shim.httpRoot` rather than the raw endpoint so
+   * `Browser.setDownloadBehavior` is swallowed (lets playwright-mcp attach to
+   * old Electron / embedded Chromium).
    */
   private cdpShim?: CdpShim;
 
   constructor(private readonly deps: SessionManagerDeps) {
-    // v5.16 PLAN-cdp-port-discovery §3.18 — gate mcpProvider.setPaused on
-    // chrome selection events. Two paths feed this funnel: agent via
-    // qa-debug_qa_select_chrome (LM tool) and extension UI via QuickPick /
-    // InputBox. Both write through PauseStore.recordChromeSelection which
-    // awaits persistence before firing onChromeSelected.
+    // v5.16 — gate mcpProvider.setPaused on chrome selection events. Two paths
+    // feed this funnel: agent via qa-debug_qa_select_chrome (LM tool) and
+    // extension UI via QuickPick / InputBox. Both write through
+    // PauseStore.recordChromeSelection which awaits persistence before firing
+    // onChromeSelected.
     this.chromeEventSubscriptions.push(
       this.deps.pauseStore.onChromeSelected((selection) => {
         void this.bindMcpToSelection(selection);
@@ -269,10 +265,10 @@ export class SessionManager {
   }
 
   /**
-   * PLAN-cdp-electron-shim — start the download-shim (if enabled) and point the
-   * MCP at it; otherwise publish the raw endpoint. The onChromeSelected emitter
-   * ignores the returned promise — MCP registration is already async on the
-   * VS Code side, so the brief gap before setPaused is benign.
+   * Start the download-shim (if enabled) and point the MCP at it; otherwise
+   * publish the raw endpoint. The onChromeSelected emitter ignores the returned
+   * promise — MCP registration is already async on the VS Code side, so the
+   * brief gap before setPaused is benign.
    */
   private async bindMcpToSelection(selection: ChromeSelection): Promise<void> {
     const rawHttpRoot = cdpWsUrlToHttpRoot(selection.cdp_ws_url);
@@ -309,7 +305,7 @@ export class SessionManager {
     );
   }
 
-  /** PLAN-cdp-electron-shim — stop and clear the active shim (idempotent). */
+  /** Stop and clear the active shim (idempotent). */
   private async stopCdpShim(): Promise<void> {
     const shim = this.cdpShim;
     if (!shim) return;
@@ -350,9 +346,9 @@ export class SessionManager {
   /** Tear down everything; called from extension deactivate. */
   async dispose(): Promise<void> {
     if (this.activeRun) {
-      // PLAN-stop-button-process-group-kill — deactivate can't await the grace
-      // timer, so terminateRun's SIGINT is followed by an immediate group SIGKILL
-      // to avoid orphaning the launched browser when VS Code is closing.
+      // Deactivate can't await the grace timer, so terminateRun's SIGINT is
+      // followed by an immediate group SIGKILL to avoid orphaning the launched
+      // browser when VS Code is closing.
       const run = this.activeRun;
       run.userCancelled = true;
       this.terminateRun(run, 'extension deactivate');
@@ -368,7 +364,7 @@ export class SessionManager {
       sub.dispose();
     }
     this.chromeEventSubscriptions.length = 0;
-    // PLAN-cdp-electron-shim — release the proxy port on deactivate.
+    // Release the proxy port on deactivate.
     await this.stopCdpShim();
   }
 
@@ -384,9 +380,9 @@ export class SessionManager {
       cancellationToken?: vscode.CancellationToken;
     },
   ): Promise<void> {
-    // v5.2 §2.1: inject --require + --reporter as absolute paths to the
+    // v5.2: inject --require + --reporter as absolute paths to the
     // extension-bundled hook/reporter. User .mocharc.cjs needs no edits.
-    // v5.17 §3 — `--no-timeouts` overrides the consumer's `.mocharc` default
+    // v5.17 — `--no-timeouts` overrides the consumer's `.mocharc` default
     // (typically 2000ms) so pause-debug runs aren't killed by a beforeAll
     // hook timeout while the QA inspects the browser. qa-hooks separately
     // calls this.timeout(0) inside its afterEach for defense-in-depth.
@@ -398,15 +394,15 @@ export class SessionManager {
       '--no-timeouts',
     ];
 
-    // v5.16 PLAN-cdp-port-discovery — QA_DEBUG_CDP_WS_URL is gone. qa-hooks
-    // probes effectiveCdpPorts() per pause; ports override via QA_DEBUG_CDP_PORTS.
+    // v5.16 — QA_DEBUG_CDP_WS_URL is gone. qa-hooks probes effectiveCdpPorts()
+    // per pause; ports override via QA_DEBUG_CDP_PORTS.
     //
-    // PLAN-env-leak-scrub — do NOT pass the ext-host env verbatim. VS Code runs
-    // the extension host with ELECTRON_RUN_AS_NODE=1; copied into the child it is
-    // inherited by the Electron/OpenFin app the test launches, which then boots
-    // in Node mode (no GUI, no CDP port). sanitizeChildEnv strips that family
-    // (mirrors VS Code's own sanitizeProcessEnvironment). PATH + the Node IPC fd
-    // are preserved, so mocha + the JSON-RPC channel are unaffected.
+    // Do NOT pass the ext-host env verbatim. VS Code runs the extension host
+    // with ELECTRON_RUN_AS_NODE=1; copied into the child it is inherited by the
+    // Electron/OpenFin app the test launches, which then boots in Node mode
+    // (no GUI, no CDP port). sanitizeChildEnv strips that family (mirrors VS
+    // Code's own sanitizeProcessEnvironment). PATH + the Node IPC fd are
+    // preserved, so mocha + the JSON-RPC channel are unaffected.
     const { env, removed } = sanitizeChildEnv(process.env);
     if (removed.length > 0) {
       appendInfo(
@@ -448,11 +444,11 @@ export class SessionManager {
       `\n──── mocha spawn ${new Date().toISOString()} cwd=${opts.cwd} ────`,
     );
     this.deps.mochaChannel.appendLine(`args=${JSON.stringify(args)}`);
-    // PLAN-stop-button-process-group-kill — `detached: true` makes the child a
-    // process-group leader (PID == PGID) so its descendants (the launched
-    // Electron / OpenFin / Chrome, any framework worker) inherit the group and
-    // a single group-signal reaches them all, the way a terminal Ctrl-C does.
-    // We deliberately do NOT unref() — exit is still tracked via child.on('exit').
+    // `detached: true` makes the child a process-group leader (PID == PGID) so
+    // its descendants (the launched Electron / OpenFin / Chrome, any framework
+    // worker) inherit the group and a single group-signal reaches them all, the
+    // way a terminal Ctrl-C does. We deliberately do NOT unref() — exit is
+    // still tracked via child.on('exit').
     const child = spawn(opts.mochaBin, args, {
       cwd: opts.cwd,
       stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
@@ -481,11 +477,11 @@ export class SessionManager {
     void vscode.commands.executeCommand('setContext', 'qa-debug.running', true);
     this.deps.runStatusBar.show();
 
-    // v5.5 C2 — Test Explorer native stop button. PLAN-stop-button-process-group-kill:
-    // route through terminateRun so the whole group (mocha + launched browser +
-    // workers) gets the Ctrl-C-equivalent SIGINT, with SIGKILL escalation. Mark
-    // userCancelled so onMochaExit attributes the exit to the user. Registered
-    // after `run` is built so the closure can reference it.
+    // v5.5 C2 — Test Explorer native stop button: route through terminateRun so
+    // the whole group (mocha + launched browser + workers) gets the
+    // Ctrl-C-equivalent SIGINT, with SIGKILL escalation. Mark userCancelled so
+    // onMochaExit attributes the exit to the user. Registered after `run` is
+    // built so the closure can reference it.
     opts.cancellationToken?.onCancellationRequested(() => {
       run.userCancelled = true;
       this.terminateRun(run, 'Test Explorer cancellation token');
@@ -526,10 +522,10 @@ export class SessionManager {
       await this.deps.pauseStore.setActivePause(stored);
       await vscode.commands.executeCommand('setContext', 'qa-debug.paused', true);
       await refreshPausedTestIdsContext(this.deps.pauseStore);
-      // v5.16 PLAN-cdp-port-discovery §3.18 — mcpProvider.setPaused is gated
-      // on a committed chrome selection. Don't fire here. Auto-select when
-      // exactly one chrome was discovered; otherwise wait for agent
-      // (qa_select_chrome / qa_discover_chromes) or extension UI to commit.
+      // v5.16 — mcpProvider.setPaused is gated on a committed chrome selection.
+      // Don't fire here. Auto-select when exactly one chrome was discovered;
+      // otherwise wait for agent (qa_select_chrome / qa_discover_chromes) or
+      // extension UI to commit.
       const chromes = stored.available_chromes ?? [];
       appendInfo(
         this.deps.channel,
@@ -564,10 +560,10 @@ export class SessionManager {
         );
       }
       run.testHandle.recordPause(stored);
-      // v5.4 §2.2 — ambient status-bar entry augments the notification toast.
+      // v5.4 — ambient status-bar entry augments the notification toast.
       this.deps.pauseStatusBar.show(sessionId);
 
-      // v5.4 §2.1 — two-button notification (Ask Copilot removed); body text
+      // v5.4 — two-button notification (Ask Copilot removed); body text
       // names Agent-mode + Test Explorer as the two engagement paths.
       void vscode.window.showInformationMessage(
         `QA Debug: test "${stored.test_title}" failed at ${path.basename(stored.file)}:${stored.line ?? '?'}. ` +
@@ -594,7 +590,7 @@ export class SessionManager {
         this.deps.decisionRouter.enroll(params.session_id, (decision) => {
           this.stopHeartbeats(run, params.session_id);
           run.pendingSessions.delete(params.session_id);
-          // v5.4 §4.5 test #2 — entry hides within 500ms of commit; the
+          // v5.4 — entry hides within 500ms of commit; the
           // decision-router callback fires at the UI button press, ahead of
           // qa-hooks' final_decision round-trip.
           this.deps.pauseStatusBar.hide(params.session_id);
@@ -635,7 +631,7 @@ export class SessionManager {
     await vscode.commands.executeCommand('setContext', 'qa-debug.paused', false);
     await refreshPausedTestIdsContext(this.deps.pauseStore);
     this.deps.mcpProvider.setIdle();
-    // PLAN-cdp-electron-shim — pause ended; release the shim proxy port.
+    // Pause ended; release the shim proxy port.
     await this.stopCdpShim();
   }
 
@@ -672,8 +668,8 @@ export class SessionManager {
     for (const timer of run.heartbeatTimers.values()) clearInterval(timer);
     run.heartbeatTimers.clear();
     run.pendingSessions.clear();
-    // PLAN-stop-button-process-group-kill — child exited (cleanly or via the
-    // polite SIGINT) before the grace window; cancel the pending SIGKILL.
+    // Child exited (cleanly or via the polite SIGINT) before the grace window;
+    // cancel the pending SIGKILL.
     clearTimeout(run.killEscalationTimer);
     run.killEscalationTimer = undefined;
 
@@ -721,12 +717,12 @@ export class SessionManager {
   }
 
   /**
-   * PLAN-stop-button-process-group-kill — the single chokepoint for tearing a
-   * run down. Sends a Ctrl-C-equivalent SIGINT to the whole process group now,
-   * and arms a SIGKILL escalation in case the group ignores or hangs on it
-   * (e.g. a framework SIGINT handler blocked on the paused browser). The
-   * escalation is cancelled in onMochaExit if the child exits within the grace
-   * window. Idempotent: re-entry while a timer is armed only logs.
+   * Single chokepoint for tearing a run down. Sends a Ctrl-C-equivalent SIGINT
+   * to the whole process group now, and arms a SIGKILL escalation in case the
+   * group ignores or hangs on it (e.g. a framework SIGINT handler blocked on
+   * the paused browser). The escalation is cancelled in onMochaExit if the
+   * child exits within the grace window. Idempotent: re-entry while a timer is
+   * armed only logs.
    */
   private terminateRun(run: ActiveRun, reason: string): void {
     const pid = run.child.pid;
@@ -831,7 +827,7 @@ function wireToStored(wire: WirePausePayload, sessionId: string): PausePayload {
   return {
     session_id: sessionId,
     test_title: wire.test,
-    // v5.5 §2.4 — pass the canonical full title through to the store so
+    // v5.5 — pass the canonical full title through to the store so
     // TestController.recordPause can look up the discovery TestItem by unified id.
     full_title: wire.full_title,
     file: wire.file ?? '<unknown>',

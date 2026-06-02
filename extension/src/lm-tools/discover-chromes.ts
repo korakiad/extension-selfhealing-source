@@ -14,10 +14,10 @@ interface Input {
 }
 
 /**
- * v5.16 PLAN-cdp-port-discovery §3.12 — re-probes user-supplied ports and
- * replaces the active pause's available_chromes. Side-effect on prior
- * selection: cleared iff prior port not in new list (fires onChromeDeselected
- * via pauseStore.replaceAvailableChromes). Callers must call qa_select_chrome
+ * v5.16 — re-probes user-supplied ports and replaces the active pause's
+ * available_chromes. Side-effect on prior selection: cleared iff prior port
+ * not in new list (fires onChromeDeselected via
+ * pauseStore.replaceAvailableChromes). Callers must call qa_select_chrome
  * after this to commit a new selection. The store logic is shared with the
  * stdio MCP host via discoverChromesCore.
  */

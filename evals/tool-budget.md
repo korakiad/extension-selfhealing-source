@@ -1,19 +1,19 @@
 # `qa-debug` + `playwright-mcp` tool-surface budget
 
-Companion to SLICE_PLAN.md §S3 exit criterion (c) + §4 Phase-1-exclusion list. Produced as part of S3 along with `engagement.ts` + `budget.ts`.
+Companion to the S3 exit criteria (c) + Phase-1-exclusion list. Produced as part of S3 along with `engagement.ts` + `budget.ts`.
 
 ## Sources (per ARCHITECTURE §0.1 capability-claim rule)
 
 - Tool Search Tool thresholds: `https://www.anthropic.com/engineering/advanced-tool-use` (WebFetched 2026-05-20; publication date 2025-11-24).
 - Skill description authoring rules: `https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices` (WebFetched 2026-05-20; "Always write in third person" + "Be specific and include key terms" + 1024-char description cap).
 - Tool-description rules: `https://www.anthropic.com/engineering/writing-tools-for-agents` (WebFetched 2026-05-20; "describe to a new hire" framing + namespacing examples + error-message specificity).
-- playwright-mcp tool descriptions paraphrased from `github.com/microsoft/playwright-mcp/blob/main/README.md` (queried via context7 `/microsoft/playwright-mcp` on 2026-05-20). The version pinned in `evals/package.json` indirectly is `@playwright/mcp@0.0.75` — see SLICE_PLAN §0 for Phase-1 binding.
+- playwright-mcp tool descriptions paraphrased from `github.com/microsoft/playwright-mcp/blob/main/README.md` (queried via context7 `/microsoft/playwright-mcp` on 2026-05-20). The version pinned in `evals/package.json` indirectly is `@playwright/mcp@0.0.75` — see the Phase-1 plan for the binding.
 
 ## Surface measured
 
-- `qa-debug` MCP server: 4 commit/inspect tools (`qa_get_failure_context`, `qa_request_give_up`, `qa_propose_mark_passed`, `qa_propose_abort_suite`) plus 2 Mode-C discovery tools (`qa_discover_chromes`, `qa_select_chrome`). `qa_request_retry` and `qa_propose_close_browser` were removed when retry was dropped — re-running happens via Test Explorer ▶, and Chrome is owned by the test framework under Mode C.
+- `qa-debug` MCP server (current surface): `qa_get_failure_context` (read-only grounding), the `qa_discover_chromes` / `qa_select_chrome` Mode-C discovery pair, and `qa_pick_element` (CDP-native picker). The verdict verbs measured in S3 — `qa_request_retry`, `qa_request_give_up`, `qa_propose_mark_passed`, `qa_propose_abort_suite`, `qa_propose_close_browser` — were all removed: a pause is now a pure inspection hold, re-running happens via Test Explorer ▶, and Chrome is owned by the test framework under Mode C. (The char/token budget table below is the historical S3 six-tool snapshot, not the current surface.)
 - `playwright-mcp` curated subset for evals: 14 tools (see "Why curated, not full ~25" below).
-- `qa-debug` SKILL.md frontmatter `description` only (body lands in S5 per SLICE_PLAN §S5; not part of this S3 budget).
+- `qa-debug` SKILL.md frontmatter `description` only (body lands in S5; not part of this S3 budget).
 
 ## Measured budget (cheap chars/4 approximation; rerun `pnpm --filter ./evals run budget` with `ANTHROPIC_API_KEY` set for exact `countTokens` numbers)
 
@@ -24,7 +24,7 @@ Companion to SLICE_PLAN.md §S3 exit criterion (c) + §4 Phase-1-exclusion list.
 | playwright-mcp 14 curated tool defs              | 4,758  | ~1,190        |
 | **Combined surface (Skill desc + 20 tools)**     | 13,182 | **~3,296**    |
 
-The combined surface is below the 6,000-token ceiling SLICE_PLAN §S3 sets for `qa-debug` alone (~1,874 actual). ARCHITECTURE §3.4 estimates the *live* surface during a pause at ~12K–18K tokens — that bracket assumes the full ~25 playwright-mcp tools at their unedited wire descriptions, not the 14-tool curated subset measured here. The live-surface bracket is the figure to compare against the Tool Search threshold; this file's number is for eval-fidelity tracking, not production sizing.
+The combined surface is below the 6,000-token ceiling set for `qa-debug` alone (~1,874 actual). ARCHITECTURE §3.4 estimates the *live* surface during a pause at ~12K–18K tokens — that bracket assumes the full ~25 playwright-mcp tools at their unedited wire descriptions, not the 14-tool curated subset measured here. The live-surface bracket is the figure to compare against the Tool Search threshold; this file's number is for eval-fidelity tracking, not production sizing.
 
 ## Why a curated 14-tool subset, not the full ~25
 
@@ -46,13 +46,13 @@ Per `anthropic.com/engineering/advanced-tool-use` (Nov 24 2025), Tool Search Too
 | `MCP-powered systems with multiple servers` | qa-debug + playwright-mcp = 2 | same                       | YES                 |
 | `tool-selection accuracy issues`       | Measured by `engagement.ts` | TBD per evals                | TBD                 |
 
-Three of four triggers fire for the live surface (per ARCHITECTURE §3.4); two fire for the eval surface. Phase 1 nonetheless DEFERS Tool Search Tool per ARCHITECTURE §3.4 / SLICE_PLAN §S3(c) / §4 because:
+Three of four triggers fire for the live surface (per ARCHITECTURE §3.4); two fire for the eval surface. Phase 1 nonetheless DEFERS Tool Search Tool per ARCHITECTURE §3.4 / the S3 exit criteria because:
 
 1. The `qa-debug` SKILL.md decision tree (S5) disambiguates among playwright-mcp tools, so the agent isn't free-form-searching the surface — the Skill body acts as a static router for the live surface.
 2. The surface is registered only during paused windows (typically seconds-to-minutes, not the whole session), so per-turn pre-load cost is bounded.
 3. S3 engagement evals empirically check that, even without Tool Search, the agent picks the right first tool ≥ 4/5 on positive scenarios and 5/5 on negatives.
 
-**If S3 engagement evals miss the bar, Tool Search Tool becomes a blocking Phase 1 addition** (per SLICE_PLAN §S3 exit criteria + §4 binding). Until then it is a Phase 2 candidate.
+**If S3 engagement evals miss the bar, Tool Search Tool becomes a blocking Phase 1 addition** (per the S3 exit criteria). Until then it is a Phase 2 candidate.
 
 ## Skill-description quality checks (per Skills best-practices)
 
@@ -85,4 +85,4 @@ Engagement results land in `evals/results.json`. The harness exits 0 only if eve
 ## Open items handed to S5 / S6
 
 - The eval's curated 14-tool playwright-mcp subset must be reconciled with the *live* registered surface in S6. Concretely: at the end of S6, re-run `evals/budget.ts` against the actual @playwright/mcp wire output captured during a real Extension Host pause, and update this file's "Live-surface bracket" column with measured numbers (not the §3.4 estimate).
-- If the live surface ends up `>10K` tokens AND the S6 real-agent run shows first-call accuracy regression compared to S3 stub evals, open a Phase 1 CR to enable Tool Search Tool per SLICE_PLAN §S3 fallback clause.
+- If the live surface ends up `>10K` tokens AND the S6 real-agent run shows first-call accuracy regression compared to S3 stub evals, open a Phase 1 CR to enable Tool Search Tool per the S3 fallback clause.

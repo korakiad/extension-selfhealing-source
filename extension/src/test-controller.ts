@@ -1,7 +1,6 @@
 /**
- * TestController integration — renders pauses and decisions in Test Explorer
- * per S4_DESIGN §7, extended for ARCHITECTURE-CR-v5.5 (test discovery +
- * selective run).
+ * TestController integration — renders pauses and decisions in Test Explorer,
+ * extended for test discovery and selective run.
  *
  * Outcome rendering (verdict verbs removed 2026-05-31): a pause is a pure
  * inspection hold, so there is no mark-passed override and no tri-state. A
@@ -10,7 +9,7 @@
  * test is rendered `run.failed` (its natural Mocha outcome). The QA fixes the
  * cause and re-runs from Test Explorer ▶.
  *
- * v5.5 — TestItem id formula (CR §2.3 / §3.8):
+ * v5.5 — TestItem id formula:
  *   File     = `${fileUri.toString()}`
  *   Describe = `${fileUri}::describe::${describePath.join('>')}`
  *   It       = `${fileUri}::it::${fullTitle}` (matches Mocha Runnable.fullTitle())
@@ -84,18 +83,18 @@ export interface TestControllerWrapper {
   controller: vscode.TestController;
   /** Begin a new run; returns a handle scoped to this suite invocation. */
   beginRun(name?: string): TestRunHandle;
-  /** v5.5 §2.7 — invoked from FileSystemWatcher; re-reads the file and merges the diff. */
+  /** v5.5 — invoked from FileSystemWatcher; re-reads the file and merges the diff. */
   reparseFile(uri: vscode.Uri): Promise<void>;
-  /** v5.5 §2.7 — invoked from FileSystemWatcher onCreate. */
+  /** v5.5 — invoked from FileSystemWatcher onCreate. */
   addFileItem(uri: vscode.Uri): void;
-  /** v5.5 §2.7 — invoked from FileSystemWatcher onDelete. */
+  /** v5.5 — invoked from FileSystemWatcher onDelete. */
   removeFileItem(uri: vscode.Uri): void;
 }
 
 const TAG_SKIP = new vscode.TestTag('qa-debug.skip');
 const TAG_ONLY = new vscode.TestTag('qa-debug.only');
 
-// CR-v5.6 §3.5.1 — short summary for TestItem.description (inline next to label).
+// Short summary for TestItem.description (inline next to label).
 const PAUSE_SUMMARY_MAX = 80;
 function truncatePauseSummary(s: string): string {
   const oneLine = s.replace(/\s+/g, ' ').trim();
@@ -585,7 +584,7 @@ export function createTestControllerWrapper(
     reparseFile,
     beginRun: (name?: string): TestRunHandle => {
       const request = new vscode.TestRunRequest();
-      // v5.11 — close + reopen resets the run state per PLAN-no-persist-on-restart.md.
+      // v5.11 — close + reopen resets the run state.
       // VS Code testing-guide on the persist flag: "Passing `false` here instructs
       // VS Code not to retain the test result, like it would for runs in the editor,
       // since these results can be reloaded from an external source externally."
@@ -629,14 +628,14 @@ export function createTestControllerWrapper(
           msgs.push(msg);
           failureMessages.set(item.id, msgs);
 
-          // CR-v5.6 §3.5.1 (R6#A) — keep the item in `started` state during
-          // pause; surface pause cue via description + busy. Defer
-          // `run.failed()` until decision commit (give_up or mark_passed) so
-          // Copilot Chat's ✨ inline-icon (gated on testResultState == failed
-          // per copilot/package.json) does NOT render alongside our four
-          // inline icons (contributed via testing/item/context, gated on
-          // testId in qa-debug.pausedTestIds). The TestMessage[] is
-          // accumulated in `failureMessages` for attachment at decision time.
+          // Keep the item in `started` state during pause; surface pause cue
+          // via description + busy. Defer `run.failed()` until decision commit
+          // (give_up or mark_passed) so Copilot Chat's ✨ inline-icon (gated
+          // on testResultState == failed per copilot/package.json) does NOT
+          // render alongside our four inline icons (contributed via
+          // testing/item/context, gated on testId in qa-debug.pausedTestIds).
+          // The TestMessage[] is accumulated in `failureMessages` for
+          // attachment at decision time.
           run.started(item);
           item.description = `⏸ paused — ${truncatePauseSummary(pause.failing_assertion)}`;
           item.busy = true;
@@ -652,7 +651,7 @@ export function createTestControllerWrapper(
         },
 
         recordDecision: (decision, pause): void => {
-          // v5.5 §2.4 / NB8 — unified id lookup; the buggy `.replace(/^.*? > /, '')`
+          // v5.5 NB8 — unified id lookup; the buggy `.replace(/^.*? > /, '')`
           // strip is gone (Mocha joins ancestors with single space, never ` > `).
           const fileUri = pause ? vscode.Uri.file(pause.file) : undefined;
           const fullTitle = decision.full_title;

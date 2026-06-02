@@ -13,12 +13,12 @@ interface Input {
 }
 
 /**
- * v5.16 PLAN-cdp-port-discovery §3.12.5 — commits the chosen port from
- * available_chromes. selectChromeCore → pauseStore.recordChromeSelection
- * validates the port, persists selection, then fires onChromeSelected;
- * session-manager's subscriber registers playwright-mcp at the resolved
- * http_root (§3.18). cdp_ws_url becomes non-null on the next
- * qa_get_failure_context call. Store logic shared with the stdio MCP host.
+ * v5.16 — commits the chosen port from available_chromes.
+ * selectChromeCore → pauseStore.recordChromeSelection validates the port,
+ * persists selection, then fires onChromeSelected; session-manager's
+ * subscriber registers playwright-mcp at the resolved http_root.
+ * cdp_ws_url becomes non-null on the next qa_get_failure_context call.
+ * Store logic shared with the stdio MCP host.
  */
 export class SelectChromeTool implements vscode.LanguageModelTool<Input> {
   constructor(private readonly deps: LmToolDeps) {}

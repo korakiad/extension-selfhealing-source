@@ -1,8 +1,7 @@
 // Deterministic-fail wdio spec — asserts wrong product version.
-// v5.16 PLAN-cdp-port-discovery — variant C (chrome at port 23000, outside
-// the default [22135, 22136] discovery set). Smoke path 3: pause publishes
-// available_chromes: []; user supplies port via extension input box, then
-// qa_discover_chromes re-probes.
+// v5.16 — variant C (chrome at port 23000, outside the default [22135, 22136]
+// discovery set). Smoke path 3: pause publishes available_chromes: []; user
+// supplies port via extension input box, then qa_discover_chromes re-probes.
 
 const path = require('node:path');
 const url = require('node:url');

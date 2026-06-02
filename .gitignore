@@ -8,3 +8,4 @@ fixture-tests-wdio/build/
 .claude/settings.local.json
 .playwright-mcp/
 _vsix-staging/
+refs/

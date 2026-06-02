@@ -1,5 +1,5 @@
 /**
- * Test-Message-retention smoke per S4_DESIGN.md §7.2 R#3-NB1.
+ * Test-Message-retention smoke.
  *
  * Runs a standalone TestController against a synthetic TestItem, calls
  * `run.failed(testItem, [msg])` then transitions to `run.passed(testItem)`,
@@ -8,14 +8,12 @@
  *
  * Invoke via the Command Palette: "QA Debug: Smoke — TestMessage Retention".
  *
- * Outcome verification per S4_DESIGN.md §7.2 last paragraph:
- *  - Failure message STAYS visible → §7.2 mapping holds; mark-passed
- *    renders the sticky failure message + the new marked-passed message
- *    overlay as designed.
- *  - Failure message DISAPPEARS → file an ARCH §3.6 relaxation CR; fall
- *    back to description+appendOutput-only marked-passed signalling.
- *
- * Attach the screenshot to the S4 PR description.
+ * Outcome verification:
+ *  - Failure message STAYS visible → the mapping holds; mark-passed renders
+ *    the sticky failure message + the new marked-passed message overlay as
+ *    designed.
+ *  - Failure message DISAPPEARS → file an ARCH §3.6 relaxation CR; fall back
+ *    to description+appendOutput-only marked-passed signalling.
  */
 
 import * as vscode from 'vscode';
@@ -42,10 +40,10 @@ export async function smokeTestMessageRetention(): Promise<void> {
     // Build a memorable failure TestMessage.
     const md = new vscode.MarkdownString(
       `**This is the failure TestMessage** — created at \`run.failed(...)\` time.\n\n` +
-        `If you can still read this *after* the test row turns green, the §7.2 ` +
+        `If you can still read this *after* the test row turns green, the ` +
         `mapping holds: marked-passed will visually distinguish from a plain pass. ` +
         `If this message disappears when the row goes green, the mapping needs the ` +
-        `§7.2 fallback (ARCH §3.6 relaxation CR).`,
+        `fallback (ARCH §3.6 relaxation CR).`,
     );
     md.isTrusted = false;
     const failureMsg = new vscode.TestMessage(md);
@@ -68,7 +66,7 @@ export async function smokeTestMessageRetention(): Promise<void> {
       return;
     }
 
-    // The §7.2 mapping calls run.failed THEN run.passed without an end() in
+    // The mapping calls run.failed THEN run.passed without an end() in
     // between. We do the same here.
     run.passed(testItem, 1234);
 
@@ -85,8 +83,8 @@ export async function smokeTestMessageRetention(): Promise<void> {
 
     void vscode.window.showInformationMessage(
       'Smoke complete. Outcome: ' +
-        'If the failure TestMessage survived → S4_DESIGN §7.2 mapping holds, proceed to F5 fixture smoke. ' +
-        'If it disappeared → file an ARCH §3.6 relaxation CR per S4_DESIGN §7.2 last paragraph before S4 PR opens.',
+        'If the failure TestMessage survived → the mapping holds, proceed to F5 fixture smoke. ' +
+        'If it disappeared → file an ARCH §3.6 relaxation CR before the next PR opens.',
     );
   } finally {
     disposeController();

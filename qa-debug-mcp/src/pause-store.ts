@@ -14,8 +14,6 @@ import {
   type PauseStore,
   type PauseStoreDisposable,
   type PausePayload,
-  type Proposal,
-  type ProposalKind,
   type AvailableChrome,
   type ChromeSelection,
   type ChromeSelectionSource,
@@ -25,9 +23,6 @@ import { QaToolError } from '@qa-debug/tool-contracts/errors';
 export {
   type PauseStore,
   type PausePayload,
-  type Proposal,
-  type ProposalKind,
-  type ProposalStatus,
   type FailureContextView,
   type ResponseFormat,
   toFailureContextView,
@@ -37,21 +32,16 @@ export { QaToolError, type QaErrorCode } from '@qa-debug/tool-contracts/errors';
 /** S3 in-memory stub; S4 swaps for `MementoPauseStore` in the extension. */
 export class InMemoryPauseStore implements PauseStore {
   private active?: PausePayload;
-  private proposals = new Map<string, Proposal>();
   // v5.16 — node EventEmitter parity with MementoPauseStore's vscode.EventEmitter
-  // (PLAN §3.7: both impls fire-after-persist; synchronous here, async there).
+  // (both impls fire-after-persist; synchronous here, async there).
   private readonly chromeEvents = new EventEmitter();
 
   setActivePause(p: PausePayload): void {
     this.active = p;
-    // S4 contract: setActivePause clears any prior proposal slot
-    // (per S4_DESIGN.md §3.3 — every new pause starts clean).
-    this.proposals.clear();
   }
 
   clearActivePause(): void {
     this.active = undefined;
-    this.proposals.clear();
   }
 
   getActivePause(sessionId?: string): PausePayload | undefined {
@@ -67,40 +57,19 @@ export class InMemoryPauseStore implements PauseStore {
     return this.active;
   }
 
-  proposeAction(sessionId: string, kind: ProposalKind, rationale: string): Proposal {
-    const active = this.getActivePause(sessionId)!;
-    const proposal: Proposal = {
-      proposal_id: `${kind}-${active.session_id}-${Date.now()}`,
-      session_id: active.session_id,
-      kind,
-      rationale,
-      status: 'awaiting_human',
-      created_at_ms: Date.now(),
-    };
-    this.proposals.set(active.session_id, proposal);
-    return proposal;
-  }
-
-  pollProposal(sessionId: string): Proposal | undefined {
-    return this.proposals.get(sessionId);
-  }
-
   recordDecision(
     sessionId: string,
     kind: 'give_up',
     _reason: string,
   ): { decision: 'give_up'; accepted_at_ms: number } {
-    const active = this.getActivePause(sessionId)!;
-    // S4 contract per S4_DESIGN.md §3.3 + §9.3 row 5: recordDecision for
-    // retry/give_up clears the proposal slot atomically, closing the
-    // orphan-proposal window. The active pause stays — SessionManager
-    // clears it after the IPC round-trip in the extension; the in-memory
-    // stub's caller (oracle / Inspector smoke) clears separately if needed.
-    this.proposals.delete(active.session_id);
+    // The active pause stays — SessionManager clears it after the IPC
+    // round-trip in the extension; the in-memory stub's caller (oracle /
+    // Inspector smoke) clears separately if needed.
+    this.getActivePause(sessionId);
     return { decision: kind, accepted_at_ms: Date.now() };
   }
 
-  // ---- v5.16 PLAN-cdp-port-discovery selection methods ----
+  // ---- v5.16 — selection methods ----
 
   async recordChromeSelection(
     sessionId: string,

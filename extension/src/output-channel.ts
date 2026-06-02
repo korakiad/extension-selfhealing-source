@@ -1,6 +1,6 @@
 /**
  * Audit log channel (`vscode.window.createOutputChannel('QA Debug Companion')`).
- * Every decision flows through here per S4_DESIGN.md §3.5 / §8.5.
+ * Every decision flows through here.
  *
  * The channel is a singleton owned by the extension activation. The decision
  * row format is intentionally machine-parseable so a future tail tool can

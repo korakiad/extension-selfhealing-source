@@ -1,5 +1,5 @@
 // Deterministic-fail wdio spec — waits for an element that never appears.
-// v5.16 PLAN-cdp-port-discovery — variant B (two chromes: 22135 + 22136).
+// v5.16 — variant B (two chromes: 22135 + 22136).
 // Verifies multi-chrome askUser flow (smoke paths 2 + 2b). qa-hooks discovery
 // publishes both; selection comes via agent (qa_select_chrome) OR extension
 // status-bar QuickPick.

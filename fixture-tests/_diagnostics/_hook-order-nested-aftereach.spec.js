@@ -1,5 +1,5 @@
 'use strict';
-// v5.15 hook-order injection verification (PLAN-hook-order-injection.md §7.2).
+// v5.15 hook-order injection verification.
 //
 // Without the patch: user afterEach in nested describes runs BEFORE root
 // mochaHooks.afterEach (Mocha walks innermost-first per runner.js:610). With

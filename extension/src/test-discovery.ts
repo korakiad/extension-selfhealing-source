@@ -1,7 +1,7 @@
 /**
  * Test-file AST discovery for Test Explorer pre-population.
  *
- * ARCHITECTURE-CR-v5.5 §2.1. Parses `*.spec.{ts,js}` files via the TypeScript
+ * Parses `*.spec.{ts,js}` files via the TypeScript
  * Compiler API and emits a File → Describe → It hierarchy. Does NOT execute
  * the file — pure static analysis.
  *

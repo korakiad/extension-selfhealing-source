@@ -7,7 +7,7 @@
  *                                   mid-run AND the way to end an inspection
  *                                   pause (the test stands at its Mocha outcome)
  *  - qa-debug.openChatForPaused   — open Copilot Chat with a prefilled prompt
- *                                   describing the pause (CR-v5.6 §2.2 / §3.8.1)
+ *                                   describing the pause
  *  - qa-debug.selectChrome / .enterChromePorts — Mode C chrome selection
  *
  * Verdict commands removed (2026-05-31): qa-debug.giveUp / qa-debug.markPassed
@@ -38,8 +38,8 @@ export function registerCommands(context: vscode.ExtensionContext, deps: Command
     vscode.commands.registerCommand('qa-debug.runFixture', () => runFixtureCmd(deps)),
     vscode.commands.registerCommand('qa-debug.cancelRun', () => cancelRunCmd(deps)),
     vscode.commands.registerCommand('qa-debug.openChatForPaused', () => openChatForPausedCmd(deps)),
-    // v5.16 PLAN-cdp-port-discovery §3.14 — status-bar surfaces these when
-    // available_chromes.length !== 1 (no auto-select happened).
+    // v5.16 — status-bar surfaces these when available_chromes.length !== 1
+    // (no auto-select happened).
     vscode.commands.registerCommand('qa-debug.selectChrome', () => selectChromeCmd(deps)),
     vscode.commands.registerCommand('qa-debug.enterChromePorts', () => enterChromePortsCmd(deps)),
   );
@@ -77,9 +77,9 @@ async function cancelRunCmd(deps: CommandDeps): Promise<void> {
 }
 
 /**
- * CR-v5.6 §3.8.1 — open Copilot Chat with a deterministic prefilled prompt
- * describing the active pause. Feature-detects `workbench.action.chat.open`;
- * falls back to clipboard + chat-view-focus when unavailable.
+ * Open Copilot Chat with a deterministic prefilled prompt describing the active
+ * pause. Feature-detects `workbench.action.chat.open`; falls back to clipboard
+ * + chat-view-focus when unavailable.
  */
 async function openChatForPausedCmd(deps: CommandDeps): Promise<void> {
   let active: PausePayload;
@@ -94,7 +94,7 @@ async function openChatForPausedCmd(deps: CommandDeps): Promise<void> {
   const fileUri = vscode.Uri.file(active.file);
 
   if (await isChatOpenAvailable()) {
-    // CR-v5.6 §2.2 / iter#1 manual-QA fix 2026-05-22:
+    // iter#1 manual-QA fix 2026-05-22:
     //  - `toolIds` dropped: ['playwright-mcp', 'qa-debug'] are MCP *server*
     //    names, not LanguageModelTool ids; Copilot's chat panel crashed
     //    trying to render tool-chips for unknown ids. Agent mode
@@ -166,7 +166,7 @@ async function isChatOpenAvailable(): Promise<boolean> {
   return chatOpenAvailableCache;
 }
 
-// ---- v5.16 PLAN-cdp-port-discovery — extension UI chrome selection ----
+// ---- v5.16 — extension UI chrome selection ----
 
 async function selectChromeCmd(deps: CommandDeps): Promise<void> {
   let active: PausePayload;

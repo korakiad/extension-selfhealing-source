@@ -1,5 +1,5 @@
 /**
- * Unit test for classifyRuntime (PLAN-runtime-tab-orient).
+ * Unit test for classifyRuntime.
  *
  * Run from the extension dir:
  *   node --import tsx test/runtime-classify.test.mts

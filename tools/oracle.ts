@@ -2,7 +2,7 @@
 // Fake decision oracle for S2. Stands in for the VS Code extension:
 // spawns mocha as a child with an IPC channel, responds to `pause.publish` and
 // `decision.await` per a CLI-provided decision sequence, and emits heartbeats.
-// Not shipped in the extension bundle. See SLICE_PLAN.md S2 + ARCHITECTURE.md §3.1.
+// Not shipped in the extension bundle. See ARCHITECTURE.md §3.1.
 
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';

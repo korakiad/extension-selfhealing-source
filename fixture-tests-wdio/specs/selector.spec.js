@@ -1,5 +1,5 @@
 // Deterministic-fail wdio spec — clicks an element that doesn't exist.
-// v5.16 PLAN-cdp-port-discovery — variant A (single chrome at port 22135).
+// v5.16 — variant A (single chrome at port 22135).
 // Mocha-launched chrome simulates the consumer-framework launch pattern;
 // wdio attaches via `goog:chromeOptions.debuggerAddress` (no wdio.remote()
 // self-launch). qa-hooks' Mode C discovery finds this chrome at /json/version.

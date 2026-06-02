@@ -34,9 +34,9 @@ import { probePorts } from './probe-ports.js';
 export interface CreateQaDebugServerOptions {
   pauseStore: PauseStore;
   /**
-   * v5.4 §2.7 — host-side hook fired alongside MCP `notifications/message` on
+   * v5.4 — host-side hook fired alongside MCP `notifications/message` on
    * every tool invocation. The extension wires this to its Output Channel so
-   * CR §4.5 test #4 (Agent-mode auto-engagement smoke) is falsifiable via
+   * test #4 (Agent-mode auto-engagement smoke) is falsifiable via
    * Output-Channel grep, independent of whether the MCP client renders the
    * wire-side log. Optional so the stdio CLI (Inspector/evals) can ignore it.
    */
@@ -45,7 +45,7 @@ export interface CreateQaDebugServerOptions {
 
 export function createQaDebugServer(options: CreateQaDebugServerOptions): McpServer {
   const { pauseStore: store } = options;
-  // v5.4 §2.7 — enable the MCP `logging` server capability so per-tool
+  // v5.4 — enable the MCP `logging` server capability so per-tool
   // invocation notifications reach the client (and, in S4, the extension's
   // Output Channel via the qa-debug-server Streamable HTTP host).
   // server/index.js:415 — sendLoggingMessage is a no-op unless this capability
@@ -55,7 +55,7 @@ export function createQaDebugServer(options: CreateQaDebugServerOptions): McpSer
     { capabilities: { logging: {} } },
   );
 
-  // v5.4 §2.7 — per-tool invocation log. Makes CR §4.5 test #4 (Agent-mode
+  // v5.4 — per-tool invocation log. Makes test #4 (Agent-mode
   // auto-engagement smoke) falsifiable: a positive log line proves the
   // qa-debug tool fired without a preceding "Allow tool" confirmation dialog.
   // Fires the wire-side MCP notification (consumed by the MCP client) AND the
@@ -82,8 +82,7 @@ export function createQaDebugServer(options: CreateQaDebugServerOptions): McpSer
       try {
         const input = qa_get_failure_context.inputSchemaZod.parse(args);
         const active = store.getActivePause(input.session_id)!;
-        const proposal = store.pollProposal(active.session_id);
-        const view = toFailureContextView(active, proposal, input.response_format ?? 'concise');
+        const view = toFailureContextView(active, input.response_format ?? 'concise');
         return {
           content: [{ type: 'text' as const, text: JSON.stringify(view, null, 2) }],
           structuredContent: view as unknown as { [key: string]: unknown },
@@ -94,7 +93,7 @@ export function createQaDebugServer(options: CreateQaDebugServerOptions): McpSer
     },
   );
 
-  // ---- v5.16 PLAN-cdp-port-discovery — Mode C discovery + selection ----
+  // ---- v5.16 — Mode C discovery + selection ----
 
   server.registerTool(
     qa_discover_chromes.name,

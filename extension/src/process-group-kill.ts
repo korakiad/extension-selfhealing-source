@@ -1,6 +1,6 @@
 /**
- * PLAN-stop-button-process-group-kill — signal an entire process group the way
- * a terminal Ctrl-C does, instead of a single PID.
+ * Signal an entire process group the way a terminal Ctrl-C does, instead of a
+ * single PID.
  *
  * The mocha child is spawned `detached: true` (see session-manager.ts) so its
  * PID is also its PGID; everything it launches (the Electron / OpenFin / Chrome

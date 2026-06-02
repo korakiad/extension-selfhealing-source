@@ -1,5 +1,5 @@
 /**
- * QA Debug Companion — Skill engagement evals (SLICE_PLAN.md §S3(d)).
+ * QA Debug Companion — Skill engagement evals.
  *
  * Runs against the user's Claude Code subscription seat via `claude -p` subprocess
  * instead of a raw `@anthropic-ai/sdk` API-key call. Rationale:
@@ -18,7 +18,7 @@
  *   - Capture the FIRST `tool_use` block; record its bare tool name (strip the
  *     `mcp__<server>__` Claude-Code wrapper); SIGTERM the subprocess.
  *
- * Pass thresholds per SLICE_PLAN §S3 exit criteria:
+ * Pass thresholds (exit criteria):
  *   - Scenarios 1,2,3 (positive): first tool = qa_get_failure_context in ≥4/5 trials per scenario.
  *   - Scenarios 4,5,6 (negative): no qa_* tool call in 5/5 trials per scenario.
  *

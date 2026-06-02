@@ -1,5 +1,5 @@
 /**
- * Self-update flow per PLAN-update-checker.md.
+ * Self-update flow.
  *
  * Polls GitHub for the latest *stable* release of the public mirror, notifies
  * when a newer vsix exists, and offers a one-click download +

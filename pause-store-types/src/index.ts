@@ -13,12 +13,9 @@
  * of this file.
  */
 
-export type ProposalKind = 'mark_passed' | 'abort_suite';
-export type ProposalStatus = 'none' | 'awaiting_human' | 'accepted' | 'rejected';
-
 /**
- * v5.16 PLAN-cdp-port-discovery — chrome lifecycle ownership.
- *  - 'framework' — test framework launched chrome (Mode C; only path in current PLAN).
+ * v5.16 — chrome lifecycle ownership.
+ *  - 'framework' — test framework launched chrome (Mode C; only path in current use).
  *  - 'companion' — qa-debug-companion launched chrome (legacy migrated mode='B' only).
  * The companion never closes a framework-owned chrome; there is no close-browser
  * verb (the framework's own teardown disposes it).
@@ -26,10 +23,10 @@ export type ProposalStatus = 'none' | 'awaiting_human' | 'accepted' | 'rejected'
 export type ChromeOwner = 'framework' | 'companion';
 
 /**
- * PLAN-runtime-tab-orient — best-effort runtime label from /json/version
- * User-Agent. `unknown` when the UA is absent or app-overridden (Electron's
- * app.userAgentFallback can strip the "Electron" token). Behavior never depends
- * on this label — `tab_count` is the load-bearing multi-tab signal.
+ * Best-effort runtime label from /json/version User-Agent. `unknown` when the
+ * UA is absent or app-overridden (Electron's app.userAgentFallback can strip
+ * the "Electron" token). Behavior never depends on this label — `tab_count` is
+ * the load-bearing multi-tab signal.
  */
 export type ChromeRuntime = 'chrome' | 'electron' | 'openfin' | 'unknown';
 
@@ -38,13 +35,13 @@ export interface AvailableChrome {
   port: number;
   ws_url: string;        // browser-level ws://.../devtools/browser/<UUID>, normalized 0.0.0.0→127.0.0.1
   page_titles: string[]; // up to 5 from /json/list — used for picker UI / agent prompts
-  // PLAN-runtime-tab-orient — count of `type==='page'` targets from /json/list;
+  // Count of `type==='page'` targets from /json/list;
   // the orient/tab-switch trigger (>1). Override-proof. /json/list fail → 1.
   tab_count: number;
   runtime: ChromeRuntime; // best-effort; see ChromeRuntime note above.
 }
 
-/** v5.16 — selection source for §3.4 diagnostic log. */
+/** v5.16 — selection source for the diagnostic log. */
 export type ChromeSelectionSource = 'agent' | 'extension-ui' | 'auto';
 
 /** v5.16 — payload fired through onChromeSelected event AND returned from recordChromeSelection. */
@@ -61,7 +58,7 @@ export interface PausePayload {
   /** It()-only title (kept for Output Channel + UI label friendliness). */
   test_title: string;
   /**
-   * v5.5 §2.4 — canonical id key (Mocha Runnable.fullTitle()).
+   * v5.5 — canonical id key (Mocha Runnable.fullTitle()).
    */
   full_title: string;
   file: string;
@@ -81,15 +78,6 @@ export interface PausePayload {
   max_retries_remaining: number;
 }
 
-export interface Proposal {
-  proposal_id: string;
-  session_id: string;
-  kind: ProposalKind;
-  rationale: string;
-  status: Exclude<ProposalStatus, 'none'>;
-  created_at_ms: number;
-}
-
 export interface FailureContextView {
   session_id: string;
   test_title: string;
@@ -99,7 +87,7 @@ export interface FailureContextView {
   failing_assertion: string;
   stack_trace: { frames: string[]; more_at?: string };
   /**
-   * v5.16 — derived from selected_cdp_port + available_chromes (PLAN §3.2).
+   * v5.16 — derived from selected_cdp_port + available_chromes.
    * Null until qa_select_chrome / extension UI commits a selection. Optional
    * in interface; consumers pre-v5.16 may not project this field.
    */
@@ -113,7 +101,6 @@ export interface FailureContextView {
   paused_for_ms: number;
   retry_count: number;
   max_retries_remaining: number;
-  last_proposal_status: ProposalStatus;
 }
 
 export type ResponseFormat = 'concise' | 'detailed';
@@ -131,27 +118,16 @@ export interface PauseStoreDisposable {
 /**
  * PauseStore — the contract every implementation must honour.
  *
- * S4 contract addition per S4_DESIGN.md §3.3: `recordDecision` for
- * `retry`/`give_up` clears the proposal slot atomically with the decision
- * record, closing the orphan-proposal window when an agent calls
- * `qa_propose_mark_passed` then immediately `qa_request_retry`.
  * `clearActivePause` is the SessionManager-driven step that runs after the
- * IPC round-trip completes (per S4_DESIGN.md §3.3 / §9.3).
+ * IPC round-trip completes.
  *
- * v5.16 PLAN-cdp-port-discovery additions: `recordChromeSelection` +
- * `replaceAvailableChromes` mutate the active pause's discovery/selection
- * state. Fire `onChromeSelected` / `onChromeDeselected` events AFTER
- * persistence resolves so session-manager wires playwright-mcp at the
- * correct moment (§3.18).
+ * v5.16 additions: `recordChromeSelection` + `replaceAvailableChromes` mutate
+ * the active pause's discovery/selection state. Fire `onChromeSelected` /
+ * `onChromeDeselected` events AFTER persistence resolves so session-manager
+ * wires playwright-mcp at the correct moment.
  */
 export interface PauseStore {
   getActivePause(sessionId?: string): PausePayload | undefined;
-  proposeAction(
-    sessionId: string,
-    kind: ProposalKind,
-    rationale: string,
-  ): Proposal;
-  pollProposal(sessionId: string): Proposal | undefined;
   recordDecision(
     sessionId: string,
     kind: 'give_up',
@@ -188,10 +164,9 @@ export interface PauseStore {
 
 export function toFailureContextView(
   active: PausePayload,
-  proposal: Proposal | undefined,
   format: ResponseFormat,
 ): FailureContextView {
-  // v5.16 — derive cdp_ws_url from selection state (PLAN §3.2). Null until
+  // v5.16 — derive cdp_ws_url from selection state. Null until
   // qa_select_chrome / extension UI commits a selection. The agent's
   // 3-branch picker in qa_get_failure_context reads available_chromes +
   // selected_cdp_port to drive the askUser flow.
@@ -220,7 +195,6 @@ export function toFailureContextView(
     paused_for_ms: Date.now() - active.paused_at_ms,
     retry_count: active.retry_count,
     max_retries_remaining: active.max_retries_remaining,
-    last_proposal_status: proposal?.status ?? 'none',
   };
   if (format === 'concise') {
     view.stack_trace = {
@@ -235,7 +209,7 @@ export function toFailureContextView(
   return view;
 }
 
-// ---- v5.16 PLAN-cdp-port-discovery — host-agnostic verb cores ----
+// ---- v5.16 — host-agnostic verb cores ----
 // The extension LM-tool host and the stdio MCP host call these so the
 // discover/select store logic + the NO_CHROMES_FOUND message live in one place.
 // `probePorts` is injected (rather than imported) so this package stays a leaf
@@ -305,9 +279,9 @@ export async function selectChromeCore(
 }
 
 /**
- * v5.16 PLAN-cdp-port-discovery §3.2 + §3.7 (H4) — pure normalization for
- * stored `PausePayload` blobs read from untrusted-by-design storage (Memento
- * or in-memory). Returns `{payload, diagnostics}`; caller logs diagnostics.
+ * v5.16 — pure normalization for stored `PausePayload` blobs read from
+ * untrusted-by-design storage (Memento or in-memory). Returns
+ * `{payload, diagnostics}`; caller logs diagnostics.
  *
  * Migration table:
  *  - `available_chromes` present → no migration.
@@ -334,7 +308,7 @@ export function normalizePausePayload(raw: unknown): {
   let chrome_owner: ChromeOwner | undefined;
 
   if (Array.isArray(obj.available_chromes)) {
-    // PLAN-runtime-tab-orient — default tab_count/runtime on pre-field stored data
+    // Default tab_count/runtime on pre-field stored data
     // so downstream readers (and the SKILL Step 1c trigger) always see the fields.
     available_chromes = (obj.available_chromes as Partial<AvailableChrome>[]).map((c) => ({
       port: c.port as number,

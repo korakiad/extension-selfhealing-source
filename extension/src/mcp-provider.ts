@@ -1,11 +1,11 @@
 /**
  * QaDebugMcpProvider — implements vscode.McpServerDefinitionProvider.
  *
- * CR-v5.14 §2.1 / §3.4 — the qa-debug verbs migrated to the VS Code Language
- * Model Tool API (extension/src/lm-tools/), so this provider exposes only the
- * external MCP servers the companion fronts during a pause. Today that is
- * playwright-mcp; the descriptor registry below is the extension point for a
- * second server (e.g. chrome-devtools-mcp, deferred to phase 2): push another
+ * The qa-debug verbs migrated to the VS Code Language Model Tool API
+ * (extension/src/lm-tools/), so this provider exposes only the external MCP
+ * servers the companion fronts during a pause. Today that is playwright-mcp;
+ * the descriptor registry below is the extension point for a second server
+ * (e.g. chrome-devtools-mcp, deferred to phase 2): push another
  * `McpServerDescriptor` and gate it via its own `resolve`.
  *
  * Returns [] at idle, [<servers whose resolve() returns non-null>] during pause.
@@ -68,10 +68,10 @@ export class QaDebugMcpProvider implements vscode.McpServerDefinitionProvider {
   }
 
   /**
-   * v5.16 PLAN-cdp-port-discovery §3.18 — clear MCP registration mid-pause
-   * without ending the pause itself (used when `onChromeDeselected` fires
-   * because qa_discover_chromes invalidated the prior selection). Re-selection
-   * via `onChromeSelected` will re-register.
+   * v5.16 — clear MCP registration mid-pause without ending the pause itself
+   * (used when `onChromeDeselected` fires because qa_discover_chromes
+   * invalidated the prior selection). Re-selection via `onChromeSelected`
+   * will re-register.
    */
   clearPaused(): void {
     if (this.state === 'idle') return;

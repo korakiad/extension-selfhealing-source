@@ -1,12 +1,10 @@
 /**
  * Ambient status-bar entry indicating an active pause.
  *
- * ARCHITECTURE-CR-v5.4 §2.2 + §3.7. Augments (does not replace) the pause
- * notification toast per [B4] — the toast is ephemeral push, this entry is
- * ambient pull.
+ * Augments (does not replace) the pause notification toast — the toast is
+ * ephemeral push, this entry is ambient pull.
  *
- * v5.16 PLAN-cdp-port-discovery §3.14 — text + command branch by chrome
- * selection state:
+ * v5.16 — text + command branch by chrome selection state:
  *  - selection committed (auto or explicit) → text "QA Paused", click focuses
  *    Test Explorer.
  *  - available_chromes.length === 0, no selection → text "Enter Chrome ports",

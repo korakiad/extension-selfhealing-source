@@ -1,14 +1,14 @@
 /**
  * Entry point: register the qa-debug Language Model Tools on extension
  * activation. Visibility is gated per-tool by the `when: "qa-debug.paused"`
- * clause in package.json contributes.languageModelTools (CR-v5.14 §3.4); this
+ * clause in package.json contributes.languageModelTools; this
  * file is the runtime registration step required by
  * code.visualstudio.com/api/extension-guides/tools#registering-a-language-model-tool.
  *
- * Verdict verbs removed (2026-05-31): a pause is now a pure inspection hold —
+ * Verdict verbs removed (2026-05-31): a pause is a pure inspection hold —
  * no mark-passed / give-up / abort-suite verbs. The surviving tools ground the
  * agent (get_failure_context) and let it land on a dialable browser
- * (discover/select chrome). The QA re-runs from Test Explorer ▶ or ends the run
+ * (discover/select chrome). The QA re-runs from Test Explorer or ends the run
  * with Stop; the test stands at its natural Mocha outcome.
  */
 
@@ -26,7 +26,7 @@ export function registerQaDebugLmTools(
 ): void {
   context.subscriptions.push(
     vscode.lm.registerTool('qa-debug_qa_get_failure_context', new GetFailureContextTool(deps)),
-    // v5.16 PLAN-cdp-port-discovery — Mode C discovery + selection.
+    // v5.16 — Mode C discovery + selection.
     vscode.lm.registerTool('qa-debug_qa_discover_chromes', new DiscoverChromesTool(deps)),
     vscode.lm.registerTool('qa-debug_qa_select_chrome', new SelectChromeTool(deps)),
     // CDP-native element inspector (Overlay) — pierces iframes + shadow DOM.

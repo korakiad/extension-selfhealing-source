@@ -2,8 +2,8 @@
  * DecisionRouter — holds the single in-flight `decision.await` callback per
  * session_id and routes UI-button / agent-tool commits to it.
  *
- * S4_DESIGN.md §9.1 / §9.3 — single-shot semantics; mocha-crash-during-await
- * synthesis; the agent/human race observations.
+ * Single-shot semantics; mocha-crash-during-await synthesis; the agent/human
+ * race observations.
  */
 
 import type * as vscode from 'vscode';
@@ -31,7 +31,7 @@ export class DecisionRouter {
   /**
    * Single-shot commit. Returns false if no pending callback exists for the
    * sessionId (already-committed or never-enrolled). Tool handlers and UI
-   * commands surface a false return as NO_ACTIVE_PAUSE per S4_DESIGN.md §9.4.
+   * commands surface a false return as NO_ACTIVE_PAUSE.
    */
   commit(sessionId: string, kind: DecisionKind, reason: string, by: DecisionBy): boolean {
     const p = this.pending.get(sessionId);
@@ -47,7 +47,7 @@ export class DecisionRouter {
     return true;
   }
 
-  /** Synthesizes give_up. Used by §9.3 row 1 (mocha-crash) and §11 stale-resume. */
+  /** Synthesizes give_up. Used by the mocha-crash path and stale-resume. */
   abandon(sessionId: string, reason: string, by: DecisionBy = 'hook'): boolean {
     return this.commit(sessionId, 'give_up', reason, by);
   }

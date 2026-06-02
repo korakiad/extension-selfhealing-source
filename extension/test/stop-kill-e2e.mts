@@ -1,5 +1,5 @@
 /**
- * E2E for the stop-button process-group kill (PLAN-stop-button-process-group-kill).
+ * E2E for the stop-button process-group kill.
  *
  * Run from the extension dir:
  *   node --import tsx test/stop-kill-e2e.mts

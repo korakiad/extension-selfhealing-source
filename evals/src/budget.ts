@@ -95,7 +95,7 @@ async function main() {
   console.log(`  tool-selection accuracy issues:    measured empirically by evals/engagement.ts`);
 
   console.log(
-    `\nPer SLICE_PLAN §S3(c)+§4 disposition: Phase 1 DEFERS Tool Search Tool conditional on the engagement evals passing the 12/15 + 5/5 + 5/5 + 5/5 bar without it. If those evals miss, Tool Search becomes a blocking Phase 1 add.`,
+    `\nPhase 1 DEFERS Tool Search Tool conditional on the engagement evals passing the 12/15 + 5/5 + 5/5 + 5/5 bar without it. If those evals miss, Tool Search becomes a blocking Phase 1 add.`,
   );
 }
 

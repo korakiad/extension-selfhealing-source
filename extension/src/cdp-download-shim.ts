@@ -19,8 +19,6 @@
  * Scope: makes *attach* succeed. It does NOT make Playwright-managed downloads
  * work — same tradeoff as `noDefaults`. For the read-only pause-inspection flow
  * (snapshot / evaluate / screenshot) that tradeoff is irrelevant.
- *
- * See PLAN-cdp-electron-shim.md.
  */
 
 import * as http from 'node:http';

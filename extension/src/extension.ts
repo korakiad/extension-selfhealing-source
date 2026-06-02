@@ -1,7 +1,7 @@
 /**
  * QA Debug Companion — activate() orchestration.
  *
- * S4_DESIGN.md §2 module map + §11 stale-resume.
+ * activate() orchestration — module map and stale-resume.
  */
 
 import * as vscode from 'vscode';
@@ -48,9 +48,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   );
   void updateChecker.runBackgroundCheck();
 
-  // v5.16 PLAN-cdp-port-discovery — QA_DEBUG_CDP_WS_URL no longer flows to
-  // mocha child; per-pause CDP discovery happens in qa-hooks. One-time warning
-  // if the user still has it set in their environment.
+  // v5.16 — QA_DEBUG_CDP_WS_URL no longer flows to mocha child; per-pause CDP
+  // discovery happens in qa-hooks. One-time warning if the user still has it
+  // set in their environment.
   if (process.env.QA_DEBUG_CDP_WS_URL) {
     appendInfo(
       channel,
@@ -69,7 +69,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const pauseStore = new MementoPauseStore(context.globalState);
   const decisionRouter = new DecisionRouter(channel);
 
-  // CR-v5.14 §3.4 — qa-debug verbs are now first-party Language Model Tools
+  // qa-debug verbs are now first-party Language Model Tools
   // (extension/src/lm-tools/). The MCP provider survives for playwright-mcp
   // only; it returns [] at idle, [playwright-mcp(...)] during pause.
   const mcpProvider = new QaDebugMcpProvider();
@@ -78,10 +78,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.lm.registerMcpServerDefinitionProvider('qa-debug.mcp-servers', mcpProvider),
   );
 
-  // CR-v5.14 §3.1 — register the qa-debug LanguageModelTool classes
-  // (get_failure_context + discover/select chrome; verdict verbs removed
-  // 2026-05-31). The per-tool `when: "qa-debug.paused"` clause in package.json
-  // gates visibility; these registrations are always live across activations.
+  // Register the qa-debug LanguageModelTool classes (get_failure_context +
+  // discover/select chrome; verdict verbs removed 2026-05-31). The per-tool
+  // `when: "qa-debug.paused"` clause in package.json gates visibility; these
+  // registrations are always live across activations.
   registerQaDebugLmTools(context, {
     pauseStore,
     auditChannel: channel,
@@ -89,7 +89,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   // TestController needs a startSuiteRun callback that delegates to
   // SessionManager. SessionManager isn't constructed until after the
-  // wrapper, so use a deferred binding. v5.5 §2.5 — opts gain grep +
+  // wrapper, so use a deferred binding. v5.5 — opts gain grep +
   // cancellationToken so the run handler can pass through the planned
   // alternation grep + the Test Explorer cancel button.
   let sessionMgr: SessionManager | undefined;
@@ -105,8 +105,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     });
   });
 
-  // v5.3 §2.3 — probe chat-open commands at activation so notification handler
-  // can degrade gracefully. Both are internal commands per CR §0 / [R#3-NB2].
+  // v5.3 — probe chat-open commands at activation so notification handler
+  // can degrade gracefully. Both are internal commands per [R#3-NB2].
   let chatOpenAvailable = false;
   let chatOpenFallbackAvailable = false;
   try {
@@ -128,18 +128,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     );
   }
 
-  // v5.3 §2.1 — register chat participant. Runtime-guarded inside the helper
+  // v5.3 — register chat participant. Runtime-guarded inside the helper
   // for engines.vscode below the createChatParticipant landing version.
   if (workspaceRoot) {
     registerQaDebugChatParticipant(context, pauseStore, channel);
   }
 
-  // v5.4 §2.2 / §3.7 — ambient pause indicator. Lives across activations;
+  // v5.4 — ambient pause indicator. Lives across activations;
   // SessionManager toggles show/hide via the returned handle.
   const pauseStatusBar = registerPauseStatusBar(context, pauseStore, channel);
   const runStatusBar = registerRunStatusBar(context, channel);
 
-  // v5.5 §2.7 — FileSystemWatcher keeps the discovered Test Explorer tree in
+  // v5.5 — FileSystemWatcher keeps the discovered Test Explorer tree in
   // sync with on-disk changes. 300ms per-URI debounce absorbs editor save +
   // multi-buffer flush bursts; reparse semantics are id-based replace (NB10)
   // so expand/collapse state survives.
@@ -207,9 +207,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       channel,
     });
 
-    // v5.11 — restart-reset semantics per PLAN-no-persist-on-restart.md. The
-    // previous extension-host instance is gone; any leftover Memento pause is
-    // orphaned. Audit-trail goes to audit.jsonl, not live UI.
+    // v5.11 — restart-reset semantics. The previous extension-host instance is
+    // gone; any leftover Memento pause is orphaned. Audit-trail goes to
+    // audit.jsonl, not live UI.
     const orphan = pauseStore.peekActivePause();
     if (orphan) {
       try {
@@ -251,7 +251,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     );
   }
 
-  // Pre-S4-PR TestMessage-retention smoke per S4_DESIGN §7.2 R#3-NB1.
+  // TestMessage-retention smoke.
   // Invoked via Command Palette: "QA Debug: Smoke — TestMessage Retention".
   context.subscriptions.push(
     vscode.commands.registerCommand(

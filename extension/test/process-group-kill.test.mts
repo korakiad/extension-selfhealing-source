@@ -1,5 +1,5 @@
 /**
- * Unit test for signalProcessGroup (PLAN-stop-button-process-group-kill).
+ * Unit test for signalProcessGroup.
  *
  * Run from the extension dir:
  *   node --import tsx test/process-group-kill.test.mts

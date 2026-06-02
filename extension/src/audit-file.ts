@@ -8,21 +8,20 @@
  *  - `orphan-pause-at-activate` — written from `activate()` when a Memento
  *    pause entry was leftover from a prior extension-host instance.
  *
- * Dual-write hazard (PLAN-no-persist-on-restart.md NB#8): if `deactivate()`
- * writes a `deactivate-with-active-pause` line then is `SIGKILL`'d before the
- * Memento `clearActivePause` flushes, the next `activate()` writes an
- * additional `orphan-pause-at-activate` line for the same `session_id`.
- * Consumers of `audit.jsonl` should dedupe by `(session_id, latest kind)` if
- * they need one row per pause.
+ * Dual-write hazard: if `deactivate()` writes a `deactivate-with-active-pause`
+ * line then is `SIGKILL`'d before the Memento `clearActivePause` flushes, the
+ * next `activate()` writes an additional `orphan-pause-at-activate` line for
+ * the same `session_id`. Consumers of `audit.jsonl` should dedupe by
+ * `(session_id, latest kind)` if they need one row per pause.
  *
  * Schema-evolution rule: changes to either entry shape must be additive only
  * (new optional fields). Removing or renaming a field breaks downstream
  * consumers that read older lines from the same file.
  *
- * Phase 1 trade-off (per PLAN-clean-shutdown-sentinel.md [R#NB6]):
- * non-atomic write (read-existing + concat + write). Single-writer per call
- * site, no concurrent contention; the crash window is microseconds during
- * `fs.writeFile`. Tmpfile+rename is a Phase-2 polish target.
+ * Phase 1 trade-off: non-atomic write (read-existing + concat + write).
+ * Single-writer per call site, no concurrent contention; the crash window is
+ * microseconds during `fs.writeFile`. Tmpfile+rename is a Phase-2 polish
+ * target.
  *
  * Phase 2 follow-ups:
  *  - Tmpfile+rename for atomicity.

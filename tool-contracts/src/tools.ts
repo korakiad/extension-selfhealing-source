@@ -10,8 +10,8 @@
  * breakpoint): the agent investigates the held browser, proposes a fix in chat,
  * and the QA re-runs from Test Explorer ▶ or ends the run with Stop. There is no
  * agent- or human-committed pass/fail verdict — the test stands at its natural
- * Mocha outcome. Surviving tools: get_failure_context (read-only grounding) +
- * the discover/select chrome pair.
+ * Mocha outcome. Surviving tools: get_failure_context (read-only grounding),
+ * the discover/select chrome pair, and qa_pick_element (CDP-native picker).
  *
  * Description rules:
  *  - Third-person voice (Skills best-practices "Always write in third person").
@@ -32,7 +32,7 @@ export interface JsonSchemaProp {
   type: 'string' | 'number' | 'boolean' | 'array';
   enum?: string[];
   description?: string;
-  // v5.16 PLAN-cdp-port-discovery §3.11.0 — array support for qa_discover_chromes.ports.
+  // v5.16 — array support for qa_discover_chromes.ports.
   items?: { type: 'string' | 'number' | 'boolean'; minimum?: number; maximum?: number };
   minItems?: number;
   maxItems?: number;
@@ -45,7 +45,7 @@ export interface JsonSchemaProp {
  *
  * Per the spec, `destructiveHint` and `idempotentHint` are "meaningful only
  * when readOnlyHint == false". A read-only tool should therefore OMIT them
- * rather than emit them as defaults (see CR-v5.4 §2.3 + iter#2 NB1).
+ * rather than emit them as defaults.
  */
 export interface QaToolAnnotations {
   readOnlyHint?: boolean;
@@ -60,7 +60,7 @@ export interface QaToolDef<I = unknown> {
   inputSchemaJson: QaToolJsonSchema;
   inputSchemaZod: z.ZodType<I>;
   /**
-   * v5.4 §3.4.3 — VS Code 1.120 consumes ONLY `title` + `readOnlyHint` from
+   * v5.4 — VS Code 1.120 consumes ONLY `title` + `readOnlyHint` from
    * MCP annotations; the remaining hints are forward-compat for future MCP
    * clients. Empty/undefined = unannotated tool (the default in MCP).
    */
@@ -90,7 +90,7 @@ export const qa_get_failure_context: QaToolDef<{
     'console_logs: { lines (<=100 inline; concise mode <=20), more_at? }, paused_for_ms, retry_count, max_retries_remaining }. ' +
     'A pause is a pure inspection hold (a breakpoint): there is no pass/fail verdict to commit and no decision verb to call. ' +
     'After investigating, propose any fix in chat; the QA re-runs from Test Explorer or ends the run with Stop. ' +
-    'Chrome selection branching (v5.16 PLAN-cdp-port-discovery): ' +
+    'Chrome selection branching: ' +
     '(1) selected_cdp_port non-null AND cdp_ws_url non-null → selection already committed; playwright-mcp is auto-registered against the held browser — just call browser_snapshot (no attach step; cdp_ws_url is informational, not passed to any tool). ' +
     '(2) selected_cdp_port null AND available_chromes.length === 1 → call qa_select_chrome(session_id, available_chromes[0].port); no user confirmation needed. ' +
     '(3) selected_cdp_port null AND available_chromes.length >= 2 → STOP, ask the user in chat which chrome to use (surface page_titles for context), then call qa_select_chrome with their pick. ' +
@@ -115,14 +115,14 @@ export const qa_get_failure_context: QaToolDef<{
     session_id: z.string().optional(),
     response_format: z.enum(['concise', 'detailed']).optional(),
   }),
-  // v5.4 §2.3 — read-only over MementoPauseStore. destructiveHint /
+  // v5.4 — read-only over MementoPauseStore. destructiveHint /
   // idempotentHint OMITTED per MCP spec "meaningful only when
   // readOnlyHint == false". openWorldHint=false: the tool's domain of
   // interaction is closed (pause store only).
   annotations: { readOnlyHint: true, openWorldHint: false },
 };
 
-// ---- v5.16 PLAN-cdp-port-discovery — Mode C chrome discovery + selection ----
+// ---- v5.16 — Mode C chrome discovery + selection ----
 
 export const qa_discover_chromes: QaToolDef<{ session_id: string; ports: number[] }> = {
   name: 'qa_discover_chromes',
