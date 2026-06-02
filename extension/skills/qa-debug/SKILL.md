@@ -13,7 +13,7 @@ There is no retry verb, no mark-passed verb, no give-up verb. Re-running after a
 
 ## Workflow checklist (copy into your reply and tick as you go)
 
-- [ ] Step 0: Ask one either/or — **A** "let me find the root cause" or **B** "you know it, I'll just edit" — then branch
+- [ ] Step 0: Ask one either/or — **A** "find the root cause for me" or **B** "I'll tell you the fix, you apply it" — then branch
 - [ ] Step 1: Ground via `qa-debug_qa_get_failure_context` (concise)
 - [ ] Step 1b: Select a chrome (auto / `qa-debug_qa_select_chrome` / `qa-debug_qa_discover_chromes`) so `cdp_ws_url` becomes non-null
 - [ ] Step 1c: If the selected chrome's `tab_count > 1` (Electron / OpenFin), switch to the page under test via `browser_tabs` **before** investigating
@@ -25,14 +25,14 @@ There is no retry verb, no mark-passed verb, no give-up verb. Re-running after a
 
 Open with one short either/or question — present it as an interactive choice popup with exactly two **selectable** options the user clicks (a two-button / quick-pick popup is good here — use it). Just don't ask an open-ended, free-text *"how would you like me to proceed? / enter your answer"* question — that's the wrong shape; the answer is always one of these two:
 
-> **Option A — "Let me find the root cause for you":** *you're not sure why it failed — I'll investigate the held browser end-to-end, diagnose the cause, and come back with the fix.*
+> **Option A — "Find the root cause for me":** *you're not sure why it failed — I'll investigate the held browser end-to-end, diagnose the cause, and come back with a proposed fix for you to approve.*
 >
-> **Option B — "You already know the root cause":** *tell me what's wrong and the change you want, and I'll make the edit for you — no investigation needed.*
+> **Option B — "I'll tell you the fix, you apply it":** *you already know the cause — describe what's wrong and the exact change you want, and I'll apply exactly that. No investigation, and I will not guess my own fix or touch anything you didn't ask for.*
 
 Then branch:
 
-- **A** (or a vague *"go ahead"* / *"you find it"*) → run the full Step 1 → Step 2 investigation.
-- **B** → skip the browser investigation; ground with Step 1 only if you need file/line context, then propose or apply the edit they describe.
+- **A** (or a vague *"go ahead"* / *"you find it"*) → run the full Step 1 → Step 2 investigation, then **propose** a fix per Step 3 (don't apply it unless autopilot).
+- **B** → skip the browser investigation. Your **first** move is to ask the user to state the root cause and the exact change they want — do **not** infer a fix, edit any file, or investigate until they have described it. Once they describe it, apply **exactly** that change (ground via Step 1 only if you need the file/line). Their description *is* the instruction, so you don't need a separate propose-and-wait round for the change they dictated — but never apply a fix they did not describe.
 
 Skip the ask only when the user's **own words** decide it (they described the root cause → treat as **B**; they explicitly told you to just go investigate → treat as **A**), or in autopilot / auto-approve mode (default to **A**). The prefilled launch message (*"A Mocha test just paused…"*) is the session entry point, **not** a user decision — do **not** read it as "asked you to investigate." On the first turn of a pause, run the Step 0 ask unless one of those genuine conditions holds.
 
@@ -107,7 +107,7 @@ For runtime-state queries that don't need the bulk network or console feed, pref
 There is no verdict to commit and no decision tree to walk — a pause is just a held breakpoint for you to investigate. Once Step 2 surfaces the cause, do this:
 
 1. **State a one-line conclusion first, then the evidence.** Cite concrete findings from Step 2 (a `browser_evaluate` return value, a `browser_snapshot` observation, a network row the user opted into). *"Let's try again"* without a diagnosis is not a conclusion.
-2. **Propose the fix in chat** — file + line and the concrete change, enough that the user can paste it. For a product defect that's a source file; for a stale assertion that's the spec. **Surface it; don't apply it** unless the session is in autopilot / auto-approve mode (then you may edit and say so).
+2. **Propose the fix in chat** — file + line and the concrete change, enough that the user can paste it. For a product defect that's a source file; for a stale assertion that's the spec. **Surface it; don't apply it** unless the session is in autopilot / auto-approve mode (then you may edit and say so). *(This propose-first gate covers a fix **you** diagnosed in path A. A change the user explicitly dictated under Step 0 Option B is their instruction — apply exactly that, no separate approval round.)*
    - **Selector fixes:** if the fix is a selector change and the right DOM node isn't obvious from `browser_snapshot` alone, **invoke the `identify-element` skill before writing the diff** — the picker has the QA click the target in the held browser and returns structured DOM attributes to build a project-matched locator. Don't guess selectors when you can ask the QA visually.
 3. **Ask explicitly: "anything else before you re-run?"** — *"Anything else you'd like me to investigate, add to the fix, or check first (pull network/console if you want them, check a sibling spec, add a defensive guard)?"* Do **not** end the turn after the diff; the user often has follow-up steps. Keep the loop open and iterate on what they ask for.
 4. **End the turn** only when the user signals they're done (*"looks good, going to re-run"*, *"that's it, thanks"*) or pivots to a different concern.
@@ -131,6 +131,7 @@ There is no verdict to commit and no decision tree to walk — a pause is just a
 | Calling `browser_snapshot` on a multi-tab runtime (`tab_count > 1`, Electron / OpenFin) without selecting the page under test first. | playwright-mcp attaches to an arbitrary page when the endpoint exposes many; snapshotting blind inspects the wrong window and produces a confident-but-wrong diagnosis. Run Step 1c: `browser_tabs(action:"list")` → match or ask → `browser_tabs(action:"select", index)`. |
 | Guessing a port for `qa-debug_qa_discover_chromes` instead of asking the user. | The port list is consumer-framework-specific (often locked, often non-default); guessing wastes a probe and ships a wrong answer if the guess succeeds against an unrelated chrome. |
 | Looking for a "mark passed" / "give up" / "retry" / "abort suite" verb to commit a result. | None exist — a pause is a pure inspection hold. You diagnose and propose; the QA re-runs from Test Explorer ▶ or ends the run with Stop. The test stands at its natural Mocha outcome. |
+| On Step 0 **Option B**, inferring a fix and editing the file yourself instead of first asking the user to describe the change. | **B** means *"I describe, you apply"* — the user dictates the exact edit and you apply only that. Clicking **B** is **not** a license to guess a fix and write it. Ask what's wrong and the exact change first, then apply precisely that — nothing they didn't ask for. |
 | Pseudo-code or prescriptive script for "how to investigate" the browser. | Step 2 is medium-freedom; multiple investigation paths are valid; over-prescribing causes you to skip the right tool when the failure shape suggests it. |
 | Editing `.mocharc.cjs`, the SKILL itself, or extension internals. | The QA owns the specs; the extension owns hook injection. You own diagnosis and source/spec edits. |
 | Chat-as-launcher patterns (e.g., "type `@qa-debug run X`"). | Test Explorer is the run surface; chat is conversation / investigation. |
