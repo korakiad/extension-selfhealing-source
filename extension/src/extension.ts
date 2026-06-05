@@ -20,6 +20,7 @@ import { registerRunStatusBar } from './run-status-bar.js';
 import { SessionManager } from './session-manager.js';
 import { smokeTestMessageRetention } from './smoke-test-message.js';
 import { createTestControllerWrapper } from './test-controller.js';
+import { getTestMatchGlobs, TEST_MATCH_CONFIG_ID } from './test-glob.js';
 import { createUpdateChecker, parseRepoSlugFromPackageJson } from './update-checker.js';
 
 let sessionManagerSingleton: SessionManager | undefined;
@@ -146,13 +147,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // v0.0.4 — match the populateRoot glob (test-controller.ts). Watch only the
   // compiled-output spec files mocha will actually run; .ts source edits will
   // re-trigger via the consumer's build watch when build/dist updates.
-  const specWatcher = vscode.workspace.createFileSystemWatcher(
-    '{build,dist}/**/*.spec.js',
-    /* ignoreCreate */ false,
-    /* ignoreChange */ false,
-    /* ignoreDelete */ false,
-  );
-  context.subscriptions.push(specWatcher);
+  // The glob mirrors the `qaDebug.testMatch` setting and is rebuilt when that
+  // setting changes so the watched files track the user's chosen dir/suffix.
   const REPARSE_DEBOUNCE_MS = 300;
   const pendingReparse = new Map<string, NodeJS.Timeout>();
   context.subscriptions.push({
@@ -161,30 +157,58 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       pendingReparse.clear();
     },
   });
-  specWatcher.onDidCreate((uri) => {
-    testControllerWrapper.addFileItem(uri);
-  });
-  specWatcher.onDidChange((uri) => {
-    const key = uri.toString();
-    const existing = pendingReparse.get(key);
-    if (existing) clearTimeout(existing);
-    pendingReparse.set(
-      key,
-      setTimeout(() => {
-        pendingReparse.delete(key);
-        void testControllerWrapper.reparseFile(uri);
-      }, REPARSE_DEBOUNCE_MS),
-    );
-  });
-  specWatcher.onDidDelete((uri) => {
-    const key = uri.toString();
-    const pending = pendingReparse.get(key);
-    if (pending) {
-      clearTimeout(pending);
-      pendingReparse.delete(key);
+  // One watcher per testMatch glob (the setting may list several). Rebuilt as a
+  // set when the setting changes so watched files track the user's chosen globs.
+  let specWatchers: vscode.FileSystemWatcher[] = [];
+  const buildSpecWatchers = (): void => {
+    for (const w of specWatchers) w.dispose();
+    specWatchers = [];
+    const globs = getTestMatchGlobs();
+    for (const glob of globs) {
+      const watcher = vscode.workspace.createFileSystemWatcher(
+        glob,
+        /* ignoreCreate */ false,
+        /* ignoreChange */ false,
+        /* ignoreDelete */ false,
+      );
+      watcher.onDidCreate((uri) => {
+        testControllerWrapper.addFileItem(uri);
+      });
+      watcher.onDidChange((uri) => {
+        const key = uri.toString();
+        const existing = pendingReparse.get(key);
+        if (existing) clearTimeout(existing);
+        pendingReparse.set(
+          key,
+          setTimeout(() => {
+            pendingReparse.delete(key);
+            void testControllerWrapper.reparseFile(uri);
+          }, REPARSE_DEBOUNCE_MS),
+        );
+      });
+      watcher.onDidDelete((uri) => {
+        const key = uri.toString();
+        const pending = pendingReparse.get(key);
+        if (pending) {
+          clearTimeout(pending);
+          pendingReparse.delete(key);
+        }
+        testControllerWrapper.removeFileItem(uri);
+      });
+      specWatchers.push(watcher);
     }
-    testControllerWrapper.removeFileItem(uri);
-  });
+    appendInfo(channel, `[test-discovery] watching globs=[${globs.join(', ')}]`);
+  };
+  buildSpecWatchers();
+  context.subscriptions.push({ dispose: () => specWatchers.forEach((w) => w.dispose()) });
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (!e.affectsConfiguration(TEST_MATCH_CONFIG_ID)) return;
+      appendInfo(channel, `[test-discovery] ${TEST_MATCH_CONFIG_ID} changed — rebuilding watchers + tree`);
+      buildSpecWatchers();
+      void testControllerWrapper.refresh();
+    }),
+  );
 
   if (workspaceRoot) {
     sessionMgr = new SessionManager({

@@ -234,6 +234,20 @@
           "type": "boolean",
           "default": true,
           "description": "Route playwright-mcp's CDP connection through a local shim that swallows Browser.setDownloadBehavior. Required to attach to browsers whose CDP rejects browser-level context management (e.g. old Electron / embedded Chromium). Harmless for normal Chrome. Disable only if the shim interferes."
+        },
+        "qaDebug.testMatch": {
+          "type": [
+            "string",
+            "array"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "{build,dist}/{e2e,test,tests}/**/*.js",
+            "{build,dist}/**/*.{spec,test,e2e}.js"
+          ],
+          "markdownDescription": "Glob(s) (relative to each workspace folder) for the **compiled** test files shown in the Test Explorer. A single string or an array of patterns; results are unioned. `node_modules` is always excluded.\n\nThe default covers compiled tests under a test-only folder — `{build,dist}/{e2e,test,tests}/**/*.js` (any `.js`, including plain unsuffixed files) — plus self-labeled `*.{spec,test,e2e}.js` anywhere under `build`/`dist`. Most consumers need no change.\n\nFor an unusual layout, set this — e.g. `out/**/*.js`, or `[\"build/it/**/*.js\"]`. Set it in **User** settings to apply it without adding anything to the consumer's repo.\n\nMatch the compiled **`.js`** Mocha runs, not the `.ts` sources — matching TS would create duplicate tree items. Changes re-scan the Test Explorer immediately."
         }
       }
     },

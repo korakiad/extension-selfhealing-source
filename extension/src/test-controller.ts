@@ -32,6 +32,7 @@ import {
   type DiscoveredFile,
   type DiscoveredTest,
 } from './test-discovery.js';
+import { getTestMatchGlobs, TEST_MATCH_EXCLUDE } from './test-glob.js';
 
 export interface TestRunHandle {
   /** Lazy-create or look up the TestItem for a paused test; mark it failed with the inline buttons. */
@@ -89,6 +90,8 @@ export interface TestControllerWrapper {
   addFileItem(uri: vscode.Uri): void;
   /** v5.5 — invoked from FileSystemWatcher onDelete. */
   removeFileItem(uri: vscode.Uri): void;
+  /** Clear + re-scan with the current `qaDebug.testMatch` glob (on a setting change). */
+  refresh(): Promise<void>;
 }
 
 const TAG_SKIP = new vscode.TestTag('qa-debug.skip');
@@ -197,17 +200,30 @@ export function createTestControllerWrapper(
     }
   };
 
+  // Refresh (↻) button in the Test Explorer title bar — re-scan from scratch.
+  controller.refreshHandler = (): Promise<void> => refresh();
+
   async function populateRoot(): Promise<void> {
     // v0.0.4 — consumer projects compile TS → build/ or dist/. Mocha runs against
     // the compiled .js; the .ts sources are not seen by the runner. Scanning .ts
     // would create duplicate Test Explorer items (one per source, one per build
-    // artifact) that don't share an id with the runtime full-title path. Scope
-    // the glob to compiled-output dirs at the workspace root so only the files
-    // mocha will actually execute show up in the tree.
-    const uris = await vscode.workspace.findFiles(
-      '{build,dist}/**/*.spec.js',
-      '**/node_modules/**',
-    );
+    // artifact) that don't share an id with the runtime full-title path.
+    // The globs are the `qaDebug.testMatch` setting (default covers
+    // `{build,dist}/{e2e,test,tests}/**` + `*.{spec,test,e2e}.js`) so the QA can
+    // point discovery at their own compiled-output dirs/suffixes. Multiple
+    // patterns are unioned; a file matched by more than one is added once.
+    const globs = getTestMatchGlobs();
+    const seen = new Set<string>();
+    const uris: vscode.Uri[] = [];
+    for (const glob of globs) {
+      const found = await vscode.workspace.findFiles(glob, TEST_MATCH_EXCLUDE);
+      for (const u of found) {
+        const key = u.toString();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        uris.push(u);
+      }
+    }
     let added = 0;
     for (const uri of uris) {
       const id = itemIdForFile(uri);
@@ -219,10 +235,28 @@ export function createTestControllerWrapper(
       added++;
     }
     if (added === 0) {
-      appendInfo(channel, `[test-discovery] root populate (re-entry) — ${uris.length} file items unchanged`);
+      appendInfo(
+        channel,
+        `[test-discovery] root populate (re-entry) globs=[${globs.join(', ')}] — ${uris.length} file items unchanged`,
+      );
     } else {
-      appendInfo(channel, `[test-discovery] root populate added=${added} total-files=${uris.length}`);
+      appendInfo(
+        channel,
+        `[test-discovery] root populate globs=[${globs.join(', ')}] added=${added} total-files=${uris.length}`,
+      );
     }
+  }
+
+  // Clears the discovered tree and re-scans with the current testMatch glob.
+  // populateRoot only ADDS, so a narrowed/changed glob would otherwise leave
+  // stale items behind. Wired to the Test Explorer refresh button and re-run on
+  // a `qaDebug.testMatch` settings change (see extension.ts).
+  async function refresh(): Promise<void> {
+    controller.items.replace([]); // drops all root files + their descendants
+    items.clear();
+    discoveredFiles.clear();
+    discoveredByItId.clear();
+    await populateRoot();
   }
 
   async function parseAndPopulate(fileItem: vscode.TestItem): Promise<void> {
@@ -582,6 +616,7 @@ export function createTestControllerWrapper(
     addFileItem,
     removeFileItem,
     reparseFile,
+    refresh,
     beginRun: (name?: string): TestRunHandle => {
       const request = new vscode.TestRunRequest();
       // v5.11 — close + reopen resets the run state.
