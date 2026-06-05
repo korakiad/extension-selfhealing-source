@@ -7,6 +7,24 @@ loosely based on [Keep a Changelog](https://keepachangelog.com/).
 in-extension update checker only surfaces **stable** releases, so QAs on a beta
 stay quiet until `0.0.5` ships.
 
+## 0.0.5 — 2026-06-05
+
+First **stable** release of the 0.0.5 line. It rolls up every `0.0.5-beta.N`
+change listed below (Chrome auto-discovery + pure-inspection pause, the native
+element picker, stop-button Ctrl-C parity, the in-extension update checker, and
+the Electron/OpenFin attach fixes) and adds:
+
+### Added
+- **Configurable test-file discovery (`qaDebug.testMatch`).** The Test Explorer
+  is no longer locked to `build/dist/**/*.spec.js`. Point discovery at your own
+  compiled-output folders and suffixes with a glob — or a list of globs — and the
+  tree follows. Set it in **User** settings and the project repo stays untouched.
+  The default now covers compiled tests under `{build,dist}/{e2e,test,tests}/`
+  (any `.js`, including unsuffixed files) plus `*.{spec,test,e2e}.js` anywhere
+  under `build`/`dist`, so plain `.js` tests and alternate suffixes are found with
+  no per-project configuration. Changing the setting re-scans the tree instantly.
+- **Refresh (↻) button in the Test Explorer** re-scans test files on demand.
+
 ## 0.0.5-beta.18 — 2026-06-02
 
 ### Internal
