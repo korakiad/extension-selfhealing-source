@@ -21,4 +21,4 @@ When a Mocha test fails inside a fixture suite:
 
 ## Status
 
-Phase 1, version `0.0.5-beta.13` — pre-release for internal QA testing. Not yet on the Marketplace; distributed as a `.vsix` and updated via the in-extension stable-channel update checker. See [CHANGELOG.md](./CHANGELOG.md) for the release history.
+Phase 1, version `0.0.5` — first stable release for internal QA testing. Not yet on the Marketplace; distributed as a `.vsix` and updated via the in-extension stable-channel update checker. See [CHANGELOG.md](./CHANGELOG.md) for the release history.
