@@ -3,14 +3,26 @@
 All notable changes to **QA Debug Companion** are recorded here. The format is
 loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
-`0.0.5-beta.N` builds are pre-releases on the way to the `0.0.5` stable cut. The
+`0.0.6-beta.N` builds are pre-releases on the way to the `0.0.6` stable cut. The
 in-extension update checker only surfaces **stable** releases, so QAs on a beta
-stay quiet until `0.0.5` ships.
+stay quiet until `0.0.6` ships.
 
-## Unreleased
+## 0.0.6-beta.0
 
-Hardens the held-browser MCP server against a QA who already runs their **own**
-`@playwright/mcp`, and scopes the pause chat to cut token use.
+Sharpens the visual element picker for complex, deeply-nested UIs and makes its
+output framework-agnostic. Also ships the held-browser MCP hardening (for a QA
+who already runs their **own** `@playwright/mcp`) and the scoped pause chat that
+were staged but not yet released.
+
+### Added
+- **Element picker now captures full frame + ancestor context.** `qa_pick_element`
+  resolves the *entire* iframe ancestry of the picked node as `frameChain` — an
+  ordered outer→inner list of each `<iframe>`'s own selector, handling arbitrarily
+  nested and cross-origin (out-of-process) frames — plus `ancestors`, the DOM
+  ancestor chain within the frame (crossing shadow-DOM boundaries). Together they
+  let a robust, scoped locator be built even when the clicked element has no stable
+  hook of its own; a `:nth-of-type(n)` positional fallback (`nthOfType`) covers
+  fully anonymous nodes as a last resort.
 
 ### Fixed
 - **playwright-mcp collision with a QA's own server.** Previously, if the QA had
@@ -22,6 +34,11 @@ Hardens the held-browser MCP server against a QA who already runs their **own**
   empty browser instead of the held failing one.
 
 ### Changed
+- **Element picker output is framework-neutral.** The picker no longer emits a
+  Playwright-shaped locator string. It returns raw DOM facts plus plain CSS
+  selectors; the agent reads the consumer project's own tests to build the final
+  locator in whatever framework and selector convention that project actually uses
+  (Playwright, WebdriverIO, Selenium, a custom wrapper — discovered, not assumed).
 - **Held browser now registers as `qa-debug-cdp`.** A unique registration label
   removes the disable-collision, and a thin stdio proxy (`mcp-proxy`) fronts the
   real `@playwright/mcp --cdp-endpoint`, rewriting the reported `serverInfo.name`
