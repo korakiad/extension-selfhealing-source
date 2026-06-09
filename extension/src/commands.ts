@@ -107,7 +107,14 @@ async function openChatForPausedCmd(deps: CommandDeps): Promise<void> {
     await vscode.commands.executeCommand(CHAT_OPEN_COMMAND, {
       query: prompt,
       isPartialQuery: false,
-      mode: 'agent',
+      // Switch into our contributed `qa-debug` custom agent (agents/qa-debug.agent.md),
+      // whose `tools:` allowlist scopes the session to qa-debug-cdp + our verbs and
+      // EXCLUDES any other browser/playwright server from the request — fewer tool
+      // schemas in context (token saving) + no mis-pick. The agent is gated on
+      // `when: qa-debug.paused`, which is set before this runs. If it can't resolve
+      // (agent unavailable), chat.open no-ops the switch and stays in the current
+      // mode — a benign fallback.
+      mode: 'qa-debug',
       attachFiles: [fileUri],
     });
     appendInfo(deps.channel, `[command] openChatForPaused session=${active.session_id}`);

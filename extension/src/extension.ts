@@ -72,8 +72,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   // qa-debug verbs are now first-party Language Model Tools
   // (extension/src/lm-tools/). The MCP provider survives for playwright-mcp
-  // only; it returns [] at idle, [playwright-mcp(...)] during pause.
-  const mcpProvider = new QaDebugMcpProvider();
+  // only; it returns [] at idle, [qa-debug-browser(...)] during pause. The
+  // server is fronted by the bundled mcp-proxy (rewrites serverInfo.name).
+  const mcpProxyPath = vscode.Uri.joinPath(context.extensionUri, 'dist', 'mcp-proxy.js').fsPath;
+  const mcpProvider = new QaDebugMcpProvider(mcpProxyPath);
   context.subscriptions.push(mcpProvider);
   context.subscriptions.push(
     vscode.lm.registerMcpServerDefinitionProvider('qa-debug.mcp-servers', mcpProvider),

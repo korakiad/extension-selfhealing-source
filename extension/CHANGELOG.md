@@ -7,6 +7,36 @@ loosely based on [Keep a Changelog](https://keepachangelog.com/).
 in-extension update checker only surfaces **stable** releases, so QAs on a beta
 stay quiet until `0.0.5` ships.
 
+## Unreleased
+
+Hardens the held-browser MCP server against a QA who already runs their **own**
+`@playwright/mcp`, and scopes the pause chat to cut token use.
+
+### Fixed
+- **playwright-mcp collision with a QA's own server.** Previously, if the QA had
+  their own `@playwright/mcp` configured, VS Code could either (A) silently
+  **disable** our CDP-attached server (a clashing registration label let the
+  user's `mcp.json` server outrank our extension-contributed one), or (B) present
+  the agent two indistinguishable `browser_*` toolsets (both report the hardcoded
+  `serverInfo.name` "Playwright"). The agent could then inspect a freshly-launched,
+  empty browser instead of the held failing one.
+
+### Changed
+- **Held browser now registers as `qa-debug-cdp`.** A unique registration label
+  removes the disable-collision, and a thin stdio proxy (`mcp-proxy`) fronts the
+  real `@playwright/mcp --cdp-endpoint`, rewriting the reported `serverInfo.name`
+  so the agent sees a distinct `mcp_qa-debug-cdp_browser_*` tool namespace. The
+  qa-debug skill now steers to `qa-debug-cdp` and warns off any other `browser_*`
+  server. The CDP download-shim is unchanged (it sits a layer below).
+
+### Added
+- **`qa-debug` custom agent** (`contributes.chatAgents`, available only while a
+  test is paused). The pause chat switches into it automatically; its `tools:`
+  allowlist scopes the session to `qa-debug-cdp` + the qa-debug verbs + the
+  built-in tool groups, excluding the QA's own playwright-mcp and unrelated
+  MCP/extension tools from the request — fewer tool schemas per turn (lower token
+  use) and no mis-pick.
+
 ## 0.0.5 — 2026-06-05
 
 First **stable** release of the 0.0.5 line. It rolls up every `0.0.5-beta.N`

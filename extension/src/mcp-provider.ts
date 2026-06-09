@@ -27,6 +27,12 @@ interface PausedState {
 
 type State = 'idle' | ({ kind: 'paused' } & PausedState);
 
+/** Instance context threaded into each descriptor's `resolve`. */
+interface ResolveContext {
+  /** Absolute path to the bundled `mcp-proxy.js` (see ./mcp-proxy.ts). */
+  readonly proxyScriptPath: string;
+}
+
 /**
  * One MCP server the provider may surface during a pause. `resolve` returns a
  * definition when the server should be live for the given paused state, or null
@@ -34,15 +40,37 @@ type State = 'idle' | ({ kind: 'paused' } & PausedState);
  */
 interface McpServerDescriptor {
   readonly id: string;
-  resolve(state: PausedState): vscode.McpServerDefinition | null;
+  resolve(state: PausedState, ctx: ResolveContext): vscode.McpServerDefinition | null;
 }
 
+/**
+ * The label VS Code registers our CDP-attached playwright-mcp under. MUST be
+ * unique — NOT `playwright` / `playwright-mcp` — so it can never collide with a
+ * QA's own playwright-mcp entry. VS Code keys two things off this label:
+ *   1. Whole-server collision/disable (`mcpService.ts` `server.label.toLowerCase()`):
+ *      on a clash the default `chat.mcp.collisionBehavior: disable` keeps only the
+ *      higher-priority server, and a user `mcp.json` server (order 200) OUTRANKS an
+ *      extension-contributed one (order 300) — so a clash would silently DISABLE
+ *      our CDP server and leave the QA's non-CDP one. A unique label removes that.
+ *   2. The ToolSet `referenceName` slug (label, lower-cased, spaces→`-`).
+ * Kept identical to the value the mcp-proxy rewrites `serverInfo.name` to
+ * (./mcp-proxy-rewrite.ts `REWRITTEN_SERVER_NAME`) so the server shows the SAME
+ * name on every surface — the MCP-servers list (uses this label) and the
+ * Configure-Tools / model tool-name prefix (uses serverInfo.name). The SKILL
+ * steers the agent to this exact name; keep all three in sync.
+ * See reference-vscode-mcp-collision-mechanics.
+ */
+export const QA_DEBUG_SERVER_LABEL = 'qa-debug-cdp';
+
 const PLAYWRIGHT_MCP: McpServerDescriptor = {
-  id: 'playwright-mcp',
-  resolve: (state) =>
-    new vscode.McpStdioServerDefinition('playwright-mcp', 'npx', [
-      '-y',
-      '@playwright/mcp@latest',
+  id: QA_DEBUG_SERVER_LABEL,
+  // Spawn the mcp-proxy (which spawns the real `@playwright/mcp --cdp-endpoint`)
+  // instead of playwright-mcp directly, so the proxy can rewrite the reported
+  // `serverInfo.name` to a unique value and give the agent a distinct tool-name
+  // prefix (`mcp_qa-debug-cdp_browser_*`). Fixes "Mode B". See ./mcp-proxy.ts.
+  resolve: (state, ctx) =>
+    new vscode.McpStdioServerDefinition(QA_DEBUG_SERVER_LABEL, 'node', [
+      ctx.proxyScriptPath,
       '--cdp-endpoint',
       state.cdpHttpEndpoint,
     ]),
@@ -56,6 +84,9 @@ export class QaDebugMcpProvider implements vscode.McpServerDefinitionProvider {
   // The set of servers the provider can surface. Single-entry today; add a
   // descriptor here to front another MCP server during pause.
   private readonly descriptors: readonly McpServerDescriptor[] = [PLAYWRIGHT_MCP];
+
+  /** @param proxyScriptPath absolute path to the bundled `mcp-proxy.js`. */
+  constructor(private readonly proxyScriptPath: string) {}
 
   setPaused(cdpHttpEndpoint: string): void {
     this.state = { kind: 'paused', cdpHttpEndpoint };
@@ -83,8 +114,9 @@ export class QaDebugMcpProvider implements vscode.McpServerDefinitionProvider {
   provideMcpServerDefinitions(_token: vscode.CancellationToken): vscode.McpServerDefinition[] {
     if (this.state === 'idle') return [];
     const state = this.state;
+    const ctx: ResolveContext = { proxyScriptPath: this.proxyScriptPath };
     return this.descriptors
-      .map((d) => d.resolve(state))
+      .map((d) => d.resolve(state, ctx))
       .filter((def): def is vscode.McpServerDefinition => def !== null);
   }
 
