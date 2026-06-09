@@ -51,16 +51,36 @@ Call the `qa_pick_element` tool (`session_id` is optional — omit to target the
     "data": { "e2e": "event-markers-button" },
     "aria": { "role": "button", "pressed": "false" },
     "text": "",
+    "selector": "[data-e2e=\"event-markers-button\"]",
+    "nthOfType": 1,
     "inFrame": true,
     "frameUrl": "https://app.example.com/rap/financial-chart/3.8.37.1/index.html",
-    "suggestedLocator": "frameLocator(/* iframe at https://app.example.com/rap/financial-chart/... */).locator('[data-e2e=\"event-markers-button\"]')"
+    "frameChain": [
+      { "selector": "iframe#app-shell", "url": "https://app.example.com/shell" },
+      { "selector": "iframe[name=\"chart\"]", "url": "https://app.example.com/rap/financial-chart/3.8.37.1/index.html" }
+    ],
+    "frameChainComplete": true,
+    "ancestors": [
+      { "tag": "div", "id": "", "classes": ["toolbar"], "data": {}, "role": "toolbar", "ariaLabel": "Chart tools", "name": "", "selector": "div[role=\"toolbar\"]", "nthOfType": 2 },
+      { "tag": "section", "id": "", "classes": ["chart-panel"], "data": { "e2e": "markers-panel" }, "role": "", "ariaLabel": "", "name": "", "selector": "section[data-e2e=\"markers-panel\"]", "nthOfType": 1 },
+      { "tag": "div", "id": "", "classes": [], "data": {}, "role": "", "ariaLabel": "", "name": "", "selector": "div:nth-of-type(3)", "nthOfType": 3, "shadowHost": true },
+      { "tag": "body", "id": "", "classes": [], "data": {}, "role": "", "ariaLabel": "", "name": "", "selector": "body", "nthOfType": 1 }
+    ]
   }
 }
 ```
 
+The output is **framework-neutral** — raw DOM facts plus plain CSS selectors, with no ready-made test-framework locator baked in. **Do not assume any framework.** Which framework, selector strategy, and frame/shadow idiom to use is something you **discover from the consumer's own codebase** in Step 4 — never guess it.
+
 If the QA doesn't click within ~2 minutes, or the turn is cancelled, it returns `{ "cancelled": true, "reason": "timeout" | "cancelled" }` — fall back to your prior plan (don't loop; ask the QA what they want next). Errors: `NO_ACTIVE_PAUSE`, `SESSION_NOT_FOUND`, `BROWSER_NOT_SELECTED` (select a chrome first), `CDP_CONNECT_FAILED` (the held browser's CDP endpoint was unreachable).
 
-No iframe/shadow handling is needed on your side — the tool resolves straight to the real leaf node regardless of how deeply it's nested. `inFrame`/`frameUrl` simply tell you the picked node lives inside an iframe so you can anchor a `frameLocator`.
+No iframe/shadow handling is needed on your side — the tool resolves straight to the real leaf node regardless of how deeply it's nested. When the node lives inside iframes, **`frameChain`** gives you the full ordered **outer→inner** ancestry — one `{ selector, url }` per `<iframe>`, covering arbitrarily nested AND cross-origin (OOPIF) frames — so you don't have to hunt for the iframe selectors yourself. An empty `frameChain` means the top document. If `frameChainComplete` is `false`, one frame level couldn't be auto-resolved (rare: a same-process cross-origin frame) — identify that iframe manually and treat `frameChain` as best-effort.
+
+**`ancestors`** gives the DOM ancestor chain of the picked node *within its frame*, **nearest→outermost** (immediate parent first, up to `<html>` or ~15 levels), crossing shadow-DOM boundaries (each crossing flagged `shadowHost: true`, so nested shadow roots are walked). Use it when the leaf alone is weak (no stable `data-*`/`id`/`role`, only a tag or utility classes) or ambiguous (the same leaf selector matches many nodes): anchor on the nearest ancestor that carries a stable hook and descend to the leaf. Each entry has `{ tag, id, classes, data, role, ariaLabel, name, selector, nthOfType, shadowHost? }`.
+
+**`nthOfType`** (on the leaf and every ancestor) is the 1-based position among same-tag siblings. When an element has no stable hook, its `selector` already falls back to `tag:nth-of-type(n)` so it's at least locally unique; combine with the ancestor chain for a globally-unique path. Treat positional selectors as a **last resort** — they break on DOM reorder — so prefer a stable `data-*`/`id`/`role`/text on the element or an ancestor whenever one exists.
+
+**Shadow DOM caveat (important).** **Open** shadow roots are pierced by most modern selector engines, so a CSS selector through open shadow usually resolves — but confirm against how the project's own tests deal with shadow DOM. **Closed** shadow roots generally cannot be reached by a selector at all. The picker can still *report* a chain that crosses a closed boundary (it holds the node directly via CDP), but a selector whose path crosses a closed root **will not resolve in the test** — when you see `shadowHost: true` on a closed host, say so to the QA and follow whatever non-selector escape hatch the project uses, rather than handing over a selector that silently fails.
 
 ### Step 3 — Confirm with the QA in plain language
 
@@ -70,14 +90,25 @@ Show the QA what got picked, NOT raw JSON:
 
 Wait for confirmation. If QA confirms → Step 4. If QA says no → loop back to Step 1 with a fresh `qa_pick_element` call.
 
-### Step 4 — Build a project-matched selector
+### Step 4 — Investigate the consumer codebase, then build in its convention
 
-Before writing the diff, read 2–3 of the project's existing test / page-object files to learn the project's selector pattern (`data-e2e`, `data-test`, plain `css`, `aria` / `getByRole`, a custom wrapper like `Ws.instance.client.$()`, etc.). Build the locator using ONLY the attributes from Step 2's output, in the project's pattern.
+The picker output is deliberately framework-agnostic — it tells you *which element*, not *how this repo writes locators*. **Before writing anything, investigate the consumer project** (open a handful of its existing test / page-object / helper files, and any locator/selector utilities) and learn:
 
-- DO NOT paste `suggestedLocator` as the final selector — it's a *hint* showing preference order (data-e2e/test → id → role → class → tag), not a project-matched expression.
-- DO NOT build a selector from training data — the returned attributes are the only source of truth.
-- DO match whatever pattern the project already uses.
-- If `inFrame` is true, wrap the locator in a `frameLocator(...)` anchored on an `iframe` selector you derive from the page (e.g. `iframe[src*="financial-chart"]`); `frameUrl` tells you which frame.
+- **Selector strategy** — what hook the project anchors on (`data-e2e`, `data-test`, `id`, role/accessible-name, plain CSS, …).
+- **Element API** — how it queries an element (a built-in locator API, a custom wrapper/helper, page-object methods).
+- **Frames** — how its existing tests reach elements *inside* an iframe (the frame-entry idiom it already uses).
+- **Shadow DOM** — whether/how it handles shadow roots.
+- **Interaction & assertion style** — so your suggestion reads like the surrounding code.
+
+Then build the locator using ONLY the attributes from Step 2's output, replicating that convention exactly:
+
+- DO NOT assume a framework, and DO NOT copy a selector from training data — the consumer's codebase + the returned attributes are the only sources of truth.
+- **Match the project's selector strategy** for the leaf (prefer a stable `data-*`/`id`/`role`/accessible-name; the plain-CSS `selector` field is a fallback hint, not the answer).
+- **Frames** (`frameChain` non-empty): walk the iframes **outer→inner**, entering each the way the project's own tests do, then locate the leaf inside the innermost frame. Each `frameChain[i].selector` is plain CSS for the iframe element — reuse it, or rewrite to the project's frame convention using the entry's `url` as a cue. If `frameChainComplete` is `false`, resolve the missing level(s) by hand. (`inFrame`/`frameUrl` are quick "is it framed / innermost URL" signals; `frameChain` is what you build from.)
+- **Weak/ambiguous leaf** → scope with `ancestors`: anchor on the nearest ancestor carrying a stable hook (`data-*`/`id`/`role`/`aria-label`) and descend to the leaf, in the project's idiom. Add only as many ancestor levels as needed for uniqueness. Ancestors are also your fallback when the leaf has no usable attribute at all.
+- **Last resort only:** when nothing stable exists anywhere on the path, use the `:nth-of-type(n)` selectors (driven by `nthOfType`) and tell the QA the locator is positional and brittle.
+
+If you can't determine the project's convention from the codebase, ask the QA rather than guessing a framework.
 
 ## Anti-patterns
 
@@ -85,7 +116,7 @@ Before writing the diff, read 2–3 of the project's existing test / page-object
 |---|---|
 | Calling `qa_pick_element` before a chrome is selected. | It returns `BROWSER_NOT_SELECTED`. Run `qa_get_failure_context` → `qa_select_chrome` first (qa-debug SKILL Step 1b). |
 | Skipping Step 3 (QA confirmation in plain language). | The tool reports *what* the QA clicked, but they may have mis-clicked (sticky headers, overlays, hidden buttons). Always confirm in plain English before building the selector. |
-| Pasting `suggestedLocator` as the final selector. | It's a hint, not a project-matched expression. The QA's project may use `data-e2e`, `data-test`, `getByRole`, a wrapper like `Ws.instance.client.$()`, or a custom CSS scheme. Read the project's tests first. |
+| Assuming a framework / pasting the raw `selector` without matching the project. | The output is framework-neutral data + plain CSS — it does NOT tell you the repo's framework, selector strategy, frame/shadow idiom, or custom wrappers. Investigate the project's existing tests first (Step 4), then build in *that* convention; if unclear, ask the QA. |
 | Calling `qa_pick_element` again before the first call returns. | It blocks awaiting the QA's click. Wait for it to return (or time out / cancel) before re-invoking. |
 | Using the picker when the right selector is already obvious from `browser_snapshot`. | Free reads of the DOM tree don't need QA interaction; reserve the picker for cases where the snapshot alone doesn't disambiguate. |
 

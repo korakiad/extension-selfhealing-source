@@ -29,6 +29,41 @@ import { WebSocket, type RawData } from 'ws';
 
 import { QaToolError } from '@qa-debug/tool-contracts/errors';
 
+/** One `<iframe>` hop on the path from the top document to the picked node. */
+export interface FrameRef {
+  /**
+   * Plain CSS selector for the `<iframe>` element itself, preference-ordered
+   * (data-e2e/test/testid → id → name → first class → tag). Framework-neutral —
+   * enter the frame using whatever frame-entry idiom the consumer project's own
+   * tests use (discovered from its codebase, not assumed here).
+   */
+  selector: string;
+  /** Content URL loaded in that frame — identifies it for a human; not a selector. */
+  url: string;
+}
+
+/** A compact descriptor for one DOM ancestor of the picked node (for scoping a locator). */
+export interface AncestorRef {
+  tag: string;
+  id: string;
+  /** Up to the first 8 class names. */
+  classes: string[];
+  /** `data-*` attributes, de-prefixed. */
+  data: Record<string, string>;
+  /** `role` attribute, if any. */
+  role: string;
+  /** `aria-label`, if any. */
+  ariaLabel: string;
+  /** `name` attribute, if any. */
+  name: string;
+  /** Preference-ordered CSS selector for this ancestor (same rules as a FrameRef selector). */
+  selector: string;
+  /** 1-based position among same-tag siblings (0 if unknown). Use to build a `:nth-of-type(n)` qualifier. */
+  nthOfType: number;
+  /** Present + true when reaching this ancestor crossed a shadow-DOM boundary (it is the shadow host). */
+  shadowHost?: boolean;
+}
+
 export interface PickedElement {
   tag: string;
   id: string;
@@ -39,12 +74,42 @@ export interface PickedElement {
   /** `aria-*` attributes de-prefixed, plus `role`. */
   aria: Record<string, string>;
   text: string;
+  /**
+   * Preference-ordered **plain CSS** selector for the picked node itself
+   * (data-e2e/test/testid → id → name → first class → tag, with a
+   * `:nth-of-type(n)` fallback when nothing stable exists). Framework-neutral
+   * (usable wherever a CSS selector is accepted). NOT authoritative — build the
+   * real locator from the structured attributes (data/aria/role/text) in the
+   * consumer project's own pattern, discovered from its codebase.
+   */
+  selector: string;
+  /** 1-based position among same-tag siblings (0 if unknown). Fallback disambiguator when no stable hook exists. */
+  nthOfType: number;
   /** True when the picked node lives inside an iframe (any origin). */
   inFrame: boolean;
-  /** The owning frame's own URL — anchors a frameLocator when `inFrame`. */
+  /** The owning (innermost) frame's own URL. See `frameChain` for the full ancestry. */
   frameUrl: string;
-  /** Preference-ordered hint (data-e2e/test → id → role → class → tag); NOT authoritative. */
-  suggestedLocator: string;
+  /**
+   * Ordered **outer→inner** iframe ancestry from the top document down to the
+   * picked node's frame. Empty when the node is in the top document. Each
+   * `selector` is plain CSS for an iframe element; enter the frames in order
+   * using the consumer project's own frame-entry idiom (discovered from its
+   * codebase). Handles arbitrarily nested frames AND cross-origin OOPIFs.
+   */
+  frameChain: FrameRef[];
+  /**
+   * DOM ancestors of the picked node WITHIN its own frame, ordered **nearest→outermost**
+   * (immediate parent first, up to `<html>` or ~15 levels), crossing open shadow-DOM
+   * boundaries. Use these to scope/disambiguate a locator when the leaf alone is not
+   * unique in a complex app (e.g. `…locator('[data-e2e="panel"]').getByRole('button')`).
+   */
+  ancestors: AncestorRef[];
+  /**
+   * False when an intermediate frame boundary could not be resolved (rare:
+   * a same-process cross-origin frame). When false, `frameChain` may be missing
+   * levels — fall back to manual frame identification for those.
+   */
+  frameChainComplete: boolean;
 }
 
 export type PickResult =
@@ -95,11 +160,111 @@ export async function resolvePageWsUrl(httpRoot: string): Promise<string> {
   return (real ?? pages[0]).webSocketDebuggerUrl!;
 }
 
-// Extracts the picked node's attributes. Runs (via Runtime.callFunctionOn on the
-// SESSION that owns the node) in the node's OWN frame context, so shadow/iframe
-// are already resolved and window.top/location report the owning frame.
-// `this` is the resolved DOM node. Returns a JSON string.
-const EXTRACT_FN = `function () {
+// In-page helper (source text, spliced into the functions below): build a CSS
+// selector for an element, preference-ordered, suitable for Playwright's
+// frameLocator()/locator(). Skips attribute values containing quotes/backslashes
+// (falls back to a less specific selector) so the emitted CSS is always valid.
+const SEL_FOR_SRC = `
+  function nthOfTypeOf(el) {
+    try {
+      var p = el.parentNode; if (!p || !p.children) return 0;
+      var tag = el.tagName, k = 0, sibs = p.children;
+      for (var i = 0; i < sibs.length; i++) { if (sibs[i].tagName === tag) { k++; if (sibs[i] === el) return k; } }
+    } catch (e) {}
+    return 0;
+  }
+  function selFor(el) {
+    function esc(s) { try { return (window.CSS && CSS.escape) ? CSS.escape('' + s) : ('' + s); } catch (e) { return '' + s; } }
+    function safe(v) { if (v == null) return null; v = '' + v; return (v.indexOf('"') >= 0 || v.indexOf('\\\\') >= 0) ? null : v; }
+    var tag = (el.tagName || '').toLowerCase();
+    var g = el.getAttribute ? function (n) { return el.getAttribute(n); } : function () { return null; };
+    var names = ['data-e2e', 'data-test', 'data-testid', 'data-test-id'];
+    for (var i = 0; i < names.length; i++) { var dv = safe(g(names[i])); if (dv) return tag + '[' + names[i] + '="' + dv + '"]'; }
+    if (el.id) { var idv = safe(el.id); if (idv) return tag + '#' + esc(el.id); }
+    var nm = safe(g('name')); if (nm) return tag + '[name="' + nm + '"]';
+    if (el.classList && el.classList.length) { var cv = safe(el.classList[0]); if (cv) return tag + '.' + esc(el.classList[0]); }
+    // No stable hook: fall back to a locally-unique :nth-of-type position.
+    var n = nthOfTypeOf(el);
+    return n > 0 ? tag + ':nth-of-type(' + n + ')' : tag;
+  }
+`;
+
+// In-page helper (source text): from a starting window, climb the frame ancestry
+// as far as same-origin access allows, collecting each owning <iframe>'s selector
+// (inner→outer). Stops at the top (reachedTop=true) or at the first cross-origin
+// boundary — where window.frameElement is null — which is a process/session edge
+// that the CDP stitch loop crosses via DOM.getFrameOwner.
+const CLIMB_SRC = `
+  function climb(startWin) {
+    var chain = [], reachedTop = false, win = startWin;
+    try {
+      for (var guard = 0; guard < 50; guard++) {
+        var atTop = false; try { atTop = (win === win.top); } catch (e) { atTop = false; }
+        if (atTop) { reachedTop = true; break; }
+        var fe = null; try { fe = win.frameElement; } catch (e) { fe = null; }
+        if (!fe) break;
+        var url = ''; try { url = '' + win.location.href; } catch (e) {}
+        chain.push({ selector: selFor(fe), url: url });
+        var nxt = null; try { nxt = win.parent; } catch (e) { nxt = null; }
+        if (!nxt || nxt === win) break;
+        win = nxt;
+      }
+    } catch (e) {}
+    return { chain: chain, reachedTop: reachedTop };
+  }
+`;
+
+// In-page helper (source text): walk the picked node's DOM ancestors within its
+// own frame (nearest→outermost, capped), crossing open shadow-DOM boundaries via
+// getRootNode().host. Returns a compact descriptor per ancestor so the model can
+// scope a locator when the leaf alone is not unique.
+const ANCESTORS_SRC = `
+  function descOf(el) {
+    var data = {};
+    var attrs = el.attributes || [];
+    for (var i = 0; i < attrs.length; i++) { var a = attrs[i]; if (a.name.indexOf('data-') === 0) data[a.name.slice(5)] = a.value; }
+    var classes = []; try { classes = [].slice.call(el.classList || []).slice(0, 8); } catch (e) {}
+    var g = el.getAttribute ? function (n) { return el.getAttribute(n); } : function () { return null; };
+    return {
+      tag: (el.tagName || '').toLowerCase(),
+      id: el.id || '',
+      classes: classes,
+      data: data,
+      role: g('role') || '',
+      ariaLabel: g('aria-label') || '',
+      name: g('name') || '',
+      selector: selFor(el),
+      nthOfType: nthOfTypeOf(el),
+    };
+  }
+  function ancestorsOf(start) {
+    var out = [], node = start, guard = 0;
+    while (node && guard < 15) {
+      guard++;
+      var parent = node.parentElement;
+      if (!parent) {
+        var root = null; try { root = node.getRootNode(); } catch (e) {}
+        if (root && root.host) { var d = descOf(root.host); d.shadowHost = true; out.push(d); node = root.host; continue; }
+        break;
+      }
+      out.push(descOf(parent));
+      if ((parent.tagName || '').toLowerCase() === 'html') break;
+      node = parent;
+    }
+    return out;
+  }
+`;
+
+// Extracts the picked node's attributes AND its same-origin frame ancestry. Runs
+// (via Runtime.callFunctionOn on the SESSION that owns the node) in the node's
+// OWN frame context, so shadow/iframe are already resolved and window.top/location
+// report the owning frame. `this` is the resolved DOM node. Returns a JSON string.
+// `frameChain` here is only the same-origin ancestry within this session; the
+// caller stitches across OOPIF boundaries when `reachedTop` is false.
+const EXTRACT_AND_WALK_FN = `function () {
+  ${SEL_FOR_SRC}
+  ${CLIMB_SRC}
+  ${ANCESTORS_SRC}
   var el = this;
   var data = {}, aria = {};
   var attrs = el.attributes || [];
@@ -115,6 +280,7 @@ const EXTRACT_FN = `function () {
   try { inFrame = window.top !== window.self; } catch (e) { inFrame = true; }
   try { frameUrl = location.href || ''; } catch (e) {}
   aria.role = role;
+  var w = climb((el.ownerDocument && el.ownerDocument.defaultView) || window);
   return JSON.stringify({
     tag: (el.tagName || '').toLowerCase(),
     id: el.id || '',
@@ -123,25 +289,26 @@ const EXTRACT_FN = `function () {
     data: data,
     aria: aria,
     text: (el.textContent || '').trim().substring(0, 200),
+    selector: selFor(el),
+    nthOfType: nthOfTypeOf(el),
     inFrame: inFrame,
     frameUrl: frameUrl,
+    frameChain: w.chain,
+    reachedTop: w.reachedTop,
+    ancestors: ancestorsOf(el),
   });
 }`;
 
-/** Preference order: data-e2e/test/testid → id → role → first class → tag. */
-function buildLocatorHint(el: Omit<PickedElement, 'suggestedLocator'>): string {
-  const d = el.data;
-  let base: string;
-  if (d.e2e) base = `locator('[data-e2e="${d.e2e}"]')`;
-  else if (d.test) base = `locator('[data-test="${d.test}"]')`;
-  else if (d.testid) base = `locator('[data-testid="${d.testid}"]')`;
-  else if (d['test-id']) base = `locator('[data-test-id="${d['test-id']}"]')`;
-  else if (el.id) base = `locator('#${el.id}')`;
-  else if (el.aria.role) base = `getByRole('${el.aria.role}')`;
-  else if (el.classes.length) base = `locator('.${el.classes[0]}')`;
-  else base = `locator('${el.tag}')`;
-  return el.inFrame ? `frameLocator(/* iframe at ${el.frameUrl} */).${base}` : base;
-}
+// Resolves an owning <iframe> element (found via DOM.getFrameOwner on the parent
+// session) to its own selector PLUS its same-origin frame ancestry. `this` is the
+// <iframe> element. Used by the OOPIF stitch loop, one hop per process boundary.
+const FRAME_OWNER_WALK_FN = `function () {
+  ${SEL_FOR_SRC}
+  ${CLIMB_SRC}
+  var el = this;
+  var w = climb((el.ownerDocument && el.ownerDocument.defaultView) || window);
+  return JSON.stringify({ selfSelector: selFor(el), chain: w.chain, reachedTop: w.reachedTop });
+}`;
 
 interface PickOptions {
   /** Defaults to 120s. */
@@ -174,6 +341,11 @@ export async function pickElementViaOverlay(
   // Frame sessions we've armed inspect mode on. `undefined` = the root page
   // session; strings = attached child-target (OOPIF) sessions.
   const armed = new Set<string | undefined>();
+  // OOPIF session tree, for stitching the frame ancestry across process edges:
+  //  - child session id → its parent session id (`undefined` = root page session)
+  //  - session id (`undefined` = root) → its own root frame's id + content URL
+  const sessionParent = new Map<string, string | undefined>();
+  const sessionFrame = new Map<string | undefined, { id: string; url: string }>();
   let onInspect: ((p: { sessionId?: string; backendNodeId: number }) => void) | null = null;
 
   // Flat CDP protocol: child-session commands/events carry a `sessionId`.
@@ -195,6 +367,16 @@ export async function pickElementViaOverlay(
     try {
       await send('DOM.enable', {}, sessionId);
       await send('Runtime.enable', {}, sessionId);
+      await send('Page.enable', {}, sessionId).catch(() => {});
+      // Record this session's own root frame (id + url) so the frame-ancestry
+      // stitch can map a session → the <iframe> that owns it in its parent.
+      try {
+        const ft = await send('Page.getFrameTree', {}, sessionId);
+        const f = ft?.frameTree?.frame;
+        if (f?.id) sessionFrame.set(sessionId, { id: f.id, url: f.url ?? '' });
+      } catch {
+        /* frame ancestry degrades to frameChainComplete:false for this session */
+      }
       await send('Overlay.enable', {}, sessionId);
       // Recurse so nested cross-origin frames attach too.
       await send(
@@ -228,6 +410,11 @@ export async function pickElementViaOverlay(
       // click in an OOPIF not yet armed simply emits no inspectNodeRequested
       // (the QA clicks again once it's armed) — it never misfires on the wrong node.
       const ti = msg.params.targetInfo ?? {};
+      // The flat-protocol envelope `sessionId` is the PARENT session that
+      // auto-attached this child (absent ⇒ the root page session).
+      if (typeof msg.params.sessionId === 'string') {
+        sessionParent.set(msg.params.sessionId, typeof msg.sessionId === 'string' ? msg.sessionId : undefined);
+      }
       void armSession(msg.params.sessionId, { type: ti.type ?? '', url: ti.url });
     }
   });
@@ -302,21 +489,88 @@ export async function pickElementViaOverlay(
       return { cancelled: true, reason: ended };
     }
 
-    // Resolve on the SAME session that reported the click (per-process backendNodeId).
+    // Resolve on the SAME session that reported the click (per-process backendNodeId),
+    // extracting the node's attributes + its same-origin frame ancestry in one call.
     const { object } = await send('DOM.resolveNode', { backendNodeId: ended.backendNodeId }, ended.sessionId);
     const r = await send(
       'Runtime.callFunctionOn',
-      { objectId: object.objectId, functionDeclaration: EXTRACT_FN, returnByValue: true },
+      { objectId: object.objectId, functionDeclaration: EXTRACT_AND_WALK_FN, returnByValue: true },
       ended.sessionId,
     );
-    close();
 
     const raw = r?.result?.value;
     if (typeof raw !== 'string') {
+      close();
       throw new QaToolError('CDP_CONNECT_FAILED', 'Could not read the picked node attributes.');
     }
-    const el = JSON.parse(raw) as Omit<PickedElement, 'suggestedLocator'>;
-    return { picked: { ...el, suggestedLocator: buildLocatorHint(el) } };
+    const leaf = JSON.parse(raw) as Omit<PickedElement, 'frameChainComplete'> & {
+      reachedTop: boolean;
+    };
+
+    // Build the full outer→inner iframe ancestry. `leaf.frameChain` already holds
+    // the same-origin ancestors within the picked node's own session (inner→outer);
+    // when it did not reach the top, climb across OOPIF process boundaries: for each
+    // session, DOM.getFrameOwner on its PARENT session yields the <iframe> that hosts
+    // it, then walk that iframe's own same-origin ancestors, repeating to the root.
+    const frameChain: FrameRef[] = Array.isArray(leaf.frameChain) ? [...leaf.frameChain] : [];
+    let complete = true;
+    if (!leaf.reachedTop) {
+      let session = ended.sessionId;
+      const visited = new Set<string | undefined>();
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        if (session === undefined || visited.has(session)) {
+          complete = false; // root reached without hitting top ⇒ same-process cross-origin gap
+          break;
+        }
+        visited.add(session);
+        const frame = sessionFrame.get(session);
+        if (!frame?.id) {
+          complete = false;
+          break;
+        }
+        const parent = sessionParent.get(session);
+        try {
+          const owner = await send('DOM.getFrameOwner', { frameId: frame.id }, parent);
+          if (owner?.backendNodeId == null) {
+            complete = false;
+            break;
+          }
+          const { object: ownerObj } = await send(
+            'DOM.resolveNode',
+            { backendNodeId: owner.backendNodeId },
+            parent,
+          );
+          const wr = await send(
+            'Runtime.callFunctionOn',
+            { objectId: ownerObj.objectId, functionDeclaration: FRAME_OWNER_WALK_FN, returnByValue: true },
+            parent,
+          );
+          const w = JSON.parse(wr.result.value) as {
+            selfSelector: string;
+            chain: FrameRef[];
+            reachedTop: boolean;
+          };
+          frameChain.push({ selector: w.selfSelector, url: frame.url || '' });
+          if (Array.isArray(w.chain)) frameChain.push(...w.chain);
+          if (w.reachedTop) break;
+          session = parent;
+        } catch {
+          complete = false;
+          break;
+        }
+      }
+    }
+    close();
+
+    frameChain.reverse(); // inner→outer accumulation → outer→inner result
+    const { reachedTop: _reachedTop, frameChain: _leafChain, ...rest } = leaf;
+    const picked: PickedElement = {
+      ...rest,
+      frameChain,
+      frameChainComplete: complete,
+    };
+    return { picked };
   } catch (err) {
     close();
     if (err instanceof QaToolError) throw err;
