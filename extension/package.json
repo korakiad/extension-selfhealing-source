@@ -1,7 +1,7 @@
 {
   "name": "qa-debug-companion",
   "displayName": "QA Debug Companion",
-  "version": "0.0.6-beta.0",
+  "version": "0.0.6-beta.1",
   "private": true,
   "repository": {
     "type": "git",
@@ -23,12 +23,19 @@
       },
       {
         "path": "./skills/identify-element/SKILL.md"
+      },
+      {
+        "path": "./skills/identify-live/SKILL.md"
       }
     ],
     "chatAgents": [
       {
         "path": "./agents/qa-debug.agent.md",
         "when": "qa-debug.paused"
+      },
+      {
+        "path": "./agents/qa-debug-inspect.agent.md",
+        "when": "qa-debug.liveSession"
       }
     ],
     "mcpServerDefinitionProviders": [
@@ -166,17 +173,40 @@
         ],
         "toolReferenceName": "qaPickElement",
         "displayName": "QA Debug: Pick Element",
-        "modelDescription": "Arms Chrome's native DevTools element inspector on the pause's selected held browser so the QA can point at the exact element a failing selector should match, then returns that element's structured attributes. Call during a pause AFTER a chrome is selected (selected_cdp_port non-null) when the failure is selector-anchored and the right DOM node is not obvious from browser_snapshot, or when the QA says \"let me show you which element\". Unlike a page-script picker, the inspector runs in the browser process, so it pierces cross-origin iframes, open AND closed shadow DOM, web components, and canvas overlays — the QA just hovers (Chrome highlights the element) and clicks once, anywhere, with no awareness of frames or shadow roots. Blocks until the QA clicks or ~120s elapse. Returns on click: { picked: { tag, id, name, classes, data (data-* map, e.g. data-e2e), aria (incl. role), text, selector, nthOfType, inFrame, frameUrl, frameChain, frameChainComplete, ancestors } }. On timeout/cancel: { cancelled: true, reason }. Output is FRAMEWORK-NEUTRAL — raw DOM facts plus plain CSS selectors; it contains NO ready-made test-framework locator. The caller MUST build the final locator by FIRST investigating the consumer project: read its existing tests / page-objects / helpers to learn the test framework in use, the selector strategy it favours (e.g. data-e2e/data-test/id/role/accessible-name), how its tests reach elements inside iframes, any custom selector wrappers, and its shadow-DOM handling — then replicate that exact convention. Do NOT assume any framework and do NOT copy a selector from training data. selector is a preference-ordered plain CSS selector for the leaf (data-e2e/test → id → name → class → tag:nth-of-type); a hint only — prefer building from the structured attributes (data/aria/role/text) in the project's pattern. frameChain is the ordered outer→inner iframe ancestry (each item { selector, url }; selector = plain CSS for the iframe element); it handles arbitrarily nested AND cross-origin (OOPIF) frames. Enter the frames in order using whatever frame-entry idiom the consumer's own tests use. Empty means the node is in the top document. If frameChainComplete is false, a frame level could not be resolved (rare same-process cross-origin frame) — identify the missing iframe(s) manually. ancestors is the DOM ancestor chain of the picked node within its frame, nearest→outermost (each item { tag, id, classes, data, role, ariaLabel, name, selector, nthOfType, shadowHost? }), crossing shadow DOM. Use it to scope/disambiguate when the leaf alone is not unique — anchor on the nearest ancestor carrying a stable data-* / id / role and descend to the leaf. NOTE on shadow DOM: open shadow roots are pierced by most modern selector engines; closed shadow roots generally cannot be reached by a selector at all — when shadowHost:true sits on a closed host, surface it and follow however the project handles shadow DOM (or a non-selector strategy). nthOfType (on the leaf and every ancestor) is the 1-based position among same-tag siblings; an element with no stable hook gets a selector like tag:nth-of-type(n) (valid CSS anywhere). Prefer stable attributes/role/text; use nthOfType only as a last-resort disambiguator. Errors: NO_ACTIVE_PAUSE (no Mocha test paused); SESSION_NOT_FOUND (session_id does not match the active pause); BROWSER_NOT_SELECTED (no chrome committed — call qa_select_chrome first); CDP_CONNECT_FAILED (the held browser CDP endpoint was unreachable or exposed no page target).",
+        "modelDescription": "Arms Chrome's native DevTools element inspector on the active inspection's selected browser so the QA can point at the exact element a selector should match, then returns that element's structured attributes. Works on EITHER surface: (a) a paused Mocha test's held browser, or (b) a running web/desktop app the QA launched for inspection via \"QA Debug: Inspect App\" (a Live Inspect Session). Call when the right DOM node is not obvious from browser_snapshot, or when the QA says \"let me show you which element\". For a pause, a chrome must be selected first (selected_cdp_port non-null); a Live Inspect Session auto-selects its launched browser. Unlike a page-script picker, the inspector runs in the browser process, so it pierces cross-origin iframes, open AND closed shadow DOM, web components, and canvas overlays — the QA just hovers (Chrome highlights the element) and clicks once, anywhere, with no awareness of frames or shadow roots. Blocks until the QA clicks or ~120s elapse. Returns on click: { picked: { tag, id, name, classes, data (data-* map, e.g. data-e2e), aria (incl. role), text, selector, nthOfType, inFrame, frameUrl, frameChain, frameChainComplete, ancestors } }. On timeout/cancel: { cancelled: true, reason }. Output is FRAMEWORK-NEUTRAL — raw DOM facts plus plain CSS selectors; it contains NO ready-made test-framework locator. The caller MUST build the final locator by FIRST investigating the consumer project: read its existing tests / page-objects / helpers to learn the test framework in use, the selector strategy it favours (e.g. data-e2e/data-test/id/role/accessible-name), how its tests reach elements inside iframes, any custom selector wrappers, and its shadow-DOM handling — then replicate that exact convention. Do NOT assume any framework and do NOT copy a selector from training data. selector is a preference-ordered plain CSS selector for the leaf (data-e2e/test → id → name → class → tag:nth-of-type); a hint only — prefer building from the structured attributes (data/aria/role/text) in the project's pattern. frameChain is the ordered outer→inner iframe ancestry (each item { selector, url }; selector = plain CSS for the iframe element); it handles arbitrarily nested AND cross-origin (OOPIF) frames. Enter the frames in order using whatever frame-entry idiom the consumer's own tests use. Empty means the node is in the top document. If frameChainComplete is false, a frame level could not be resolved (rare same-process cross-origin frame) — identify the missing iframe(s) manually. ancestors is the DOM ancestor chain of the picked node within its frame, nearest→outermost (each item { tag, id, classes, data, role, ariaLabel, name, selector, nthOfType, shadowHost? }), crossing shadow DOM. Use it to scope/disambiguate when the leaf alone is not unique — anchor on the nearest ancestor carrying a stable data-* / id / role and descend to the leaf. NOTE on shadow DOM: open shadow roots are pierced by most modern selector engines; closed shadow roots generally cannot be reached by a selector at all — when shadowHost:true sits on a closed host, surface it and follow however the project handles shadow DOM (or a non-selector strategy). nthOfType (on the leaf and every ancestor) is the 1-based position among same-tag siblings; an element with no stable hook gets a selector like tag:nth-of-type(n) (valid CSS anywhere). Prefer stable attributes/role/text; use nthOfType only as a last-resort disambiguator. Errors: NO_ACTIVE_INSPECTION (no Mocha test is paused AND no Live Inspect Session is active — launch one via \"QA Debug: Inspect App\"); SESSION_NOT_FOUND (session_id does not match the active inspection); BROWSER_NOT_SELECTED (a pause is active but no chrome committed — call qa_select_chrome first); CDP_CONNECT_FAILED (the target CDP endpoint was unreachable or exposed no page target).",
         "userDescription": "Arms Chrome's element inspector on the selected held browser so the QA can click the element a failing selector should match.",
         "canBeReferencedInPrompt": true,
         "icon": "$(inspect)",
-        "when": "qa-debug.paused",
+        "when": "qa-debug.paused || qa-debug.liveSession",
         "inputSchema": {
           "type": "object",
           "properties": {
             "session_id": {
               "type": "string",
               "description": "The session_id from the pause notification, or omit to target the currently-active pause."
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "qa-debug_qa_start_live_session",
+        "tags": [
+          "qa-debug"
+        ],
+        "toolReferenceName": "qaStartLiveSession",
+        "displayName": "QA Debug: Start Live Session",
+        "modelDescription": "Establishes (or refreshes) the CDP target for the active Live Inspect Session — the browser the QA launched via \"QA Debug: Inspect App\" for inspecting a running web/desktop app WITHOUT a failing test. The launch itself already starts the session and auto-selects its browser; call this only to RE-PROBE after the app navigated, opened tabs, or restarted (it refreshes available_chromes + page titles and re-selects). By default it probes the session's configured ports (qaDebug.cdpPorts); pass cdp_port to target one specific port. Returns: { available_chromes: [{port, ws_url, page_titles, tab_count, runtime}, ...], selected_cdp_port }. Errors: NO_ACTIVE_INSPECTION (no Live Inspect Session — start one from \"QA Debug: Inspect App\"); INVALID_PORT (cdp_port outside 1024-65535); NO_CHROMES_FOUND (nothing answered on the probed port(s) — the app may have closed).",
+        "userDescription": "Re-establishes the CDP target for the active Live Inspect Session (re-probe after the app navigated/restarted).",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(debug-start)",
+        "when": "qa-debug.liveSession",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "cdp_port": {
+              "type": "number",
+              "description": "Optional single port (1024-65535) to re-probe; omit to probe the session's configured qaDebug.cdpPorts."
             }
           },
           "additionalProperties": false
@@ -226,6 +256,19 @@
         "command": "qa-debug.checkForUpdates",
         "title": "QA Debug: Check for Updates",
         "category": "QA Debug"
+      },
+      {
+        "command": "qa-debug.launchInspectApp",
+        "title": "QA Debug: Inspect App (Launch for Element Picking)",
+        "category": "QA Debug",
+        "icon": "$(inspect)"
+      },
+      {
+        "command": "qa-debug.stopInspectApp",
+        "title": "QA Debug: Stop Live Inspect Session",
+        "category": "QA Debug",
+        "enablement": "qa-debug.liveSession",
+        "icon": "$(debug-stop)"
       }
     ],
     "configuration": {
@@ -254,6 +297,74 @@
             "{build,dist}/**/*.{spec,test,e2e}.js"
           ],
           "markdownDescription": "Glob(s) (relative to each workspace folder) for the **compiled** test files shown in the Test Explorer. A single string or an array of patterns; results are unioned. `node_modules` is always excluded.\n\nThe default covers compiled tests under a test-only folder — `{build,dist}/{e2e,test,tests}/**/*.js` (any `.js`, including plain unsuffixed files) — plus self-labeled `*.{spec,test,e2e}.js` anywhere under `build`/`dist`. Most consumers need no change.\n\nFor an unusual layout, set this — e.g. `out/**/*.js`, or `[\"build/it/**/*.js\"]`. Set it in **User** settings to apply it without adding anything to the consumer's repo.\n\nMatch the compiled **`.js`** Mocha runs, not the `.ts` sources — matching TS would create duplicate tree items. Changes re-scan the Test Explorer immediately."
+        },
+        "qaDebug.cdpPorts": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1024,
+            "maximum": 65535
+          },
+          "default": [
+            22135,
+            22136,
+            22137,
+            22138,
+            22139
+          ],
+          "markdownDescription": "Port **pool** the Live Inspect Session launcher allocates from (one per concurrent inspect session across all windows) and that `qa_start_live_session` re-probes. Each launch claims the first free port, so multiple project windows never collide. Extend this if you run more simultaneous inspections.\n\n(The Mocha-failure Mode-C discovery uses its own `QA_DEBUG_CDP_PORTS` env var, not this setting.)"
+        },
+        "qaDebug.webBrowserBinary": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Absolute path to the Chrome/Edge executable used to launch **web** entries in `qaDebug.liveApps`. **Leave empty to auto-detect** Chrome/Chromium/Edge at standard OS install locations — only set this if auto-detect fails or you want a specific browser. The launcher adds `--remote-debugging-port` + a per-project `--user-data-dir` (Chrome 136+ refuses CDP on the default profile, so a dedicated profile is required — you log in once per project and it persists).\n\nExamples — macOS: `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`; Windows: `C:/Program Files/Google/Chrome/Application/chrome.exe`; Linux: `/usr/bin/google-chrome`."
+        },
+        "qaDebug.liveApps": {
+          "type": "array",
+          "default": [],
+          "markdownDescription": "**Optional** shortcut list of apps for the **QA Debug: Inspect App** command. You do NOT need to set this — if it's empty, Inspect App asks you inline (Web / Electron / OpenFin + the url or executable path) and remembers your last choice. Use this only to pre-define apps. Each entry needs `type` + the `url` (web) or `binary` (electron/openfin); `label` is optional. Web entries auto-detect the browser (see `qaDebug.webBrowserBinary`).\n\nExample: `[{ \"type\": \"web\", \"url\": \"https://localhost:3000\" }]`.",
+          "items": {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "label": {
+                "type": "string",
+                "description": "Optional friendly name; the picker falls back to the url/binary when omitted."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "web",
+                  "electron",
+                  "openfin"
+                ]
+              },
+              "url": {
+                "type": "string",
+                "description": "web: the URL to open."
+              },
+              "binary": {
+                "type": "string",
+                "description": "electron/openfin: the app executable path."
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "electron/openfin: extra CLI args after the debug-port flag."
+              },
+              "port": {
+                "type": "integer",
+                "minimum": 1024,
+                "maximum": 65535,
+                "description": "Optional fixed port instead of auto-allocating from qaDebug.cdpPorts."
+              }
+            },
+            "additionalProperties": false
+          }
         }
       }
     },
@@ -283,6 +394,8 @@
     "test:unit:env": "node --import tsx test/child-env.test.mts",
     "test:unit:runtime": "node --import tsx test/runtime-classify.test.mts",
     "test:unit:kill": "node --import tsx test/process-group-kill.test.mts",
+    "test:unit:browser": "node --import tsx test/web-browser-path.test.mts",
+    "test:unit:arbiter": "node --import tsx test/inspection-arbiter.test.mts",
     "test:unit:mcpproxy": "node --import tsx test/mcp-proxy.test.mts",
     "test:e2e:mcpproxy": "node --import tsx test/mcp-proxy-e2e.mts",
     "clean": "rm -rf dist",

@@ -19,6 +19,11 @@ import * as vscode from 'vscode';
 
 import type { PausePayload } from '@qa-debug/pause-store-types';
 
+import {
+  liveAppDisplayName,
+  type LiveAppSpec,
+  type LiveSessionManager,
+} from './live-session-manager.js';
 import { probePorts } from './lm-tools/probe-ports.js';
 import { appendInfo } from './output-channel.js';
 import type { MementoPauseStore } from './pause-store.js';
@@ -27,6 +32,9 @@ import type { SessionManager } from './session-manager.js';
 export interface CommandDeps {
   pauseStore: MementoPauseStore;
   sessionManager: SessionManager;
+  liveSessionManager: LiveSessionManager;
+  /** Per-workspace store for the last inline-chosen app (prefill on next launch). */
+  workspaceState: vscode.Memento;
   channel: vscode.OutputChannel;
 }
 
@@ -42,7 +50,104 @@ export function registerCommands(context: vscode.ExtensionContext, deps: Command
     // (no auto-select happened).
     vscode.commands.registerCommand('qa-debug.selectChrome', () => selectChromeCmd(deps)),
     vscode.commands.registerCommand('qa-debug.enterChromePorts', () => enterChromePortsCmd(deps)),
+    // Live Inspect Session — launch the QA's own app for inspection (no pause).
+    vscode.commands.registerCommand('qa-debug.launchInspectApp', () => launchInspectAppCmd(deps)),
+    vscode.commands.registerCommand('qa-debug.stopInspectApp', () => stopInspectAppCmd(deps)),
   );
+}
+
+// ---- Live Inspect Session ----
+
+const LAST_INLINE_APP_KEY = 'qa-debug.lastInlineApp';
+
+/**
+ * Launch an app with a CDP debug port so the picker can inspect it WITHOUT a
+ * failing test. No settings required: if `qaDebug.liveApps` is empty we ASK
+ * inline (Web / Electron / OpenFin + the url/path). The extension owns the
+ * launch — knowing it spawned the browser is what lets it flip the
+ * `qa-debug.liveSession` gate with certainty (see LiveSessionManager).
+ */
+async function launchInspectAppCmd(deps: CommandDeps): Promise<void> {
+  const apps = vscode.workspace.getConfiguration('qaDebug').get<LiveAppSpec[]>('liveApps') ?? [];
+
+  let spec: LiveAppSpec | undefined;
+  if (apps.length === 1) {
+    spec = apps[0];
+  } else if (apps.length > 1) {
+    const choice = await vscode.window.showQuickPick(
+      apps.map((a) => ({ label: liveAppDisplayName(a), description: a.type, spec: a })),
+      { placeHolder: 'Select an app to launch for inspection', ignoreFocusOut: true },
+    );
+    spec = choice?.spec;
+  } else {
+    // No config — ask inline so the QA never has to edit settings.
+    spec = await promptInlineSpec(deps);
+  }
+  if (!spec) return;
+
+  try {
+    await deps.liveSessionManager.launch(spec);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    appendInfo(deps.channel, `[command] launchInspectApp failed: ${msg}`);
+    void vscode.window.showErrorMessage(`QA Debug: failed to launch inspect app — ${msg}`);
+  }
+}
+
+/**
+ * Inline launch prompt (no settings): pick the kind, then the url (web) or the
+ * executable path (electron/openfin). Pre-filled from the last inline launch in
+ * this workspace, so repeat launches are one Enter.
+ */
+async function promptInlineSpec(deps: CommandDeps): Promise<LiveAppSpec | undefined> {
+  const last = deps.workspaceState.get<LiveAppSpec>(LAST_INLINE_APP_KEY);
+
+  const kind = await vscode.window.showQuickPick(
+    [
+      { label: '$(globe) Web', detail: 'Open a URL in an auto-detected Chrome/Edge', value: 'web' as const },
+      { label: '$(window) Electron', detail: 'Launch an Electron app executable', value: 'electron' as const },
+      { label: '$(window) OpenFin', detail: 'Launch an OpenFin app executable', value: 'openfin' as const },
+    ],
+    { placeHolder: 'What do you want to inspect?', ignoreFocusOut: true },
+  );
+  if (!kind) return undefined;
+  const type = kind.value;
+
+  let spec: LiveAppSpec | undefined;
+  if (type === 'web') {
+    const url = await vscode.window.showInputBox({
+      prompt: 'URL to open for inspection',
+      placeHolder: 'https://localhost:3000',
+      // Prefill the last web URL, else a sensible default so the QA can just hit Enter.
+      value: (last?.type === 'web' ? last.url : undefined) ?? 'https://www.google.com',
+      ignoreFocusOut: true,
+      validateInput: (v) => (v.trim() ? null : 'Enter a URL.'),
+    });
+    if (!url) return undefined;
+    spec = { type: 'web', url: url.trim() };
+  } else {
+    const binary = await vscode.window.showInputBox({
+      prompt: `Path to the ${type === 'openfin' ? 'OpenFin' : 'Electron'} app executable`,
+      placeHolder: type === 'openfin' ? '/Applications/MyApp/MyApp' : '/path/to/app',
+      value: last?.type === type ? last.binary : undefined,
+      ignoreFocusOut: true,
+      validateInput: (v) => (v.trim() ? null : 'Enter the executable path.'),
+    });
+    if (!binary) return undefined;
+    spec = { type, binary: binary.trim() };
+  }
+
+  await deps.workspaceState.update(LAST_INLINE_APP_KEY, spec);
+  return spec;
+}
+
+async function stopInspectAppCmd(deps: CommandDeps): Promise<void> {
+  if (!deps.liveSessionManager.isActive()) {
+    void vscode.window.showInformationMessage('QA Debug: no Live Inspect Session is active.');
+    return;
+  }
+  await deps.liveSessionManager.stop();
+  appendInfo(deps.channel, '[command] stopInspectApp invoked');
 }
 
 async function runFixtureCmd(deps: CommandDeps): Promise<void> {

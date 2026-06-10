@@ -18,6 +18,7 @@ import { DiscoverChromesTool } from './discover-chromes.js';
 import { GetFailureContextTool } from './get-failure-context.js';
 import { PickElementTool } from './pick-element.js';
 import { SelectChromeTool } from './select-chrome.js';
+import { StartLiveSessionTool } from './start-live-session.js';
 import type { LmToolDeps } from './base.js';
 
 export function registerQaDebugLmTools(
@@ -30,6 +31,10 @@ export function registerQaDebugLmTools(
     vscode.lm.registerTool('qa-debug_qa_discover_chromes', new DiscoverChromesTool(deps)),
     vscode.lm.registerTool('qa-debug_qa_select_chrome', new SelectChromeTool(deps)),
     // CDP-native element inspector (Overlay) — pierces iframes + shadow DOM.
+    // Works in a pause OR a Live Inspect Session (when: paused || liveSession).
     vscode.lm.registerTool('qa-debug_qa_pick_element', new PickElementTool(deps)),
+    // Live Inspect Session primitive — (re)establish the live CDP target
+    // (when: qa-debug.liveSession).
+    vscode.lm.registerTool('qa-debug_qa_start_live_session', new StartLiveSessionTool(deps)),
   );
 }

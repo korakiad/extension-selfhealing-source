@@ -18,11 +18,15 @@
 
 import * as vscode from 'vscode';
 
+import type { LiveTargetStore } from '../live-target-store.js';
 import type { MementoPauseStore } from '../pause-store.js';
 import { appendInfo } from '../output-channel.js';
 
 export interface LmToolDeps {
   pauseStore: MementoPauseStore;
+  /** Live Inspect Session target — read by the generalized picker +
+   *  qa_start_live_session so they work outside a Mocha pause. */
+  liveTargetStore: LiveTargetStore;
   auditChannel: vscode.OutputChannel;
 }
 

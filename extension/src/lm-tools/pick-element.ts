@@ -3,6 +3,7 @@ import * as vscode from 'vscode';
 import { QaToolError } from '@qa-debug/tool-contracts/errors';
 
 import { auditLog, jsonResult, toErrorResult, type LmToolDeps } from './base.js';
+import { resolveInspectTarget } from './inspect-target.js';
 import { appendInfo } from '../output-channel.js';
 import { pickElementViaOverlay } from '../cdp-inspect.js';
 
@@ -30,13 +31,16 @@ export class PickElementTool implements vscode.LanguageModelTool<Input> {
     auditLog(this.deps.auditChannel, TOOL_NAME, options.input);
     try {
       const { session_id } = options.input;
-      const active = this.deps.pauseStore.getActivePause(session_id);
-      if (!active) {
-        throw new QaToolError('NO_ACTIVE_PAUSE', 'No Mocha test is currently paused.');
-      }
-      const port = active.selected_cdp_port;
+      // Resolves from EITHER a Mocha pause OR a Live Inspect Session (mutually
+      // exclusive); throws NO_ACTIVE_INSPECTION / SESSION_NOT_FOUND.
+      const target = resolveInspectTarget(
+        this.deps.pauseStore,
+        this.deps.liveTargetStore,
+        session_id,
+      );
+      const port = target.selected_cdp_port;
       const chrome =
-        port != null ? active.available_chromes.find((c) => c.port === port) : undefined;
+        port != null ? target.available_chromes.find((c) => c.port === port) : undefined;
       if (!chrome) {
         throw new QaToolError(
           'BROWSER_NOT_SELECTED',

@@ -207,8 +207,8 @@ export const qa_select_chrome: QaToolDef<{ session_id: string; port: number }> =
 export const qa_pick_element: QaToolDef<{ session_id?: string }> = {
   name: 'qa_pick_element',
   description:
-    "Arms Chrome's native DevTools element inspector on the pause's selected held browser so the QA can point at the exact element a failing selector should match, then returns that element's structured attributes. " +
-    'Call during a pause AFTER a chrome is selected (selected_cdp_port non-null) when the failure is selector-anchored and the right DOM node is not obvious from browser_snapshot, or when the QA says "let me show you which element". ' +
+    "Arms Chrome's native DevTools element inspector on the active inspection's selected browser so the QA can point at the exact element a selector should match, then returns that element's structured attributes. " +
+    'Works on EITHER surface: (a) a paused Mocha test\'s held browser, or (b) a running web/desktop app the QA launched for inspection via "QA Debug: Inspect App" (a Live Inspect Session). Call when the right DOM node is not obvious from browser_snapshot, or when the QA says "let me show you which element". For a pause, a chrome must be selected first (selected_cdp_port non-null); a Live Inspect Session auto-selects its launched browser. ' +
     'Unlike a page-script picker, the inspector runs in the browser process, so it pierces cross-origin iframes, open AND closed shadow DOM, web components, and canvas overlays — the QA just hovers (Chrome highlights the element) and clicks once, anywhere, with no awareness of frames or shadow roots. ' +
     'Blocks until the QA clicks or ~120s elapse. ' +
     'Returns on click: { picked: { tag, id, name, classes, data (data-* map, e.g. data-e2e), aria (incl. role), text, selector, nthOfType, inFrame, frameUrl, frameChain, frameChainComplete, ancestors } }. On timeout/cancel: { cancelled: true, reason }. ' +
@@ -216,7 +216,7 @@ export const qa_pick_element: QaToolDef<{ session_id?: string }> = {
     'frameChain is the ordered outer→inner iframe ancestry (each item { selector, url }; selector = plain CSS for the iframe element); it handles arbitrarily nested AND cross-origin (OOPIF) frames. Enter the frames in order using whatever frame-entry idiom the consumer\'s own tests use. Empty means the node is in the top document. If frameChainComplete is false, a frame level could not be resolved (rare same-process cross-origin frame) — identify the missing iframe(s) manually. ' +
     'ancestors is the DOM ancestor chain of the picked node within its frame, nearest→outermost (each item { tag, id, classes, data, role, ariaLabel, name, selector, nthOfType, shadowHost? }), crossing shadow DOM. Use it to scope/disambiguate when the leaf alone is not unique — anchor on the nearest ancestor carrying a stable data-* / id / role and descend to the leaf. NOTE on shadow DOM: open shadow roots are pierced by most modern selector engines; closed shadow roots generally cannot be reached by a selector at all — when shadowHost:true sits on a closed host, surface it and follow however the project handles shadow DOM (or a non-selector strategy). ' +
     'nthOfType (on the leaf and every ancestor) is the 1-based position among same-tag siblings; an element with no stable hook gets a selector like tag:nth-of-type(n) (valid CSS anywhere). Prefer stable attributes/role/text; use nthOfType only as a last-resort disambiguator. ' +
-    'Errors: NO_ACTIVE_PAUSE (no Mocha test paused); SESSION_NOT_FOUND (session_id does not match the active pause); BROWSER_NOT_SELECTED (no chrome committed — call qa_select_chrome first); CDP_CONNECT_FAILED (the held browser CDP endpoint was unreachable or exposed no page target).',
+    'Errors: NO_ACTIVE_INSPECTION (no Mocha test is paused AND no Live Inspect Session is active — launch one via "QA Debug: Inspect App"); SESSION_NOT_FOUND (session_id does not match the active inspection); BROWSER_NOT_SELECTED (a pause is active but no chrome committed — call qa_select_chrome first); CDP_CONNECT_FAILED (the target CDP endpoint was unreachable or exposed no page target).',
   inputSchemaJson: {
     type: 'object',
     properties: {
@@ -232,11 +232,42 @@ export const qa_pick_element: QaToolDef<{ session_id?: string }> = {
   annotations: { readOnlyHint: true, openWorldHint: false },
 };
 
+export const qa_start_live_session: QaToolDef<{ cdp_port?: number }> = {
+  name: 'qa_start_live_session',
+  description:
+    'Establishes (or refreshes) the CDP target for the active Live Inspect Session — the browser the QA launched via "QA Debug: Inspect App" for inspecting a running web/desktop app WITHOUT a failing test. ' +
+    'The launch itself already starts the session and auto-selects its browser; call this only to RE-PROBE after the app navigated, opened tabs, or restarted (it refreshes available_chromes + page titles and re-selects). ' +
+    'By default it probes the session\'s configured ports (qaDebug.cdpPorts); pass cdp_port to target one specific port. ' +
+    'Returns: { available_chromes: [{port, ws_url, page_titles, tab_count, runtime}, ...], selected_cdp_port }. ' +
+    'Errors: NO_ACTIVE_INSPECTION (no Live Inspect Session — start one from "QA Debug: Inspect App"); INVALID_PORT (cdp_port outside 1024-65535); NO_CHROMES_FOUND (nothing answered on the probed port(s) — the app may have closed).',
+  inputSchemaJson: {
+    type: 'object',
+    properties: {
+      cdp_port: {
+        type: 'number',
+        description:
+          'Optional single port (1024-65535) to re-probe; omit to probe the session\'s configured qaDebug.cdpPorts.',
+      },
+    },
+    additionalProperties: false,
+  },
+  inputSchemaZod: z.object({
+    cdp_port: z.number().int().min(1024).max(65535).optional(),
+  }),
+  annotations: {
+    readOnlyHint: false, // mutates the live-target store
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: true, // probes localhost CDP endpoints
+  },
+};
+
 export const qaTools = [
   qa_get_failure_context,
   qa_discover_chromes,
   qa_select_chrome,
   qa_pick_element,
+  qa_start_live_session,
 ] as const;
 
 export type QaToolName = (typeof qaTools)[number]['name'];

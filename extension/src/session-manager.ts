@@ -41,6 +41,7 @@ import type { ChromeSelection, PausePayload } from '@qa-debug/pause-store-types'
 
 import { sanitizeChildEnv } from './child-env.js';
 import { startCdpDownloadShim, type CdpShim } from './cdp-download-shim.js';
+import type { InspectionArbiter } from './inspection-arbiter.js';
 import type { DecisionRouter } from './decision-router.js';
 import type { QaDebugMcpProvider } from './mcp-provider.js';
 import { appendInfo, createChildLogPump } from './output-channel.js';
@@ -177,6 +178,9 @@ export interface SessionManagerDeps {
   pauseStatusBar: PauseStatusBar;
   /** Ambient run indicator; show on spawnMochaChild, hide on onMochaExit. */
   runStatusBar: RunStatusBar;
+  /** Shared mutual-exclusion guard vs. the Live Inspect Session (both bind the
+   *  single-endpoint mcpProvider). */
+  arbiter: InspectionArbiter;
 }
 
 interface ActiveRun {
@@ -328,6 +332,16 @@ export class SessionManager {
       );
       return;
     }
+    // Bidirectional guard: a Mocha run (→ pause → mcpProvider.setPaused) must not
+    // start on top of a Live Inspect Session — they fight over the single MCP
+    // endpoint. LiveSessionManager.launch refuses the reverse.
+    if (!this.deps.arbiter.canStart('run')) {
+      void vscode.window.showWarningMessage(
+        `QA Debug: cannot start a suite run — ${this.deps.arbiter.blockingReason()}. ` +
+          `Stop the Live Inspect Session first.`,
+      );
+      return;
+    }
     const cwd = this.resolveCwd(opts.specs);
     const mochaBin = this.resolveMochaBin(cwd);
     const specFiles = (opts.specs ?? []).map((u) => u.fsPath);
@@ -357,6 +371,7 @@ export class SessionManager {
       }
       clearTimeout(run.killEscalationTimer);
       this.activeRun = undefined;
+      this.deps.arbiter.setRunActive(false);
       void vscode.commands.executeCommand('setContext', 'qa-debug.running', false);
       this.deps.runStatusBar.hide();
     }
@@ -474,6 +489,7 @@ export class SessionManager {
       pauseToreDown: false,
     };
     this.activeRun = run;
+    this.deps.arbiter.setRunActive(true);
     void vscode.commands.executeCommand('setContext', 'qa-debug.running', true);
     this.deps.runStatusBar.show();
 
@@ -695,6 +711,7 @@ export class SessionManager {
 
     if (this.activeRun === run) {
       this.activeRun = undefined;
+      this.deps.arbiter.setRunActive(false);
       void vscode.commands.executeCommand('setContext', 'qa-debug.running', false);
       this.deps.runStatusBar.hide();
     }

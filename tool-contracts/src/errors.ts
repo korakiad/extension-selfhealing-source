@@ -6,7 +6,11 @@ export type QaErrorCode =
   | 'NO_CHROMES_FOUND'
   | 'BROWSER_NOT_SELECTED'
   // qa_pick_element (CDP-native Overlay inspector)
-  | 'CDP_CONNECT_FAILED';
+  | 'CDP_CONNECT_FAILED'
+  // identify-live: no pause AND no live inspect session is active. Raised by
+  // the generalized picker + qa_start_live_session when neither inspection
+  // surface exists for the request.
+  | 'NO_ACTIVE_INSPECTION';
 
 export class QaToolError extends Error {
   constructor(public readonly code: QaErrorCode, message: string) {

@@ -11,6 +11,9 @@ import { appendDeactivateAudit, appendOrphanPauseAudit } from './audit-file.js';
 import { registerQaDebugChatParticipant } from './chat-participant.js';
 import { registerCommands } from './commands.js';
 import { DecisionRouter } from './decision-router.js';
+import { InspectionArbiter } from './inspection-arbiter.js';
+import { LiveSessionManager } from './live-session-manager.js';
+import { LiveTargetStore } from './live-target-store.js';
 import { registerQaDebugLmTools } from './lm-tools/index.js';
 import { QaDebugMcpProvider } from './mcp-provider.js';
 import { appendInfo, createAuditChannel, createMochaChannel } from './output-channel.js';
@@ -24,6 +27,9 @@ import { getTestMatchGlobs, TEST_MATCH_CONFIG_ID } from './test-glob.js';
 import { createUpdateChecker, parseRepoSlugFromPackageJson } from './update-checker.js';
 
 let sessionManagerSingleton: SessionManager | undefined;
+// Reaped on deactivate so a launched inspect browser we own doesn't outlive the
+// window (mirrors SessionManager.dispose).
+let liveSessionManagerSingleton: LiveSessionManager | undefined;
 // Closure captures pauseStore + decisionRouter + context.globalStorageUri at
 // activate() so deactivate() can synthesize give_up + append audit-file line.
 // Avoids extra module-level singletons.
@@ -69,6 +75,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   const pauseStore = new MementoPauseStore(context.globalState);
   const decisionRouter = new DecisionRouter(channel);
+  // Live Inspect Session state: in-memory live-target (read by the generalized
+  // picker) + the shared mutual-exclusion guard vs. Mocha runs.
+  const liveTargetStore = new LiveTargetStore();
+  const arbiter = new InspectionArbiter();
 
   // qa-debug verbs are now first-party Language Model Tools
   // (extension/src/lm-tools/). The MCP provider survives for playwright-mcp
@@ -87,6 +97,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // registrations are always live across activations.
   registerQaDebugLmTools(context, {
     pauseStore,
+    liveTargetStore,
     auditChannel: channel,
   });
 
@@ -225,11 +236,33 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       chatOpenFallbackAvailable,
       pauseStatusBar,
       runStatusBar,
+      arbiter,
     });
     sessionManagerSingleton = sessionMgr;
+
+    // Live Inspect Session — extension-launched app inspection without a pause.
+    const liveSessionManager = new LiveSessionManager({
+      context,
+      mcpProvider,
+      liveTargetStore,
+      arbiter,
+      channel,
+    });
+    liveSessionManagerSingleton = liveSessionManager;
+
+    // Always-visible entry button (the "simple UI" that starts an inspection).
+    const inspectEntry = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 98);
+    inspectEntry.text = '$(inspect) Inspect App';
+    inspectEntry.tooltip = 'QA Debug: launch one of your apps for element inspection (no test run)';
+    inspectEntry.command = 'qa-debug.launchInspectApp';
+    inspectEntry.show();
+    context.subscriptions.push(inspectEntry);
+
     registerCommands(context, {
       pauseStore,
       sessionManager: sessionMgr,
+      liveSessionManager,
+      workspaceState: context.workspaceState,
       channel,
     });
 
@@ -295,6 +328,7 @@ export async function deactivate(): Promise<void> {
   // (extHostExtensionService Promise.race(timeout(5000))).
   await deactivateHook?.();
   await sessionManagerSingleton?.dispose();
+  await liveSessionManagerSingleton?.dispose();
 }
 
 function detectWorkspaceRoot(): string | undefined {

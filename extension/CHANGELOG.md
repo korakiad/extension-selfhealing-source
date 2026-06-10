@@ -7,6 +7,35 @@ loosely based on [Keep a Changelog](https://keepachangelog.com/).
 in-extension update checker only surfaces **stable** releases, so QAs on a beta
 stay quiet until `0.0.6` ships.
 
+## 0.0.6-beta.1
+
+Adds a **Live Inspect Session** — element inspection and full CDP browser access on
+the QA's own running app, WITHOUT a failing test.
+
+### Added
+- **Live Inspect Session.** A new *QA Debug: Inspect App* command / status-bar button
+  launches the QA's own app — **Web / Electron / OpenFin**, asked inline (no settings
+  required; remembers the last choice) — with a CDP debug port, and attaches it as the
+  `qa-debug-cdp` MCP. The browser is then usable by `browser_*`, `qa_pick_element`, or
+  any tool, in any chat agent. A neutral notification announces the open **port** (the
+  durable identifier) so anything can attach to it.
+- **Browser auto-detect + per-project profile (web).** The web browser auto-detects
+  (Chrome/Chromium/Edge at standard OS paths; override via `qaDebug.webBrowserBinary`).
+  Web launches use a per-project persistent debug profile — log in once per project, it
+  persists, and multiple project windows each run their own Chrome (Chrome 136+ refuses
+  CDP on the default profile, so a dedicated profile is required anyway).
+- **Multi-project safe.** Each launch claims a free port from the `qaDebug.cdpPorts`
+  pool, so two project windows never collide; a within-window arbiter keeps a live
+  session and a Mocha run from fighting over the single MCP endpoint.
+- **`qa_pick_element` works outside a pause** — it now reads either a paused test OR an
+  active Live Inspect Session. New **`qa_start_live_session`** verb re-probes the live
+  target after navigation/restart. New **`qa-debug-inspect`** agent (general live
+  inspection) + **identify-live** skill.
+
+### Notes
+- The Live Inspect Session is a QA-initiated standalone-inspect path; the
+  no-launch-edit mandate governs the test-debug flow, not this.
+
 ## 0.0.6-beta.0
 
 Sharpens the visual element picker for complex, deeply-nested UIs and makes its
