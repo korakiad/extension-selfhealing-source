@@ -193,7 +193,7 @@ interface ActiveRun {
   /** CWD this run was spawned with. */
   cwd: string;
   /** Mocha bin used. */
-  mochaBin: string;
+  mochaEntry: string;
   /** Set by cancelActiveRun() so onMochaExit can attribute the exit to the user. */
   userCancelled: boolean;
   /**
@@ -343,14 +343,14 @@ export class SessionManager {
       return;
     }
     const cwd = this.resolveCwd(opts.specs);
-    const mochaBin = this.resolveMochaBin(cwd);
+    const mochaEntry = this.resolveMochaEntry(cwd);
     const specFiles = (opts.specs ?? []).map((u) => u.fsPath);
     const testHandle = this.deps.testControllerWrapper.beginRun(
       opts.runLabel ?? (specFiles.length === 1 ? path.basename(specFiles[0]) : 'fixture suite'),
     );
     await this.spawnMochaChild(testHandle, {
       cwd,
-      mochaBin,
+      mochaEntry,
       specFiles,
       runSelection: opts.runSelection,
       cancellationToken: opts.cancellationToken,
@@ -389,7 +389,7 @@ export class SessionManager {
     testHandle: TestRunHandle,
     opts: {
       cwd: string;
-      mochaBin: string;
+      mochaEntry: string;
       runSelection?: RunSelection;
       specFiles?: string[];
       cancellationToken?: vscode.CancellationToken;
@@ -450,7 +450,8 @@ export class SessionManager {
 
     appendInfo(
       this.deps.channel,
-      `[session-manager] spawn mocha cwd=${opts.cwd} args=${JSON.stringify(args)}`,
+      `[session-manager] spawn mocha cwd=${opts.cwd} entry=${opts.mochaEntry} ` +
+        `args=${JSON.stringify(args)}`,
     );
     // stdout/stderr are PIPED (not inherited) so they can be funneled into the
     // QA Debug Mocha output channel. Before this, mocha output landed in the
@@ -464,7 +465,11 @@ export class SessionManager {
     // worker) inherit the group and a single group-signal reaches them all, the
     // way a terminal Ctrl-C does. We deliberately do NOT unref() — exit is
     // still tracked via child.on('exit').
-    const child = spawn(opts.mochaBin, args, {
+    // Run the mocha JS entry with `node` from PATH — the same resolution the
+    // POSIX .bin shim performed (`exec node .../mocha/bin/mocha.js`), but
+    // cross-platform: Windows can't exec the extensionless shim, and a direct
+    // node→node spawn is required for the stdio[3] IPC channel anyway.
+    const child = spawn('node', [opts.mochaEntry, ...args], {
       cwd: opts.cwd,
       stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
       env,
@@ -484,7 +489,7 @@ export class SessionManager {
       heartbeatTimers: new Map(),
       pendingSessions: new Set(),
       cwd: opts.cwd,
-      mochaBin: opts.mochaBin,
+      mochaEntry: opts.mochaEntry,
       userCancelled: false,
       pauseToreDown: false,
     };
@@ -799,21 +804,30 @@ export class SessionManager {
     return this.deps.workspaceRoot;
   }
 
-  private resolveMochaBin(cwd: string): string {
+  private resolveMochaEntry(cwd: string): string {
     // Look in the chosen CWD's node_modules first, then walk up two levels
     // (works for typical monorepo layouts: cwd/node_modules, cwd/../node_modules,
     // cwd/../../node_modules), then workspaceRoot.
-    const candidates = [
-      path.join(cwd, 'node_modules', '.bin', 'mocha'),
-      path.join(cwd, '..', 'node_modules', '.bin', 'mocha'),
-      path.join(cwd, '..', '..', 'node_modules', '.bin', 'mocha'),
-      path.join(this.deps.workspaceRoot, 'node_modules', '.bin', 'mocha'),
+    //
+    // Resolve mocha's JS entry (bin/mocha.js on mocha ≥9, bin/mocha on ≤8) —
+    // NOT the node_modules/.bin/mocha shim. On Windows that shim is an
+    // extensionless sh script CreateProcess can't run (spawn ENOENT even
+    // though the file exists), and the .cmd variant can't carry the
+    // stdio[3] IPC pipe through cmd.exe.
+    const bases = [
+      cwd,
+      path.join(cwd, '..'),
+      path.join(cwd, '..', '..'),
+      this.deps.workspaceRoot,
     ];
-    for (const c of candidates) {
-      if (existsSync(c)) return c;
+    for (const base of bases) {
+      for (const entry of ['mocha.js', 'mocha']) {
+        const c = path.join(base, 'node_modules', 'mocha', 'bin', entry);
+        if (existsSync(c)) return c;
+      }
     }
     throw new Error(
-      `Could not find mocha binary near ${cwd} or ${this.deps.workspaceRoot}. ` +
+      `Could not find the mocha package near ${cwd} or ${this.deps.workspaceRoot}. ` +
         `Did the user's project install mocha?`,
     );
   }

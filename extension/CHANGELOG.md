@@ -7,6 +7,20 @@ loosely based on [Keep a Changelog](https://keepachangelog.com/).
 in-extension update checker only surfaces **stable** releases, so QAs on a beta
 stay quiet until `0.0.6` ships.
 
+## Unreleased
+
+### Fixed
+- **Windows: mocha child failed to start** (`spawn …\node_modules\.bin\mocha ENOENT`).
+  The runner spawned the `node_modules/.bin/mocha` shim, which on Windows is an
+  extensionless sh script that `CreateProcess` cannot execute — the file exists but the
+  spawn reports ENOENT. The extension now resolves mocha's real JS entry
+  (`node_modules/mocha/bin/mocha.js`) and runs it with `node` directly — the same thing
+  the POSIX shim did internally, and a direct node→node spawn also keeps the
+  `stdio[3]` IPC channel intact on Windows (the `.cmd` shim could not carry it).
+- **Windows: `qa-debug-cdp` MCP server failed to start.** The mcp-proxy spawned `npx`,
+  which on Windows only exists as `npx.cmd` and needs a shell; the proxy now spawns it
+  through a shell on win32.
+
 ## 0.0.6-beta.1
 
 Adds a **Live Inspect Session** — element inspection and full CDP browser access on

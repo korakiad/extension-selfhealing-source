@@ -22,8 +22,11 @@ import { spawn } from 'node:child_process';
 
 import { rewriteLine } from './mcp-proxy-rewrite.js';
 
+// On Windows `npx` only exists as npx.cmd, which Node refuses to spawn without
+// a shell (CVE-2024-27980). Args are shell-safe: fixed flags + a localhost URL.
 const child = spawn('npx', ['-y', '@playwright/mcp@latest', ...process.argv.slice(2)], {
   stdio: ['pipe', 'pipe', 'inherit'],
+  shell: process.platform === 'win32',
 });
 
 child.on('error', (err) => {

@@ -22,8 +22,8 @@
  * processes to not impact the execution of other ELECTRON programs."
  *
  * Safe by construction:
- *  - `PATH` is preserved, so the `node_modules/.bin/mocha` `#!/usr/bin/env node`
- *    shebang still resolves the real node (ELECTRON_RUN_AS_NODE is inert there).
+ *  - `PATH` is preserved, so the `spawn('node', [mocha entry, ...])` lookup
+ *    still resolves the real node (ELECTRON_RUN_AS_NODE is inert there).
  *  - The Node IPC channel is unaffected: `NODE_CHANNEL_FD` is injected by
  *    child_process at spawn time from the `'ipc'` stdio entry, independent of
  *    this env, and no pattern below matches `NODE_*` (except NODE_OPTIONS).
