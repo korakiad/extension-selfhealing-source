@@ -7,7 +7,7 @@ loosely based on [Keep a Changelog](https://keepachangelog.com/).
 in-extension update checker only surfaces **stable** releases, so QAs on a beta
 stay quiet until `0.0.6` ships.
 
-## Unreleased
+## 0.0.6-beta.2
 
 ### Fixed
 - **Windows: mocha child failed to start** (`spawn …\node_modules\.bin\mocha ENOENT`).
@@ -20,6 +20,16 @@ stay quiet until `0.0.6` ships.
 - **Windows: `qa-debug-cdp` MCP server failed to start.** The mcp-proxy spawned `npx`,
   which on Windows only exists as `npx.cmd` and needs a shell; the proxy now spawns it
   through a shell on win32.
+
+### Internal (no user-facing change)
+- Added a `pnpm validate` gate — build (incl. the LM-tools drift guard) + typecheck +
+  per-package unit tests + the reporter snapshot — and a GitHub Actions CI workflow that
+  runs it on every push and pull request.
+- Extracted the mocha project-layout resolution (cwd / mocha entry / `--grep`) and the
+  CDP→MCP download-shim binding into standalone, unit-tested modules shared by the pause
+  and Live Inspect session managers. No behavior change.
+- `prepare-vsix` now aborts packaging if the staged tree is missing a runtime file or
+  references the private source repo.
 
 ## 0.0.6-beta.1
 
