@@ -29,7 +29,7 @@ import * as vscode from 'vscode';
 
 import type { AvailableChrome } from '@qa-debug/pause-store-types';
 
-import { startCdpDownloadShim, type CdpShim } from './cdp-download-shim.js';
+import { CdpBinding } from './cdp-binding.js';
 import { sanitizeChildEnv } from './child-env.js';
 import { getCdpPorts } from './cdp-ports.js';
 import type { InspectionArbiter } from './inspection-arbiter.js';
@@ -90,10 +90,12 @@ interface ActiveLive {
 
 export class LiveSessionManager {
   private active?: ActiveLive;
-  private cdpShim?: CdpShim;
+  /** Endpoint→MCP binding incl. the download-shim hop — shared with SessionManager. */
+  private readonly cdpBinding: CdpBinding;
   private readonly statusItem: vscode.StatusBarItem;
 
   constructor(private readonly deps: LiveSessionManagerDeps) {
+    this.cdpBinding = new CdpBinding(deps.mcpProvider, deps.channel, '[live]');
     this.statusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 99);
     this.statusItem.command = 'qa-debug.stopInspectApp';
     this.deps.context.subscriptions.push(this.statusItem);
@@ -171,7 +173,7 @@ export class LiveSessionManager {
     });
     // arbiter slot already reserved at spawn; just flip the visibility gate.
     await vscode.commands.executeCommand('setContext', 'qa-debug.liveSession', true);
-    await this.bindMcp(chrome.ws_url);
+    await this.cdpBinding.bindMcp(chrome.ws_url);
 
     this.statusItem.text = `$(inspect) Inspecting port ${port}`;
     this.statusItem.tooltip = `Live Inspect Session active on CDP port ${port} — click to stop`;
@@ -193,7 +195,7 @@ export class LiveSessionManager {
     this.statusItem.hide();
     await vscode.commands.executeCommand('setContext', 'qa-debug.liveSession', false);
     this.deps.mcpProvider.setIdle();
-    await this.stopShim();
+    await this.cdpBinding.stopShim();
 
     if (active?.weSpawned && active.child?.pid != null) {
       appendInfo(this.deps.channel, `[live] reaping app process group pid=-${active.child.pid}`);
@@ -289,47 +291,6 @@ export class LiveSessionManager {
     }
   }
 
-  /** Start the download-shim (if enabled) and point playwright-mcp at it; else
-   *  the raw endpoint. Mirrors SessionManager.bindMcpToSelection. */
-  private async bindMcp(wsUrl: string): Promise<void> {
-    const rawHttpRoot = wsUrlToHttpRoot(wsUrl);
-    await this.stopShim();
-    const shimEnabled = vscode.workspace
-      .getConfiguration('qaDebug')
-      .get<boolean>('cdpDownloadShim.enabled', true);
-    let endpoint = rawHttpRoot;
-    if (shimEnabled) {
-      try {
-        this.cdpShim = await startCdpDownloadShim({
-          targetHttpRoot: rawHttpRoot,
-          log: (m) => appendInfo(this.deps.channel, m),
-        });
-        endpoint = this.cdpShim.httpRoot;
-      } catch (err) {
-        appendInfo(
-          this.deps.channel,
-          `[live] WARN cdp-shim failed (${asMessage(err)}); using raw endpoint ${rawHttpRoot}`,
-        );
-      }
-    }
-    this.deps.mcpProvider.setPaused(endpoint);
-    appendInfo(
-      this.deps.channel,
-      `[live] mcpProvider bound endpoint=${endpoint} (raw=${rawHttpRoot}, shim=${this.cdpShim ? 'on' : 'off'})`,
-    );
-  }
-
-  private async stopShim(): Promise<void> {
-    const shim = this.cdpShim;
-    if (!shim) return;
-    this.cdpShim = undefined;
-    try {
-      await shim.stop();
-    } catch (err) {
-      appendInfo(this.deps.channel, `[live] WARN cdp-shim stop: ${asMessage(err)}`);
-    }
-  }
-
   /**
    * Announce the session — NEUTRAL by design: the launch only ATTACHES the CDP
    * port (registered as the `qa-debug-cdp` MCP), so it's usable by `browser_*`,
@@ -402,12 +363,6 @@ function isPortFree(port: number): Promise<boolean> {
 
 function delay(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
-}
-
-/** ws://host:port/devtools/browser/<uuid> → http://host:port */
-function wsUrlToHttpRoot(wsUrl: string): string {
-  const u = new URL(wsUrl);
-  return `http://${u.host}`;
 }
 
 function asMessage(err: unknown): string {

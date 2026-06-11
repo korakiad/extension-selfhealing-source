@@ -389,6 +389,8 @@
     "build": "node tools/gen-lm-tools.mjs --check && node esbuild.config.mjs",
     "build:prod": "node tools/gen-lm-tools.mjs --check && node esbuild.config.mjs --production",
     "build:check": "tsc -p tsconfig.json --noEmit",
+    "test:unit": "pnpm run test:unit:env && pnpm run test:unit:runtime && pnpm run test:unit:kill && pnpm run test:unit:browser && pnpm run test:unit:arbiter && pnpm run test:unit:mcpproxy && pnpm run test:unit:resolve",
+    "test:unit:resolve": "node --import tsx test/project-resolve.test.mts",
     "test:e2e:shim": "node --import tsx test/cdp-shim-e2e.mts",
     "test:e2e:stop": "node --import tsx test/stop-kill-e2e.mts",
     "test:unit:env": "node --import tsx test/child-env.test.mts",

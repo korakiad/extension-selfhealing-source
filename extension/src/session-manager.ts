@@ -37,10 +37,10 @@ import {
   PausePublishResult,
   nodeIpcTransport,
 } from '@qa-debug/mocha-hooks/protocol';
-import type { ChromeSelection, PausePayload } from '@qa-debug/pause-store-types';
+import type { PausePayload } from '@qa-debug/pause-store-types';
 
+import { CdpBinding } from './cdp-binding.js';
 import { sanitizeChildEnv } from './child-env.js';
-import { startCdpDownloadShim, type CdpShim } from './cdp-download-shim.js';
 import type { InspectionArbiter } from './inspection-arbiter.js';
 import type { DecisionRouter } from './decision-router.js';
 import type { QaDebugMcpProvider } from './mcp-provider.js';
@@ -48,6 +48,7 @@ import { appendInfo, createChildLogPump } from './output-channel.js';
 import { signalProcessGroup } from './process-group-kill.js';
 import type { PauseStatusBar } from './pause-status-bar.js';
 import type { MementoPauseStore } from './pause-store.js';
+import { buildAlternationGrep, resolveCwd, resolveMochaEntry } from './project-resolve.js';
 import type { RunStatusBar } from './run-status-bar.js';
 import type { RunSelection, TestControllerWrapper, TestRunHandle } from './test-controller.js';
 
@@ -62,70 +63,6 @@ async function refreshPausedTestIdsContext(pauseStore: MementoPauseStore): Promi
   const active = pauseStore.peekActivePause();
   const ids = active ? [computeTestItemId(active)] : [];
   await vscode.commands.executeCommand('setContext', 'qa-debug.pausedTestIds', ids);
-}
-
-/** MDN-canonical regex metachar escape — used by buildAlternationGrep. */
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-/**
- * Synthesizes `--grep <regex>` such that:
- *  - Each top-level suite title is its own anchored alternative (`^T$`) — this
- *    satisfies consumer test-framework wrappers (`@tr/mocha-runner-hooks` and
- *    friends) whose sniffer tests `--grep` against `this.suite.suites[].title`
- *    only and would otherwise log `NO TEST CASES MATCHED`. No test's
- *    `fullTitle()` equals a top-level title alone (tests have nested titles)
- *    so this alt doesn't over-select.
- *  - Each full title is anchored (`^F$`) — exact match, no sibling leakage.
- *  - Each describe prefix becomes `^P(?:$| )` — runs every test under that
- *    describe but not under sibling describes whose names start with the
- *    same prefix substring.
- * All inputs are regex-escaped per MDN guidance.
- */
-/**
- * Walks upward from `startDir` (inclusive) until it finds a directory that
- * contains a `.mocharc.*` config file or `package.json`. Stops at `boundary`
- * (inclusive). Returns the directory path, or null if nothing was found.
- *
- * Why `.mocharc.*` first: mocha config is the strongest signal that a
- * directory is the intended test-project root. `package.json` is a softer
- * fallback for repos that pass mocha options via CLI / wdio config and don't
- * keep a separate `.mocharc`.
- */
-function findProjectRoot(startDir: string, boundary: string): string | null {
-  const mochaRcNames = [
-    '.mocharc.cjs',
-    '.mocharc.js',
-    '.mocharc.mjs',
-    '.mocharc.json',
-    '.mocharc.jsonc',
-    '.mocharc.yaml',
-    '.mocharc.yml',
-    '.mocharcrc',
-  ];
-  const norm = (p: string) => path.resolve(p);
-  const boundaryNorm = norm(boundary);
-  let cur = norm(startDir);
-  // Walk only within the boundary subtree.
-  while (cur.startsWith(boundaryNorm)) {
-    for (const name of mochaRcNames) {
-      if (existsSync(path.join(cur, name))) return cur;
-    }
-    if (existsSync(path.join(cur, 'package.json'))) return cur;
-    const parent = path.dirname(cur);
-    if (parent === cur) break;
-    cur = parent;
-  }
-  return null;
-}
-
-function buildAlternationGrep(selection: RunSelection): string {
-  const alts: string[] = [];
-  for (const t of selection.topLevelSuiteTitles) alts.push(`^${escapeRegex(t)}$`);
-  for (const f of selection.fullTitles) alts.push(`^${escapeRegex(f)}$`);
-  for (const p of selection.describePrefixes) alts.push(`^${escapeRegex(p)}(?:$| )`);
-  return alts.length === 1 ? alts[0] : `(?:${alts.join('|')})`;
 }
 
 // Grace window between the polite group signal (SIGINT, = Ctrl-C) and the hard
@@ -239,14 +176,14 @@ export class SessionManager {
   private activeRun?: ActiveRun;
   private readonly chromeEventSubscriptions: { dispose(): void }[] = [];
   /**
-   * Active CDP download-shim, if any. 1:1 with the current chrome selection.
-   * The MCP is pointed at `shim.httpRoot` rather than the raw endpoint so
-   * `Browser.setDownloadBehavior` is swallowed (lets playwright-mcp attach to
-   * old Electron / embedded Chromium).
+   * Endpoint→MCP binding incl. the CDP download-shim hop, 1:1 with the current
+   * chrome selection. Shared implementation with LiveSessionManager — see
+   * cdp-binding.ts.
    */
-  private cdpShim?: CdpShim;
+  private readonly cdpBinding: CdpBinding;
 
   constructor(private readonly deps: SessionManagerDeps) {
+    this.cdpBinding = new CdpBinding(deps.mcpProvider, deps.channel, '[session-manager]');
     // v5.16 — gate mcpProvider.setPaused on chrome selection events. Two paths
     // feed this funnel: agent via qa-debug_qa_select_chrome (LM tool) and
     // extension UI via QuickPick / InputBox. Both write through
@@ -254,10 +191,16 @@ export class SessionManager {
     // onChromeSelected.
     this.chromeEventSubscriptions.push(
       this.deps.pauseStore.onChromeSelected((selection) => {
-        void this.bindMcpToSelection(selection);
+        // The onChromeSelected emitter ignores the returned promise — MCP
+        // registration is already async on the VS Code side, so the brief gap
+        // before setPaused is benign.
+        void this.cdpBinding.bindMcp(
+          selection.cdp_ws_url,
+          ` port=${selection.port} source=${selection.source} session=${selection.session_id}`,
+        );
       }),
       this.deps.pauseStore.onChromeDeselected((sessionId) => {
-        void this.stopCdpShim();
+        void this.cdpBinding.stopShim();
         this.deps.mcpProvider.clearPaused();
         appendInfo(
           this.deps.channel,
@@ -266,62 +209,6 @@ export class SessionManager {
         );
       }),
     );
-  }
-
-  /**
-   * Start the download-shim (if enabled) and point the MCP at it; otherwise
-   * publish the raw endpoint. The onChromeSelected emitter ignores the returned
-   * promise — MCP registration is already async on the VS Code side, so the
-   * brief gap before setPaused is benign.
-   */
-  private async bindMcpToSelection(selection: ChromeSelection): Promise<void> {
-    const rawHttpRoot = cdpWsUrlToHttpRoot(selection.cdp_ws_url);
-    // Replacing a selection: tear down the prior shim before starting a new one.
-    await this.stopCdpShim();
-
-    const shimEnabled = vscode.workspace
-      .getConfiguration('qaDebug')
-      .get<boolean>('cdpDownloadShim.enabled', true);
-
-    let endpoint = rawHttpRoot;
-    if (shimEnabled) {
-      try {
-        this.cdpShim = await startCdpDownloadShim({
-          targetHttpRoot: rawHttpRoot,
-          log: (msg) => appendInfo(this.deps.channel, msg),
-        });
-        endpoint = this.cdpShim.httpRoot;
-      } catch (err) {
-        appendInfo(
-          this.deps.channel,
-          `[session-manager] WARN cdp-shim failed to start (${(err as Error).message}); ` +
-            `falling back to raw endpoint ${rawHttpRoot}`,
-        );
-      }
-    }
-
-    this.deps.mcpProvider.setPaused(endpoint);
-    appendInfo(
-      this.deps.channel,
-      `[session-manager] mcpProvider.setPaused endpoint=${endpoint} ` +
-        `(raw=${rawHttpRoot}, shim=${this.cdpShim ? 'on' : 'off'}) port=${selection.port} ` +
-        `source=${selection.source} session=${selection.session_id}`,
-    );
-  }
-
-  /** Stop and clear the active shim (idempotent). */
-  private async stopCdpShim(): Promise<void> {
-    const shim = this.cdpShim;
-    if (!shim) return;
-    this.cdpShim = undefined;
-    try {
-      await shim.stop();
-    } catch (err) {
-      appendInfo(
-        this.deps.channel,
-        `[session-manager] WARN cdp-shim stop error: ${(err as Error).message}`,
-      );
-    }
   }
 
   /** Entrypoint for qa-debug.runFixture + TestController run handler. */
@@ -342,9 +229,9 @@ export class SessionManager {
       );
       return;
     }
-    const cwd = this.resolveCwd(opts.specs);
-    const mochaEntry = this.resolveMochaEntry(cwd);
     const specFiles = (opts.specs ?? []).map((u) => u.fsPath);
+    const cwd = resolveCwd(specFiles, this.deps.workspaceRoot);
+    const mochaEntry = resolveMochaEntry(cwd, this.deps.workspaceRoot);
     const testHandle = this.deps.testControllerWrapper.beginRun(
       opts.runLabel ?? (specFiles.length === 1 ? path.basename(specFiles[0]) : 'fixture suite'),
     );
@@ -380,7 +267,7 @@ export class SessionManager {
     }
     this.chromeEventSubscriptions.length = 0;
     // Release the proxy port on deactivate.
-    await this.stopCdpShim();
+    await this.cdpBinding.stopShim();
   }
 
   // ------------------- internal -------------------
@@ -653,7 +540,7 @@ export class SessionManager {
     await refreshPausedTestIdsContext(this.deps.pauseStore);
     this.deps.mcpProvider.setIdle();
     // Pause ended; release the shim proxy port.
-    await this.stopCdpShim();
+    await this.cdpBinding.stopShim();
   }
 
   private peekPauseForFinalDecision(decision: FinalDecisionParams): PausePayload | undefined {
@@ -777,80 +664,6 @@ export class SessionManager {
     }, KILL_GRACE_MS);
   }
 
-  /**
-   * CWD selection:
-   *  - If specs[] non-empty: walk UP from the first spec file looking for the
-   *    nearest `.mocharc.*` (or `package.json` as a fallback project marker),
-   *    stopping at workspaceRoot. Use that dir if found, else workspaceRoot.
-   *    This matters because consumer `.mocharc.cjs` files typically reference
-   *    paths relative to the project root (e.g. `node_modules/@tr/.../runnerCore.js`)
-   *    and mocha resolves them against CWD. Earlier behavior used
-   *    `path.dirname(spec)` which for layouts like `<root>/build/test/*.spec.js`
-   *    pointed at `<root>/build/test/`, where `node_modules/...` doesn't exist
-   *    — mocha then exited with "No test file(s) found".
-   *  - Else if `<workspaceRoot>/fixture-tests` exists: legacy demo flow.
-   *  - Else: workspaceRoot.
-   */
-  private resolveCwd(specs: readonly vscode.Uri[] | undefined): string {
-    if (specs && specs.length > 0) {
-      const root = this.deps.workspaceRoot;
-      const found = findProjectRoot(path.dirname(specs[0].fsPath), root);
-      return found ?? root;
-    }
-    const fixtureDir = path.join(this.deps.workspaceRoot, 'fixture-tests');
-    if (existsSync(fixtureDir)) {
-      return fixtureDir;
-    }
-    return this.deps.workspaceRoot;
-  }
-
-  private resolveMochaEntry(cwd: string): string {
-    // Look in the chosen CWD's node_modules first, then walk up two levels
-    // (works for typical monorepo layouts: cwd/node_modules, cwd/../node_modules,
-    // cwd/../../node_modules), then workspaceRoot.
-    //
-    // Resolve mocha's JS entry (bin/mocha.js on mocha ≥9, bin/mocha on ≤8) —
-    // NOT the node_modules/.bin/mocha shim. On Windows that shim is an
-    // extensionless sh script CreateProcess can't run (spawn ENOENT even
-    // though the file exists), and the .cmd variant can't carry the
-    // stdio[3] IPC pipe through cmd.exe.
-    const bases = [
-      cwd,
-      path.join(cwd, '..'),
-      path.join(cwd, '..', '..'),
-      this.deps.workspaceRoot,
-    ];
-    for (const base of bases) {
-      for (const entry of ['mocha.js', 'mocha']) {
-        const c = path.join(base, 'node_modules', 'mocha', 'bin', entry);
-        if (existsSync(c)) return c;
-      }
-    }
-    throw new Error(
-      `Could not find the mocha package near ${cwd} or ${this.deps.workspaceRoot}. ` +
-        `Did the user's project install mocha?`,
-    );
-  }
-}
-
-/**
- * Convert a CDP WebSocket URL (`ws://host:port` or `ws://host:port/devtools/browser/<UUID>`)
- * to the HTTP root form (`http://host:port`) that `mcpProvider.setPaused` expects.
- *
- * Playwright `connectOverCDP` accepts BOTH ws-with-path and http-root forms
- * (class-browsertype.md), but canonicalizing to http-root lets Playwright
- * re-discover the active target via `/json/version` if the devtools UUID
- * rotates between discovery and connect.
- *
- * Assumes the input uses `ws://` scheme — v5.16 ChromeSelection.cdp_ws_url
- * comes from qa-hooks' /json/version probe (mocha-hooks/qa-hooks.ts), which
- * normalizes via normalizeCdpWsUrl and keeps the scheme as published by
- * Chrome itself. If remote-chrome `wss://` support is ever added, preserve
- * scheme via `wsUrl.startsWith('wss:') ? 'https' : 'http'`.
- */
-function cdpWsUrlToHttpRoot(wsUrl: string): string {
-  const u = new URL(wsUrl);
-  return `http://${u.host}`;
 }
 
 function wireToStored(wire: WirePausePayload, sessionId: string): PausePayload {
