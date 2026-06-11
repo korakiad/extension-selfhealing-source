@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 // Snapshot integration test for ARCHITECTURE v5 §3.6.
 // Runs the oracle against the three fixture tests with the canonical decision
-// sequence (mark_passed, give_up, retry) and diffs the qa-reporter stdout
+// sequence (mark_passed, give_up — last repeats) and diffs the qa-reporter stdout
 // (ANSI-stripped, oracle stderr-stripped) against
 // fixture-tests/snapshots/s2-3-decision-tally.txt.
 
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const REPO = resolve(__dirname, '..');
@@ -16,7 +16,13 @@ const ANSI = /\x1b\[[0-9;]*m/g;
 const ORACLE_LINE = /^\[oracle\] .*$/gm;
 
 function normalize(s: string): string {
-  return s.replace(ANSI, '').replace(ORACLE_LINE, '').replace(/\n{3,}/g, '\n\n').trimEnd() + '\n';
+  return (
+    s
+      .replace(ANSI, '')
+      .replace(ORACLE_LINE, '')
+      .replace(/\n{3,}/g, '\n\n')
+      .trimEnd() + '\n'
+  );
 }
 
 function run(): { stdout: string; status: number | null } {
@@ -27,7 +33,7 @@ function run(): { stdout: string; status: number | null } {
       'tsx',
       'tools/oracle.ts',
       '--decisions',
-      'mark_passed,give_up,retry',
+      'mark_passed,give_up',
       '--tests',
       'specs/**/*.spec.js',
     ],
@@ -39,6 +45,13 @@ function run(): { stdout: string; status: number | null } {
 
 const { stdout, status } = run();
 const actual = normalize(stdout);
+
+if (process.argv.includes('--update')) {
+  writeFileSync(SNAPSHOT, actual);
+  process.stderr.write(`[snapshot] UPDATED ${SNAPSHOT} — review the diff before committing\n`);
+  process.exit(0);
+}
+
 const expected = readFileSync(SNAPSHOT, 'utf8').trimEnd() + '\n';
 
 if (actual === expected) {

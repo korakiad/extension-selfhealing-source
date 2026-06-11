@@ -81,7 +81,7 @@ function parseArgs(argv: string[]): OracleArgs {
 function printHelpAndExit(code: number): never {
   process.stderr.write(
     `Usage: node --import tsx tools/oracle.ts \\\n` +
-      `  --decisions <retry|mark_passed|give_up>[,...] \\\n` +
+      `  --decisions <mark_passed|give_up>[,...] \\\n` +
       `  [--cwd <dir, default fixture-tests/>] \\\n` +
       `  [--tests <glob, default from .mocharc.cjs>] \\\n` +
       `  [--heartbeat-ms <n, default 5000>] \\\n` +

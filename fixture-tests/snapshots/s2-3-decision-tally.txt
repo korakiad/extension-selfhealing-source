@@ -11,12 +11,10 @@ qa-reporter — v5 tri-state outcome renderer
     ✗ fails because the target never appears — give_up by agent: oracle scripted decision #1: give_up
       TimeoutError: waiting for selector "#never-appears" failed: timeout 50ms exceeded
   ▶ value-mismatch fixture fails because computed total does not match expected
-    ↻ retry-pending fails because computed total does not match expected — by agent: oracle scripted decision #2: retry (extension respawns mocha via --grep in S4)
-      (original failure: expected total 42 but got 41
+    ✗ fails because computed total does not match expected — give_up by agent: oracle scripted decision #2: give_up
+      expected total 42 but got 41
 
 41 !== 42
-)
 
-Tally: 0 passing, 1 failing, 1 marked-passed, 1 retry-pending
+Tally: 0 passing, 2 failing, 1 marked-passed
 (marked-passed tests do NOT relax the CI exit code; pass --reporter-options qa-treat-marked-as-passing=true to opt in)
-(retry-pending tests await the extension's mocha --grep respawn; S2 oracle does not simulate the respawn)

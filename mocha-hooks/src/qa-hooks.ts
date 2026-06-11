@@ -216,7 +216,8 @@ function currentRetryOf(test: Mocha.Test): number {
   return (test as unknown as { currentRetry: () => number }).currentRetry();
 }
 
-async function awaitDecisionWithHeartbeat(
+// Exported for mocha-hooks/test/heartbeat.test.mts — not part of the public API.
+export async function awaitDecisionWithHeartbeat(
   c: JsonRpcConnection,
   params: DecisionAwaitParams,
 ): Promise<DecisionResult> {

@@ -7,7 +7,16 @@
 // ../../mocha-hooks. vsce doesn't reliably follow that into a workspace
 // package. Replacing the symlink in-place would break the dev workspace.
 
-import { mkdirSync, copyFileSync, rmSync, cpSync, readdirSync, writeFileSync, readFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  copyFileSync,
+  rmSync,
+  cpSync,
+  readdirSync,
+  writeFileSync,
+  readFileSync,
+  existsSync,
+} from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -109,5 +118,44 @@ const stagingIgnore = [
 ].join('\n');
 writeFileSync(join(staging, '.vscodeignore'), stagingIgnore);
 
+// ---- Verification gate: fail loudly BEFORE vsce packages a broken/leaky tree.
+
+// 1. Every file the extension resolves at runtime must be in the staged tree.
+const required = [
+  'package.json',
+  '.vscodeignore',
+  'dist/extension.js',
+  'dist/mcp-proxy.js',
+  'node_modules/@qa-debug/mocha-hooks/package.json',
+  'node_modules/@qa-debug/mocha-hooks/dist/qa-hooks.js',
+  'node_modules/@qa-debug/mocha-hooks/dist/qa-reporter.js',
+  'node_modules/@qa-debug/mocha-hooks/dist/protocol.js',
+  'node_modules/@qa-debug/mocha-hooks/dist/probe.js',
+];
+const missing = required.filter((rel) => !existsSync(join(staging, rel)));
+if (missing.length > 0) {
+  console.error(`[prepare-vsix] FATAL: staged tree is incomplete — refusing to package:`);
+  for (const rel of missing) console.error(`  missing ${rel}`);
+  process.exit(1);
+}
+
+// 2. The shipped vsix must never reference the private source repo.
+const PRIVATE_REPO = 'extension-selfhealing-source';
+for (const rel of ['package.json', 'README.md', 'CHANGELOG.md']) {
+  const p = join(staging, rel);
+  if (!existsSync(p)) continue;
+  if (readFileSync(p, 'utf8').includes(PRIVATE_REPO)) {
+    console.error(
+      `[prepare-vsix] FATAL: ${rel} references the private source repo (${PRIVATE_REPO}) — scrub before packaging.`,
+    );
+    process.exit(1);
+  }
+}
+
 console.log(`[prepare-vsix] staged at ${staging}`);
-console.log(`  node_modules/@qa-debug/mocha-hooks/dist/ ← ${readdirSync(join(hooksDst, 'dist')).join(', ')}`);
+console.log(
+  `  node_modules/@qa-debug/mocha-hooks/dist/ ← ${readdirSync(join(hooksDst, 'dist')).join(', ')}`,
+);
+console.log(
+  `[prepare-vsix] verification OK: ${required.length} required files present, no private-repo references`,
+);

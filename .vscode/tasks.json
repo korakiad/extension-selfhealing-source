@@ -4,8 +4,7 @@
     {
       "label": "build-extension",
       "type": "shell",
-      "command": "pnpm",
-      "args": ["--filter", "./extension", "run", "build"],
+      "command": "pnpm --filter ./mocha-hooks run build && pnpm --filter ./extension run build:check && pnpm --filter ./extension run build",
       "group": {
         "kind": "build",
         "isDefault": true

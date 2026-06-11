@@ -14,10 +14,13 @@
   "scripts": {
     "build": "node esbuild.config.mjs",
     "build:check": "tsc -p tsconfig.json --noEmit",
+    "test:unit": "pnpm run test:unit:protocol && pnpm run test:unit:heartbeat",
+    "test:unit:protocol": "node --import tsx test/protocol.test.mts",
+    "test:unit:heartbeat": "node --import tsx test/heartbeat.test.mts",
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "zod": "^3.23.8"
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",
