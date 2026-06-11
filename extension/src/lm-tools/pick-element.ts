@@ -5,7 +5,7 @@ import { QaToolError } from '@qa-debug/tool-contracts/errors';
 import { auditLog, jsonResult, toErrorResult, type LmToolDeps } from './base.js';
 import { resolveInspectTarget } from './inspect-target.js';
 import { appendInfo } from '../output-channel.js';
-import { pickElementViaOverlay } from '../cdp-inspect.js';
+import { pickElement } from '../element-picker.js';
 
 const TOOL_NAME = 'qa-debug_qa_pick_element';
 
@@ -14,12 +14,14 @@ interface Input {
 }
 
 /**
- * Arms Chrome's native DevTools element inspector (CDP Overlay) on the pause's
- * selected held browser so the QA points at the exact element a failing selector
- * should match. Pause-gated like the other verbs: it reads the committed chrome
- * selection from the pause store (no discovery here) and drives Overlay over a
- * raw CDP connection — see cdp-inspect.ts for why native (not a page-script
- * picker) is what makes this pierce iframes + shadow DOM transparently.
+ * Arms Chrome's native DevTools element inspector (CDP Overlay) on the active
+ * inspection's selected browser so the QA points at the exact element, then
+ * returns a verification-ready description (computed role/accessibleName, an
+ * injected data-qa-pick marker, match-counted CSS candidates). Gated like the
+ * other verbs: it reads the committed chrome selection from the pause/live
+ * store (no discovery here) — see element-picker.ts for why native Overlay
+ * (not a page-script picker) pierces iframes + shadow DOM transparently, and
+ * for what each returned handle is for.
  */
 export class PickElementTool implements vscode.LanguageModelTool<Input> {
   constructor(private readonly deps: LmToolDeps) {}
@@ -53,7 +55,7 @@ export class PickElementTool implements vscode.LanguageModelTool<Input> {
       const controller = new AbortController();
       const sub = token.onCancellationRequested(() => controller.abort());
       try {
-        const result = await pickElementViaOverlay(chrome.ws_url, {
+        const result = await pickElement(chrome.ws_url, {
           signal: controller.signal,
           log: (m) => appendInfo(this.deps.auditChannel, m),
         });

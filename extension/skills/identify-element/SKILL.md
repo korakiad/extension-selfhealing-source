@@ -1,18 +1,18 @@
 ---
 name: identify-element
-description: Use during an active Mocha test pause when the agent or QA needs to visually identify a specific element in the held browser. Engages when investigating a selector-related failure (test-bug / code-bug), when the QA says "pick this element" / "show me which element you mean" / "let me identify it" / "the right element is the one labelled X", or when the agent is uncertain which DOM node a failing assertion refers to. Routes to the qa-debug `qa_pick_element` tool, which arms Chrome's native element inspector in the held browser — the QA hovers and clicks one element, and the tool returns structured DOM attributes for the agent to build a project-matched locator. Does NOT engage when no Mocha test is paused — the qa-debug companion must be active and a chrome must be selected.
+description: Use during an active Mocha test pause when the agent or QA needs to visually identify a specific element in the held browser. Engages when investigating a selector-related failure (test-bug / code-bug), when the QA says "pick this element" / "show me which element you mean" / "let me identify it" / "the right element is the one labelled X", or when the agent is uncertain which DOM node a failing assertion refers to. Routes to the qa-debug `qa_pick_element` tool, which arms Chrome's native element inspector in the held browser — the QA hovers and clicks one element, the tool returns a verification-ready description (computed role/name, injected marker, match-counted CSS candidates), and the agent VERIFIES the pick through the attached browser tools before building a project-matched locator. Does NOT engage when no Mocha test is paused — the qa-debug companion must be active and a chrome must be selected.
 ---
 
 # /identify-element — Visual element picker during a Mocha pause
 
-A Mocha test is paused and a browser is held alive (qa-debug companion engaged). When the failing assertion mentions a selector — or you genuinely don't know which DOM node the QA means — use the **`qa_pick_element`** tool to have the QA click the target in the held browser. It arms Chrome's own DevTools element inspector over CDP, so the QA just hovers (Chrome highlights the element) and clicks once, anywhere — and because the hit-test runs in the browser process, it transparently pierces **cross-origin iframes, open and closed shadow DOM, web components, and canvas overlays** with no descend step and no awareness of frames from the QA. **Always confirm the picked element with the QA in plain language before building a selector.**
+A Mocha test is paused and a browser is held alive (qa-debug companion engaged). When the failing assertion mentions a selector — or you genuinely don't know which DOM node the QA means — use the **`qa_pick_element`** tool to have the QA click the target in the held browser. It arms Chrome's own DevTools element inspector over CDP, so the QA just hovers (Chrome highlights the element) and clicks once, anywhere — the hit-test runs in the browser process, so it transparently pierces **cross-origin iframes, open and closed shadow DOM, web components, and canvas overlays**.
+
+The pick is only half the job. The tool returns **three verification handles** — computed `role`/`accessibleName` (the `browser_snapshot` vocabulary), an injected `marker` attribute, and live **match-counted** CSS candidates — and the same held browser is attached as the browser tools (`browser_snapshot`, `browser_evaluate`, …). **Verify the pick against the live page before proposing anything, and never hand the QA a selector whose match count you haven't seen.**
 
 ## Prerequisites
 
-- An active Mocha pause (qa-debug companion engaged); `qa-debug.paused` context is true.
-- A chrome selected (qa-debug SKILL Step 1b ran; `selected_cdp_port` is non-null). If none is selected, `qa_pick_element` returns `BROWSER_NOT_SELECTED` — run the `qa_get_failure_context` → `qa_select_chrome` flow first, then retry.
-
-`qa_pick_element` connects to the held browser's CDP endpoint directly; it does NOT require playwright-mcp (no `browser_evaluate`, no injection).
+- An active Mocha pause (`qa-debug.paused` context is true).
+- A chrome selected (`selected_cdp_port` non-null). If none is selected, `qa_pick_element` returns `BROWSER_NOT_SELECTED` — run the `qa_get_failure_context` → `qa_select_chrome` flow first, then retry. Selecting the chrome is also what attaches the browser tools you'll verify with.
 
 ## When to use
 
@@ -24,7 +24,7 @@ A Mocha test is paused and a browser is held alive (qa-debug companion engaged).
 
 - No Mocha pause is active (the skill description gates this; do not bypass).
 - The failure has nothing to do with an element (value mismatch, network 503, runtime exception, missing fixture data, etc.).
-- The right selector is already obvious from `browser_snapshot` AND matches the project's existing selector pattern — don't interrupt the QA for a free move you've already made.
+- The right element is already unambiguous from `browser_snapshot` AND matches the project's existing selector pattern — don't interrupt the QA for a free move you've already made.
 - The QA is in autopilot and has explicitly delegated selector decisions to you for this session.
 
 ## How to invoke
@@ -35,78 +35,104 @@ One short message in chat:
 
 > *"I'm arming the element picker in the held browser. Hover over the element you mean — Chrome will highlight it — then click it. I'll wait."*
 
-This sets expectations so the QA isn't surprised when the inspector cursor appears.
-
 ### Step 2 — Call `qa_pick_element`
 
-Call the `qa_pick_element` tool (`session_id` is optional — omit to target the active pause). It blocks while the QA hovers and clicks, then returns:
+Call the tool (`session_id` optional — omit to target the active pause). It blocks while the QA hovers and clicks, then returns:
 
 ```json
 {
   "picked": {
-    "tag": "ef-button",
-    "id": "",
+    "tag": "button",
+    "id": "container",
     "name": "",
-    "classes": ["event-markers-button"],
-    "data": { "e2e": "event-markers-button" },
-    "aria": { "role": "button", "pressed": "false" },
+    "classes": ["legend-btn"],
+    "data": {},
+    "aria": { "pressed": "false" },
     "text": "",
-    "selector": "[data-e2e=\"event-markers-button\"]",
+    "role": "button",
+    "accessibleName": "Add comparison",
+    "marker": { "attr": "data-qa-pick", "value": "1c9f1c52-77b1", "selector": "[data-qa-pick=\"1c9f1c52-77b1\"]" },
+    "candidates": [
+      { "css": "button#container", "matchCount": 94 },
+      { "css": "button[aria-label=\"Add comparison\"]", "matchCount": 1 },
+      { "css": "button.legend-btn", "matchCount": 12 },
+      { "css": "button", "matchCount": 210 }
+    ],
+    "uniquePath": "div#legend-row-3 > div.actions > button#container",
+    "scope": "document",
     "nthOfType": 1,
+    "rect": { "x": 412, "y": 188, "width": 24, "height": 24 },
+    "isInteractive": true,
+    "shadow": "none",
     "inFrame": true,
-    "frameUrl": "https://app.example.com/rap/financial-chart/3.8.37.1/index.html",
+    "frameUrl": "https://app.example.com/chart/3.8.37/index.html",
     "frameChain": [
       { "selector": "iframe#app-shell", "url": "https://app.example.com/shell" },
-      { "selector": "iframe[name=\"chart\"]", "url": "https://app.example.com/rap/financial-chart/3.8.37.1/index.html" }
+      { "selector": "iframe[name=\"chart\"]", "url": "https://app.example.com/chart/3.8.37/index.html" }
     ],
     "frameChainComplete": true,
     "ancestors": [
-      { "tag": "div", "id": "", "classes": ["toolbar"], "data": {}, "role": "toolbar", "ariaLabel": "Chart tools", "name": "", "selector": "div[role=\"toolbar\"]", "nthOfType": 2 },
-      { "tag": "section", "id": "", "classes": ["chart-panel"], "data": { "e2e": "markers-panel" }, "role": "", "ariaLabel": "", "name": "", "selector": "section[data-e2e=\"markers-panel\"]", "nthOfType": 1 },
-      { "tag": "div", "id": "", "classes": [], "data": {}, "role": "", "ariaLabel": "", "name": "", "selector": "div:nth-of-type(3)", "nthOfType": 3, "shadowHost": true },
-      { "tag": "body", "id": "", "classes": [], "data": {}, "role": "", "ariaLabel": "", "name": "", "selector": "body", "nthOfType": 1 }
+      { "tag": "div", "id": "", "classes": ["actions"], "data": {}, "role": "", "ariaLabel": "", "name": "", "selector": "div.actions", "matchCount": 12, "nthOfType": 2 },
+      { "tag": "div", "id": "legend-row-3", "classes": ["legend-row"], "data": {}, "role": "listitem", "ariaLabel": "", "name": "", "selector": "div#legend-row-3", "matchCount": 1, "nthOfType": 3, "interactive": true }
     ]
   }
 }
 ```
 
-The output is **framework-neutral** — raw DOM facts plus plain CSS selectors, with no ready-made test-framework locator baked in. **Do not assume any framework.** Which framework, selector strategy, and frame/shadow idiom to use is something you **discover from the consumer's own codebase** in Step 4 — never guess it.
+On timeout (~2 min) or a cancelled turn it returns `{ "cancelled": true, "reason": "timeout" | "cancelled" }` — fall back to your prior plan (don't loop; ask the QA what they want next). Errors: `NO_ACTIVE_PAUSE`, `SESSION_NOT_FOUND`, `BROWSER_NOT_SELECTED` (select a chrome first), `CDP_CONNECT_FAILED`.
 
-If the QA doesn't click within ~2 minutes, or the turn is cancelled, it returns `{ "cancelled": true, "reason": "timeout" | "cancelled" }` — fall back to your prior plan (don't loop; ask the QA what they want next). Errors: `NO_ACTIVE_PAUSE`, `SESSION_NOT_FOUND`, `BROWSER_NOT_SELECTED` (select a chrome first), `CDP_CONNECT_FAILED` (the held browser's CDP endpoint was unreachable).
+**How to read the result:**
 
-No iframe/shadow handling is needed on your side — the tool resolves straight to the real leaf node regardless of how deeply it's nested. When the node lives inside iframes, **`frameChain`** gives you the full ordered **outer→inner** ancestry — one `{ selector, url }` per `<iframe>`, covering arbitrarily nested AND cross-origin (OOPIF) frames — so you don't have to hunt for the iframe selectors yourself. An empty `frameChain` means the top document. If `frameChainComplete` is `false`, one frame level couldn't be auto-resolved (rare: a same-process cross-origin frame) — identify that iframe manually and treat `frameChain` as best-effort.
+- **`role` / `accessibleName`** — the COMPUTED accessibility role and name, exactly what `browser_snapshot` shows (implicit roles included, e.g. `<button>` with no role attribute). This is your bridge into the snapshot.
+- **`marker`** — a `data-qa-pick="<nonce>"` attribute injected onto the picked element. The one handle that is unique no matter how hostile the page's own attributes are. **Volatile**: cleared by the next pick in the same document, lost on reload/re-render. Use it to verify; never ship it.
+- **`candidates`** — leaf CSS selectors, each with `matchCount` counted **live in the page** within `scope` (the leaf's document or innermost shadow root). The counts are the truth: in the example above, `button#container` looks specific but matches **94** nodes — only the aria-label candidate is unique. **Trust counts over intuition; real apps reuse ids and classes freely.**
+- **`uniquePath`** — a `>`-combinator CSS path already verified to match **exactly one** node in `scope`. Your guaranteed-correct plain-CSS answer when no single candidate is unique. `null` only on hostile DOM (fall back to marker + ancestors).
+- **`rect`** — border box in the **owning frame's** viewport coordinates (`null` if not rendered). For canvas/chart surfaces there is no DOM below the canvas element — the canvas node + a position relative to `rect` is the locator; say so to the QA instead of inventing a selector for a drawn pixel.
+- **`isInteractive`** — `false` means the QA clicked a presentational leaf (an svg path, a span). The nearest `ancestors[]` entry flagged `interactive: true` is usually the element a test should target; raise this in Step 4.
+- **`frameChain`** — ordered **outer→inner** iframe ancestry (`{ selector, url }` per `<iframe>`), covering nested AND cross-origin frames. Empty = top document. `frameChainComplete: false` means a level couldn't be resolved — identify that iframe manually.
+- **`ancestors`** — within-frame ancestor chain, nearest→outermost, crossing shadow roots (each crossed host flagged `shadowRoot: "open" | "closed"`). Each has its own `selector` + `matchCount` for scoping.
+- **`shadow`** — worst shadow boundary on the path: `"closed"` means **no CSS selector can reach the leaf from outside**, and closed-shadow content may be missing from `browser_snapshot` too. Surface this honestly and follow the project's escape hatch (Step 4); don't hand over a selector that silently fails.
 
-**`ancestors`** gives the DOM ancestor chain of the picked node *within its frame*, **nearest→outermost** (immediate parent first, up to `<html>` or ~15 levels), crossing shadow-DOM boundaries (each crossing flagged `shadowHost: true`, so nested shadow roots are walked). Use it when the leaf alone is weak (no stable `data-*`/`id`/`role`, only a tag or utility classes) or ambiguous (the same leaf selector matches many nodes): anchor on the nearest ancestor that carries a stable hook and descend to the leaf. Each entry has `{ tag, id, classes, data, role, ariaLabel, name, selector, nthOfType, shadowHost? }`.
+### Step 3 — Verify the pick against the live page
 
-**`nthOfType`** (on the leaf and every ancestor) is the 1-based position among same-tag siblings. When an element has no stable hook, its `selector` already falls back to `tag:nth-of-type(n)` so it's at least locally unique; combine with the ancestor chain for a globally-unique path. Treat positional selectors as a **last resort** — they break on DOM reorder — so prefer a stable `data-*`/`id`/`role`/text on the element or an ancestor whenever one exists.
+The browser tools are attached to the **same held browser** — use them silently before talking to the QA:
 
-**Shadow DOM caveat (important).** **Open** shadow roots are pierced by most modern selector engines, so a CSS selector through open shadow usually resolves — but confirm against how the project's own tests deal with shadow DOM. **Closed** shadow roots generally cannot be reached by a selector at all. The picker can still *report* a chain that crosses a closed boundary (it holds the node directly via CDP), but a selector whose path crosses a closed root **will not resolve in the test** — when you see `shadowHost: true` on a closed host, say so to the QA and follow whatever non-selector escape hatch the project uses, rather than handing over a selector that silently fails.
+1. Call `browser_snapshot` and locate the picked node by `role` + `accessibleName`, inside the right frame (follow `frameChain` / `frameUrl` to the right part of the snapshot).
+2. Pin the identity with the marker: `browser_evaluate` on that snapshot ref with a function like `(el) => el.getAttribute('data-qa-pick') || (el.querySelector('[data-qa-pick]')?.getAttribute('data-qa-pick'))` and compare to `marker.value`. (When the QA clicked a presentational leaf, the snapshot node may be the interactive ancestor and the marked node its descendant — that's what the `querySelector` fallback catches.)
+3. If `role`/`accessibleName` are empty (canvas, generic containers): skip snapshot correlation — the tool's `uniquePath`/`matchCount` facts were verified live at pick time. Correlate via the nearest ancestor that *does* have a role/name, and use `rect` for position.
 
-### Step 3 — Confirm with the QA in plain language
+If verification fails (no matching ref, marker mismatch), the page likely changed or the click landed off — re-run from Step 1 rather than building on bad data.
 
-Show the QA what got picked, NOT raw JSON:
+### Step 4 — Confirm with the QA in plain language
 
-> *"You picked a `<button>` with data-e2e `event-markers-button`, role 'button', inside the chart iframe. Is this the right element?"*
+Show the QA what got picked and what you verified, NOT raw JSON:
 
-Wait for confirmation. If QA confirms → Step 4. If QA says no → loop back to Step 1 with a fresh `qa_pick_element` call.
+> *"You picked the 'Add comparison' button (24×24, in the chart iframe). Heads-up: its id `container` is reused by 94 elements, but its aria-label is unique. Is this the right element?"*
 
-### Step 4 — Investigate the consumer codebase, then build in its convention
+If the leaf wasn't interactive, ask which they mean:
 
-The picker output is deliberately framework-agnostic — it tells you *which element*, not *how this repo writes locators*. **Before writing anything, investigate the consumer project** (open a handful of its existing test / page-object / helper files, and any locator/selector utilities) and learn:
+> *"You clicked an svg icon inside the 'Add comparison' button — should the test target the button?"*
 
-- **Selector strategy** — what hook the project anchors on (`data-e2e`, `data-test`, `id`, role/accessible-name, plain CSS, …).
-- **Element API** — how it queries an element (a built-in locator API, a custom wrapper/helper, page-object methods).
+Wait for confirmation. If QA says no → loop back to Step 1 with a fresh `qa_pick_element` call.
+
+### Step 5 — Investigate the consumer codebase, build in its convention, prove it
+
+The picker output is deliberately framework-agnostic — it tells you *which element* (verified), not *how this repo writes locators*. **Before writing anything, investigate the consumer project** (a handful of its existing test / page-object / helper files, any locator/selector utilities) and learn:
+
+- **Selector strategy** — what hook the project anchors on (`data-*` test attributes, `id`, role/accessible-name, plain CSS, …).
+- **Element API** — how it queries an element (built-in locator API, custom wrapper/helper, page-object methods).
 - **Frames** — how its existing tests reach elements *inside* an iframe (the frame-entry idiom it already uses).
 - **Shadow DOM** — whether/how it handles shadow roots.
 - **Interaction & assertion style** — so your suggestion reads like the surrounding code.
 
-Then build the locator using ONLY the attributes from Step 2's output, replicating that convention exactly:
+Then build the locator using ONLY verified facts from Steps 2–3, replicating that convention exactly:
 
-- DO NOT assume a framework, and DO NOT copy a selector from training data — the consumer's codebase + the returned attributes are the only sources of truth.
-- **Match the project's selector strategy** for the leaf (prefer a stable `data-*`/`id`/`role`/accessible-name; the plain-CSS `selector` field is a fallback hint, not the answer).
-- **Frames** (`frameChain` non-empty): walk the iframes **outer→inner**, entering each the way the project's own tests do, then locate the leaf inside the innermost frame. Each `frameChain[i].selector` is plain CSS for the iframe element — reuse it, or rewrite to the project's frame convention using the entry's `url` as a cue. If `frameChainComplete` is `false`, resolve the missing level(s) by hand. (`inFrame`/`frameUrl` are quick "is it framed / innermost URL" signals; `frameChain` is what you build from.)
-- **Weak/ambiguous leaf** → scope with `ancestors`: anchor on the nearest ancestor carrying a stable hook (`data-*`/`id`/`role`/`aria-label`) and descend to the leaf, in the project's idiom. Add only as many ancestor levels as needed for uniqueness. Ancestors are also your fallback when the leaf has no usable attribute at all.
-- **Last resort only:** when nothing stable exists anywhere on the path, use the `:nth-of-type(n)` selectors (driven by `nthOfType`) and tell the QA the locator is positional and brittle.
+- DO NOT assume a framework, and DO NOT copy a selector from training data — the consumer's codebase + the verified pick are the only sources of truth.
+- **Pick the hook by match count, in the project's preferred order.** A candidate with `matchCount: 1` in the project's favoured strategy wins; a crowded hook (like the 94× id) needs scoping via `ancestors` (anchor on the nearest ancestor with `matchCount: 1` and descend) or use `uniquePath`.
+- **Frames** (`frameChain` non-empty): enter the iframes **outer→inner** the way the project's own tests do. Each `frameChain[i].selector` is plain CSS for the iframe element — reuse it, or rewrite to the project's frame convention using the entry's `url` as a cue.
+- **Closed shadow** (`shadow: "closed"`): a CSS path cannot cross it — tell the QA and follow the project's existing escape hatch (or a non-selector strategy). Don't silently emit a selector that can't resolve.
+- **Last resort:** `:nth-of-type(n)` paths (the tool only emits them when nothing stable exists). Tell the QA the locator is positional and brittle.
+- **Prove before handing over:** when the final locator's target is expressible as CSS or role+name, check it against the live page (find its ref in `browser_snapshot`, or `browser_evaluate` a match count) and confirm it resolves to the marked element, exactly once. If the page was reloaded since the pick (marker gone), say so — or re-pick.
 
 If you can't determine the project's convention from the codebase, ask the QA rather than guessing a framework.
 
@@ -114,13 +140,15 @@ If you can't determine the project's convention from the codebase, ask the QA ra
 
 | Anti-pattern | Reason |
 |---|---|
-| Calling `qa_pick_element` before a chrome is selected. | It returns `BROWSER_NOT_SELECTED`. Run `qa_get_failure_context` → `qa_select_chrome` first (qa-debug SKILL Step 1b). |
-| Skipping Step 3 (QA confirmation in plain language). | The tool reports *what* the QA clicked, but they may have mis-clicked (sticky headers, overlays, hidden buttons). Always confirm in plain English before building the selector. |
-| Assuming a framework / pasting the raw `selector` without matching the project. | The output is framework-neutral data + plain CSS — it does NOT tell you the repo's framework, selector strategy, frame/shadow idiom, or custom wrappers. Investigate the project's existing tests first (Step 4), then build in *that* convention; if unclear, ask the QA. |
+| Handing over `candidates[0].css` without reading its `matchCount`. | The counts exist because "specific-looking" hooks are routinely reused (id `container` ×94). A selector with `matchCount > 1` used alone WILL act on the wrong node. |
+| Shipping `marker.selector` (`[data-qa-pick=…]`) as the final locator. | The marker is a transient verification handle — cleared on the next pick, gone on reload. Tests built on it fail tomorrow. |
+| Skipping Step 3 verification when `role`/`accessibleName` are present. | Snapshot + marker check costs two silent tool calls and catches mis-clicks, stale DOM, and wrong-frame confusion before the QA sees a wrong answer. |
+| Skipping Step 4 (QA confirmation in plain language). | The QA may have mis-clicked (sticky headers, overlays); and when the leaf is presentational, only the QA knows whether the test should target the leaf or the interactive ancestor. |
+| Calling `qa_pick_element` before a chrome is selected. | Returns `BROWSER_NOT_SELECTED` — and without the selection the browser tools you verify with aren't attached either. |
 | Calling `qa_pick_element` again before the first call returns. | It blocks awaiting the QA's click. Wait for it to return (or time out / cancel) before re-invoking. |
-| Using the picker when the right selector is already obvious from `browser_snapshot`. | Free reads of the DOM tree don't need QA interaction; reserve the picker for cases where the snapshot alone doesn't disambiguate. |
+| Assuming a framework / pasting a training-data selector. | Output is framework-neutral facts. Investigate the project's existing tests first (Step 5), build in *that* convention; if unclear, ask the QA. |
 
 ## Reference
 
-- `qa_pick_element` (qa-debug LM tool) — the picker. Drives Chrome's CDP `Overlay` inspector from the extension; see `extension/src/cdp-inspect.ts`.
+- `qa_pick_element` (qa-debug LM tool) — the picker. Drives Chrome's CDP `Overlay` inspector + verification-ready extraction; see `extension/src/element-picker.ts`.
 - `extension/skills/qa-debug/SKILL.md` — the qa-debug investigation flow this skill plugs into (Step 1 / Step 1b for failure context + chrome selection, before proposing a selector edit).
