@@ -20,6 +20,7 @@ import * as vscode from 'vscode';
 
 import type { LiveTargetStore } from '../live-target-store.js';
 import type { MementoPauseStore } from '../pause-store.js';
+import type { TestRailService } from '../testrail/config.js';
 import { appendInfo } from '../output-channel.js';
 
 export interface LmToolDeps {
@@ -27,6 +28,10 @@ export interface LmToolDeps {
   /** Live Inspect Session target — read by the generalized picker +
    *  qa_start_live_session so they work outside a Mocha pause. */
   liveTargetStore: LiveTargetStore;
+  /** Lazily-built TestRail client over SecretStorage credentials — used by the
+   *  qa_testrail_* pair; throws TESTRAIL_NOT_CONFIGURED until the QA runs
+   *  "QA Debug: Configure TestRail". */
+  testrail: TestRailService;
   auditChannel: vscode.OutputChannel;
 }
 

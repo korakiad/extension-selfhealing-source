@@ -10,7 +10,27 @@ export type QaErrorCode =
   // identify-live: no pause AND no live inspect session is active. Raised by
   // the generalized picker + qa_start_live_session when neither inspection
   // surface exists for the request.
-  | 'NO_ACTIVE_INSPECTION';
+  | 'NO_ACTIVE_INSPECTION'
+  // qa_testrail_* (PLAN-testrail.md). AUTH_FAILED..SERVER_ERROR map 1:1 to
+  // TestRail's documented HTTP error table; the rest are client-side guards.
+  | 'TESTRAIL_NOT_CONFIGURED'
+  | 'WRONG_TOOL_FOR_WRITE'
+  | 'WRONG_TOOL_FOR_READ'
+  | 'UNKNOWN_ENDPOINT_VERB'
+  | 'UNSUPPORTED_ENDPOINT'
+  | 'INVALID_ENDPOINT'
+  | 'AUTH_FAILED'
+  | 'FORBIDDEN'
+  | 'BAD_REQUEST'
+  | 'ENDPOINT_NOT_FOUND'
+  | 'MAINTENANCE'
+  | 'RATE_LIMITED'
+  | 'SERVER_ERROR'
+  | 'PARSE_ERROR'
+  | 'NETWORK_ERROR'
+  | 'UNEXPECTED_BINARY'
+  | 'ATTACHMENT_OUTSIDE_WORKSPACE'
+  | 'NO_WORKSPACE';
 
 export class QaToolError extends Error {
   constructor(public readonly code: QaErrorCode, message: string) {

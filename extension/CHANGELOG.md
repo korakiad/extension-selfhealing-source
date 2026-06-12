@@ -7,6 +7,38 @@ loosely based on [Keep a Changelog](https://keepachangelog.com/).
 in-extension update checker only surfaces **stable** releases, so QAs on a beta
 stay quiet until `0.0.6` ships.
 
+## Unreleased
+
+### Added
+- **TestRail skill** — full company-TestRail access from Copilot chat
+  (PLAN-testrail.md):
+  - Two LM tools cover all **124 documented API v2 endpoints** via a free-form
+    endpoint string: `qa_testrail_get` (reads, no prompt) and `qa_testrail_post`
+    (writes — a `prepareInvocation` confirmation dialog names the endpoint and,
+    for `delete_*`, warns that deletes are permanent and cascade). A verb-prefix
+    gate keeps writes out of the read tool; `add_bdd` is rejected
+    (`UNSUPPORTED_ENDPOINT`, raw-Gherkin body mechanism unclear upstream).
+  - **Company-gateway tolerance**: every response body is parsed through a
+    string-aware bracket-depth scanner that strips the gateway's glued status
+    text (`USERAUTHENSUCESSFULLY{...}`), tolerates trailing bytes, and logs —
+    never surfaces — the stripped bytes; HTTP status stays the only authority.
+    `get_bdd` Gherkin and `get_attachment` binaries have dedicated routes
+    (attachments save under `.qa-debug/attachments/`, suspected prefix
+    corruption is flagged, never stripped).
+  - **Credentials in VS Code SecretStorage** (URL + username + API key — nothing
+    in settings files): one-time setup via the new **"QA Debug: Configure
+    TestRail"** command, which verifies the connection through the real
+    client+parser (`get_current_user`, falling back to `get_projects&limit=1`).
+  - New `testrail` chat skill: endpoint catalog (all 124 request lines embedded)
+    + six per-resource reference files distilled from the official TestRail docs
+    (updated 2026-05), workflow rules (pagination, rate-limit etiquette,
+    write-confirmation, verify-don't-retry on ambiguous write outcomes).
+  - Client hardening: single Retry-After-honoring 429 retry, local pagination
+    recomposition (never follows `_links.next` — auth header can't leak to a
+    foreign host), network errors reduced to categories so the secret instance
+    hostname never reaches the model, workspace containment (symlink- and
+    Windows-cross-drive-safe) for attachment uploads. 49 new unit checks.
+
 ## 0.0.6-beta.2
 
 ### Fixed

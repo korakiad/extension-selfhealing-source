@@ -29,13 +29,18 @@ export interface QaToolJsonSchema {
 }
 
 export interface JsonSchemaProp {
-  type: 'string' | 'number' | 'boolean' | 'array';
+  type: 'string' | 'number' | 'boolean' | 'array' | 'object';
   enum?: string[];
   description?: string;
   // v5.16 — array support for qa_discover_chromes.ports.
   items?: { type: 'string' | 'number' | 'boolean'; minimum?: number; maximum?: number };
   minItems?: number;
   maxItems?: number;
+  // qa_testrail_post.body — free-form JSON object (TestRail bodies carry
+  // markdown/newlines; JSON-in-a-string double-encoding is an escaping-failure
+  // source). gen-lm-tools.mjs copies inputSchemaJson verbatim, so this passes
+  // through to package.json unchanged.
+  additionalProperties?: boolean;
 }
 
 /**
@@ -272,12 +277,117 @@ export const qa_start_live_session: QaToolDef<{ cdp_port?: number }> = {
   },
 };
 
+// ---- qa_testrail_* — company TestRail instance access (PLAN-testrail.md) ----
+//
+// Two generic tools cover the full 124-endpoint API v2 surface: a free-form
+// endpoint string + the shipped `testrail` skill catalog replaces per-endpoint
+// verbs. The GET/POST split mirrors TestRail's own protocol (all reads GET,
+// all writes POST); a verb-prefix gate in the handlers keeps writes out of the
+// frictionless read tool. NOTE: the `annotations` below are MCP-forward-compat
+// metadata ONLY — the LM-tool host never sees them (gen-lm-tools emits just
+// name/modelDescription/inputSchema); write confirmation is implemented by
+// prepareInvocation() in the extension tool class.
+
+export const qa_testrail_get: QaToolDef<{ endpoint: string; paginate?: boolean }> = {
+  name: 'qa_testrail_get',
+  description:
+    "Performs a read (HTTP GET) against the company TestRail instance's API v2 and returns the parsed JSON. " +
+    'Callers should use it for any documented read endpoint: get_* plus run_report / run_cross_project_report. ' +
+    'The full endpoint catalog (URI templates, filters, body fields, response shapes) ships with the `testrail` skill — consult it before composing a call. ' +
+    'Credentials and the instance URL come from VS Code secret storage, configured once via the "QA Debug: Configure TestRail" command — callers must NEVER ask for credentials in chat; on TESTRAIL_NOT_CONFIGURED, relay that command name to the user verbatim. ' +
+    "Endpoint syntax: the exact path after /api/v2/ — e.g. 'get_cases/14&suite_id=8&limit=50'. TestRail's whole API path lives in one query string, so extra parameters append with & (NEVER ?), and parameter values containing spaces must be percent-encoded (filter=login%20page). " +
+    'Bulk reads return TestRail\'s pagination wrapper { offset, limit, size, _links, <array_key>: [...] } with max 250 records per page; pass paginate=true to auto-collect up to 8 pages / 2000 records (caller-supplied offset/limit are stripped; the result then carries paginated: { pages, truncated, truncatedBy }). ' +
+    'Two endpoints return non-JSON by design: get_attachment/{id} saves the file under the workspace .qa-debug/attachments/ dir and returns { saved_to, bytes, content_type, possiblePrefix? }; get_bdd/{case_id} returns the raw Gherkin text as { data, nonJson: true }. ' +
+    'Returns otherwise: { data, status, hadPrefix, hadSuffix } (hadPrefix/hadSuffix flag gateway-injected bytes that were stripped; they are diagnostic only). ' +
+    'Errors: TESTRAIL_NOT_CONFIGURED (run "QA Debug: Configure TestRail"); WRONG_TOOL_FOR_WRITE (write verb supplied — use qa_testrail_post); UNKNOWN_ENDPOINT_VERB (first path segment matches no documented verb — check the testrail skill catalog); INVALID_ENDPOINT (malformed endpoint string); AUTH_FAILED (401); FORBIDDEN (403); BAD_REQUEST (400, includes TestRail\'s own error message); ENDPOINT_NOT_FOUND (404); MAINTENANCE (409, TestRail Cloud daily maintenance); RATE_LIMITED (429 persisting after one Retry-After wait); SERVER_ERROR (5xx); PARSE_ERROR (unparseable response body — detail in the QA Debug output channel); NETWORK_ERROR (category only: dns | tls | refused | timeout | other); NO_WORKSPACE (attachment save needs an open folder).',
+  inputSchemaJson: {
+    type: 'object',
+    properties: {
+      endpoint: {
+        type: 'string',
+        description:
+          "Exact path after /api/v2/, e.g. 'get_cases/14&suite_id=8&limit=50'. Append params with & (never ?); percent-encode values containing spaces.",
+      },
+      paginate: {
+        type: 'boolean',
+        description:
+          'When true, auto-follow TestRail pagination locally (max 8 pages / 2000 records) and return the concatenated result. Defaults to false (single page).',
+      },
+    },
+    required: ['endpoint'],
+    additionalProperties: false,
+  },
+  inputSchemaZod: z.object({
+    endpoint: z.string(),
+    paginate: z.boolean().optional(),
+  }),
+  // MCP-forward-compat only (see block comment above): the read tool's domain
+  // is open (HTTP to the company TestRail instance).
+  annotations: { readOnlyHint: true, openWorldHint: true },
+};
+
+export const qa_testrail_post: QaToolDef<{
+  endpoint: string;
+  body?: Record<string, unknown>;
+  attachment_path?: string;
+}> = {
+  name: 'qa_testrail_post',
+  description:
+    "Performs a write (HTTP POST) against the company TestRail instance's API v2. " +
+    'Callers should use it for documented write endpoints: add_* / update_* / delete_* / close_* / move_* / copy_*. ' +
+    'The full endpoint catalog (URI templates + body fields) ships with the `testrail` skill — consult it before composing a call, and BEFORE any call state the exact endpoint + a payload summary in chat and get the user\'s go-ahead (VS Code additionally shows a confirmation dialog). ' +
+    'delete_* endpoints are PERMANENT and cascade to child entities (e.g. delete_project removes its suites, runs and results) — treat them with extra care. ' +
+    'Credentials come from VS Code secret storage via the "QA Debug: Configure TestRail" command — callers must NEVER ask for credentials in chat. ' +
+    "Endpoint syntax is identical to qa_testrail_get: the exact path after /api/v2/ — e.g. 'add_result_for_case/81/1234'; extra params append with & (never ?); percent-encode values containing spaces. " +
+    "body is a JSON object matching the endpoint's documented fields. body is IGNORED when attachment_path is set: attachment uploads (add_attachment_to_*) send multipart/form-data with only the file, per the official API. attachment_path must point to a file inside the open workspace. " +
+    'Returns: { data, status, hadPrefix, hadSuffix } — many delete endpoints legitimately return data: null. ' +
+    'A PARSE_ERROR on a 2xx response means the write MAY have been applied — verify with a qa_testrail_get call before retrying; never blind-retry a write. ' +
+    'Errors: TESTRAIL_NOT_CONFIGURED (run "QA Debug: Configure TestRail"); WRONG_TOOL_FOR_READ (read verb supplied — use qa_testrail_get); UNKNOWN_ENDPOINT_VERB (first path segment matches no documented verb); UNSUPPORTED_ENDPOINT (add_bdd is not supported in v1); INVALID_ENDPOINT; ATTACHMENT_OUTSIDE_WORKSPACE (attachment_path resolves outside every workspace folder); NO_WORKSPACE; AUTH_FAILED (401); FORBIDDEN (403); BAD_REQUEST (400, includes TestRail\'s own error message); ENDPOINT_NOT_FOUND (404); MAINTENANCE (409); RATE_LIMITED (429); SERVER_ERROR (5xx); PARSE_ERROR; NETWORK_ERROR (category only).',
+  inputSchemaJson: {
+    type: 'object',
+    properties: {
+      endpoint: {
+        type: 'string',
+        description:
+          "Exact path after /api/v2/, e.g. 'add_result_for_case/81/1234'. Append params with & (never ?).",
+      },
+      body: {
+        type: 'object',
+        additionalProperties: true,
+        description:
+          "JSON body matching the endpoint's documented fields (see the testrail skill catalog). Ignored when attachment_path is set.",
+      },
+      attachment_path: {
+        type: 'string',
+        description:
+          'Path to a file inside the open workspace to upload as multipart/form-data (for add_attachment_to_* endpoints). When set, body is ignored.',
+      },
+    },
+    required: ['endpoint'],
+    additionalProperties: false,
+  },
+  inputSchemaZod: z.object({
+    endpoint: z.string(),
+    body: z.record(z.string(), z.unknown()).optional(),
+    attachment_path: z.string().optional(),
+  }),
+  // MCP-forward-compat only: destructive-capable (delete_* rides POST).
+  annotations: {
+    readOnlyHint: false,
+    destructiveHint: true,
+    idempotentHint: false,
+    openWorldHint: true,
+  },
+};
+
 export const qaTools = [
   qa_get_failure_context,
   qa_discover_chromes,
   qa_select_chrome,
   qa_pick_element,
   qa_start_live_session,
+  qa_testrail_get,
+  qa_testrail_post,
 ] as const;
 
 export type QaToolName = (typeof qaTools)[number]['name'];

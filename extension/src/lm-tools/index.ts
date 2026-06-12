@@ -19,6 +19,8 @@ import { GetFailureContextTool } from './get-failure-context.js';
 import { PickElementTool } from './pick-element.js';
 import { SelectChromeTool } from './select-chrome.js';
 import { StartLiveSessionTool } from './start-live-session.js';
+import { TestRailGetTool } from './testrail-get.js';
+import { TestRailPostTool } from './testrail-post.js';
 import type { LmToolDeps } from './base.js';
 
 export function registerQaDebugLmTools(
@@ -36,5 +38,9 @@ export function registerQaDebugLmTools(
     // Live Inspect Session primitive — (re)establish the live CDP target
     // (when: qa-debug.liveSession).
     vscode.lm.registerTool('qa-debug_qa_start_live_session', new StartLiveSessionTool(deps)),
+    // TestRail API v2 access (no `when` clause — not pause-gated). The post
+    // tool's prepareInvocation is the write-confirmation mechanism.
+    vscode.lm.registerTool('qa-debug_qa_testrail_get', new TestRailGetTool(deps)),
+    vscode.lm.registerTool('qa-debug_qa_testrail_post', new TestRailPostTool(deps)),
   );
 }

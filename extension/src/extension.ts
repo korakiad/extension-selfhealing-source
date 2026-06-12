@@ -10,6 +10,8 @@ import path from 'node:path';
 import { appendDeactivateAudit, appendOrphanPauseAudit } from './audit-file.js';
 import { registerQaDebugChatParticipant } from './chat-participant.js';
 import { registerCommands } from './commands.js';
+import { registerConfigureTestRail } from './configure-testrail.js';
+import { TestRailService } from './testrail/config.js';
 import { DecisionRouter } from './decision-router.js';
 import { InspectionArbiter } from './inspection-arbiter.js';
 import { LiveSessionManager } from './live-session-manager.js';
@@ -91,6 +93,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.lm.registerMcpServerDefinitionProvider('qa-debug.mcp-servers', mcpProvider),
   );
 
+  // TestRail access (PLAN-testrail.md): credentials live in SecretStorage,
+  // configured via the palette command below — works without a workspace.
+  const testrail = new TestRailService(
+    context.secrets,
+    (line) => appendInfo(channel, line),
+    context.subscriptions,
+  );
+  registerConfigureTestRail(context, testrail, channel);
+
   // Register the qa-debug LanguageModelTool classes (get_failure_context +
   // discover/select chrome; verdict verbs removed 2026-05-31). The per-tool
   // `when: "qa-debug.paused"` clause in package.json gates visibility; these
@@ -98,6 +109,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   registerQaDebugLmTools(context, {
     pauseStore,
     liveTargetStore,
+    testrail,
     auditChannel: channel,
   });
 
