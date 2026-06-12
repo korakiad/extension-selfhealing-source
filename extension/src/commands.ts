@@ -9,6 +9,7 @@
  *  - qa-debug.openChatForPaused   — open Copilot Chat with a prefilled prompt
  *                                   describing the pause
  *  - qa-debug.selectChrome / .enterChromePorts — Mode C chrome selection
+ *  - qa-debug.launchInspectApp / .stopInspectApp — Live Inspect Session lifecycle
  *
  * Verdict commands removed (2026-05-31): qa-debug.giveUp / qa-debug.markPassed
  * are gone. A pause is a pure inspection hold; there is no pass/fail verdict to
@@ -22,6 +23,7 @@ import type { PausePayload } from '@qa-debug/pause-store-types';
 import {
   liveAppDisplayName,
   type LiveAppSpec,
+  type LiveSessionStartOptions,
   type LiveSessionManager,
 } from './live-session-manager.js';
 import { probePorts } from './lm-tools/probe-ports.js';
@@ -51,7 +53,9 @@ export function registerCommands(context: vscode.ExtensionContext, deps: Command
     vscode.commands.registerCommand('qa-debug.selectChrome', () => selectChromeCmd(deps)),
     vscode.commands.registerCommand('qa-debug.enterChromePorts', () => enterChromePortsCmd(deps)),
     // Live Inspect Session — launch the QA's own app for inspection (no pause).
-    vscode.commands.registerCommand('qa-debug.launchInspectApp', () => launchInspectAppCmd(deps)),
+    vscode.commands.registerCommand('qa-debug.launchInspectApp', (opts?: LiveSessionStartOptions) =>
+      launchInspectAppCmd(deps, opts),
+    ),
     vscode.commands.registerCommand('qa-debug.stopInspectApp', () => stopInspectAppCmd(deps)),
   );
 }
@@ -67,7 +71,10 @@ const LAST_INLINE_APP_KEY = 'qa-debug.lastInlineApp';
  * launch — knowing it spawned the browser is what lets it flip the
  * `qa-debug.liveSession` gate with certainty (see LiveSessionManager).
  */
-async function launchInspectAppCmd(deps: CommandDeps): Promise<void> {
+async function launchInspectAppCmd(
+  deps: CommandDeps,
+  opts: LiveSessionStartOptions = {},
+): Promise<void> {
   const apps = vscode.workspace.getConfiguration('qaDebug').get<LiveAppSpec[]>('liveApps') ?? [];
 
   let spec: LiveAppSpec | undefined;
@@ -86,7 +93,7 @@ async function launchInspectAppCmd(deps: CommandDeps): Promise<void> {
   if (!spec) return;
 
   try {
-    await deps.liveSessionManager.launch(spec);
+    await deps.liveSessionManager.launch(spec, opts);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     appendInfo(deps.channel, `[command] launchInspectApp failed: ${msg}`);

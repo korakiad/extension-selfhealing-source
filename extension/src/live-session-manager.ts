@@ -88,6 +88,11 @@ interface ActiveLive {
   weSpawned: boolean;
 }
 
+export interface LiveSessionStartOptions {
+  /** Show the generic Live Inspect notification with Open Chat / Open Audit Log. */
+  announce?: boolean;
+}
+
 export class LiveSessionManager {
   private active?: ActiveLive;
   /** Endpoint→MCP binding incl. the download-shim hop — shared with SessionManager. */
@@ -105,9 +110,13 @@ export class LiveSessionManager {
     return this.active !== undefined;
   }
 
+  activePort(): number | undefined {
+    return this.active?.port;
+  }
+
   /** Launch (or, with a configured fixed port already up, fail clearly) and
    *  establish a Live Inspect Session for `spec`. */
-  async launch(spec: LiveAppSpec): Promise<void> {
+  async launch(spec: LiveAppSpec, opts: LiveSessionStartOptions = {}): Promise<void> {
     const name = liveAppDisplayName(spec);
     if (!this.deps.arbiter.canStart('live')) {
       void vscode.window.showWarningMessage(
@@ -164,26 +173,7 @@ export class LiveSessionManager {
       return;
     }
 
-    // Establish the live target + flip the gate + bind MCP + enter the agent.
-    const sessionId = `live-${randomUUID()}`;
-    this.deps.liveTargetStore.set({
-      session_id: sessionId,
-      available_chromes: [chrome],
-      selected_cdp_port: port,
-    });
-    // arbiter slot already reserved at spawn; just flip the visibility gate.
-    await vscode.commands.executeCommand('setContext', 'qa-debug.liveSession', true);
-    await this.cdpBinding.bindMcp(chrome.ws_url);
-
-    this.statusItem.text = `$(inspect) Inspecting port ${port}`;
-    this.statusItem.tooltip = `Live Inspect Session active on CDP port ${port} — click to stop`;
-    this.statusItem.show();
-    appendInfo(
-      this.deps.channel,
-      `[live] session=${sessionId} ready name="${name}" port=${port} tabs=${chrome.tab_count} runtime=${chrome.runtime}`,
-    );
-
-    this.announceSession(port);
+    await this.establishLiveTarget(chrome, port, name, 'launched', opts.announce ?? true);
   }
 
   /** Tear down the live session: clear gate, unbind MCP, reap OUR process. */
@@ -216,6 +206,33 @@ export class LiveSessionManager {
   }
 
   // ------------------- internal -------------------
+
+  private async establishLiveTarget(
+    chrome: AvailableChrome,
+    port: number,
+    name: string,
+    source: 'launched',
+    announce: boolean,
+  ): Promise<void> {
+    const sessionId = `live-${randomUUID()}`;
+    this.deps.liveTargetStore.set({
+      session_id: sessionId,
+      available_chromes: [chrome],
+      selected_cdp_port: port,
+    });
+    await vscode.commands.executeCommand('setContext', 'qa-debug.liveSession', true);
+    await this.cdpBinding.bindMcp(chrome.ws_url, ` session=${sessionId} source=${source} port=${port}`);
+
+    this.statusItem.text = `$(inspect) Inspecting port ${port}`;
+    this.statusItem.tooltip = `Live Inspect Session active on CDP port ${port} — click to stop`;
+    this.statusItem.show();
+    appendInfo(
+      this.deps.channel,
+      `[live] session=${sessionId} ready source=${source} name="${name}" port=${port} tabs=${chrome.tab_count} runtime=${chrome.runtime}`,
+    );
+
+    if (announce) this.announceSession(port);
+  }
 
   private spawnApp(spec: LiveAppSpec, port: number): ChildProcess {
     const portFlag = `--remote-debugging-port=${port}`;

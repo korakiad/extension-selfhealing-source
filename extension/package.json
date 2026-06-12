@@ -1,7 +1,7 @@
 {
   "name": "qa-debug-companion",
   "displayName": "QA Debug Companion",
-  "version": "0.0.6-beta.3",
+  "version": "0.0.6-beta.4",
   "private": true,
   "repository": {
     "type": "git",
@@ -29,6 +29,9 @@
       },
       {
         "path": "./skills/testrail/SKILL.md"
+      },
+      {
+        "path": "./skills/test-script-orchestrator/SKILL.md"
       }
     ],
     "chatAgents": [
@@ -39,6 +42,9 @@
       {
         "path": "./agents/qa-debug-inspect.agent.md",
         "when": "qa-debug.liveSession"
+      },
+      {
+        "path": "./agents/qa-testcase-writer.agent.md"
       }
     ],
     "mcpServerDefinitionProviders": [
@@ -63,6 +69,31 @@
               "this assertion's wrong, can you look",
               "I think the selector changed",
               "help me debug this paused test"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "qa-testcase",
+        "name": "qa-testcase",
+        "fullName": "QA Testcase Writer",
+        "description": "Pulls TestRail cases and routes them to the QA Testcase Writer agent to generate or update UI automation in the current workspace's patterns.",
+        "isSticky": true,
+        "commands": [
+          {
+            "name": "generate",
+            "description": "Generate or update an automation script from a TestRail case. Example: @qa-testcase /generate C12345 auto"
+          }
+        ],
+        "disambiguation": [
+          {
+            "category": "qa-testcase-generation",
+            "description": "Generating or updating test automation from TestRail cases, BDD, or manual steps.",
+            "examples": [
+              "generate automation for TestRail case C12345",
+              "create a WDIO script from this TestRail case",
+              "turn this case into a UI test in our repo pattern",
+              "write testcase C12345 in manual mode"
             ]
           }
         ]

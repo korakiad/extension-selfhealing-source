@@ -8,7 +8,7 @@ import * as vscode from 'vscode';
 import path from 'node:path';
 
 import { appendDeactivateAudit, appendOrphanPauseAudit } from './audit-file.js';
-import { registerQaDebugChatParticipant } from './chat-participant.js';
+import { registerQaDebugChatParticipant, registerQaTestcaseChatParticipant } from './chat-participant.js';
 import { registerCommands } from './commands.js';
 import { registerConfigureTestRail } from './configure-testrail.js';
 import { TestRailService } from './testrail/config.js';
@@ -261,6 +261,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       channel,
     });
     liveSessionManagerSingleton = liveSessionManager;
+    registerQaTestcaseChatParticipant(context, liveSessionManager, channel);
 
     // Always-visible entry button (the "simple UI" that starts an inspection).
     const inspectEntry = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 98);

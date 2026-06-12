@@ -9,6 +9,24 @@ stay quiet until `0.0.6` ships.
 
 ## Unreleased
 
+## 0.0.6-beta.4
+
+### Added
+- **QA Testcase Writer agent + orchestration skill** — a new case-to-script
+  flow for pulling TestRail cases and generating UI automation in the current
+  workspace's own style. It reads TestRail cases, learns local test/page-object
+  patterns before editing, reuses existing selectors first, uses `qa-debug-cdp`
+  live inspection only for missing UI facts, pauses to ask the QA whenever MCP
+  inspection is ambiguous, and adds explicit waits for WebdriverIO UI actions
+  where the local wrapper does not already wait. It is launched through a
+  separate `@qa-testcase` chat participant (for example
+  `@qa-testcase /generate C12345 auto`) so testcase generation is not conflated
+  with the paused-failure `@qa-debug` flow. The participant now ensures the
+  Live Inspect Session contract explicitly: it offers to launch Web / Electron /
+  OpenFin inspection first so `qa-debug-cdp` is attached to the right port before
+  the testcase writer uses browser MCP, waits for the QA to confirm login /
+  starting state, or lets the QA continue repo-only.
+
 ## 0.0.6-beta.3
 
 ### Added

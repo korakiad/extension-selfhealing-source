@@ -10,8 +10,11 @@
 
 import * as vscode from 'vscode';
 
+import type { LiveSessionManager } from './live-session-manager.js';
 import { appendInfo } from './output-channel.js';
 import type { MementoPauseStore } from './pause-store.js';
+
+const CHAT_OPEN_COMMAND = 'workbench.action.chat.open';
 
 export function registerQaDebugChatParticipant(
   context: vscode.ExtensionContext,
@@ -73,4 +76,193 @@ export function registerQaDebugChatParticipant(
 
   context.subscriptions.push(participant);
   appendInfo(channel, `[chat-participant] registered @qa-debug`);
+}
+
+export function registerQaTestcaseChatParticipant(
+  context: vscode.ExtensionContext,
+  liveSessionManager: LiveSessionManager,
+  channel: vscode.OutputChannel,
+): void {
+  if (typeof vscode.chat?.createChatParticipant !== 'function') {
+    appendInfo(
+      channel,
+      `[chat-participant] vscode.chat.createChatParticipant not available on this VS Code build; @qa-testcase registration skipped`,
+    );
+    return;
+  }
+
+  const participant = vscode.chat.createChatParticipant('qa-testcase', async (request, _ctx, stream, _token) => {
+    const liveMode = await ensureLiveInspectionForTestcase(liveSessionManager);
+    if (liveMode === undefined) {
+      stream.markdown(
+        `No Live Inspect Session is ready. Run \`@qa-testcase /generate <case-id> auto\` again when you're ready, or choose the repo-only path.`,
+      );
+      appendInfo(channel, `[chat-participant] @qa-testcase cancelled before route command=${request.command ?? 'default'}`);
+      return {};
+    }
+
+    const prompt = buildTestcaseWriterPrompt(request.command, request.prompt, liveMode);
+    const opened = await openInTestcaseWriter(prompt);
+    if (opened) {
+      stream.markdown(
+        `Opening Chat with the **QA Testcase Writer** request. If VS Code doesn't switch modes automatically, select **QA Testcase Writer** from the agent picker. Use \`@qa-testcase /generate <case-id> auto\` or \`manual\` next time if you want to make the mode explicit.`,
+      );
+      appendInfo(channel, `[chat-participant] routed @qa-testcase command=${request.command ?? 'default'}`);
+      return {};
+    }
+
+    await vscode.env.clipboard.writeText(prompt);
+    stream.markdown(
+      `I couldn't switch to the **qa-testcase-writer** agent on this VS Code build. ` +
+        `I copied the prepared prompt to the clipboard; open Chat, select **QA Testcase Writer**, and paste it.`,
+    );
+    appendInfo(channel, `[chat-participant] @qa-testcase fallback copied prompt command=${request.command ?? 'default'}`);
+    return {};
+  });
+
+  participant.iconPath = new vscode.ThemeIcon('checklist');
+  participant.followupProvider = {
+    provideFollowups: () => [
+      { prompt: `/generate C12345 auto`, label: 'Generate from case' },
+      { prompt: `/generate C12345 manual`, label: 'Manual plan first' },
+    ],
+  };
+
+  context.subscriptions.push(participant);
+  appendInfo(channel, `[chat-participant] registered @qa-testcase`);
+}
+
+type TestcaseLiveMode =
+  | 'active-live-session'
+  | 'launched-live-session'
+  | 'repo-only';
+
+async function ensureLiveInspectionForTestcase(
+  liveSessionManager: LiveSessionManager,
+): Promise<TestcaseLiveMode | undefined> {
+  if (liveSessionManager.isActive()) {
+    return (await confirmAppReadyForTestcase(liveSessionManager.activePort())) ? 'active-live-session' : undefined;
+  }
+
+  const choice = await vscode.window.showQuickPick(
+    [
+      {
+        label: '$(inspect) Launch app for MCP inspection',
+        description: 'Recommended for UI cases',
+        detail: 'Opens Web / Electron / OpenFin through QA Debug: Inspect App, then runs the testcase writer with qa-debug-cdp attached.',
+        value: 'launch' as const,
+      },
+      {
+        label: '$(file-code) Continue from repo only',
+        description: 'No live browser',
+        detail: 'Use TestRail plus workspace patterns. The agent will ask later if live inspection becomes necessary.',
+        value: 'repo-only' as const,
+      },
+    ],
+    {
+      placeHolder: 'QA Testcase Writer needs a Live Inspect Session for browser MCP. How should I proceed?',
+      ignoreFocusOut: true,
+    },
+  );
+
+  if (!choice) return undefined;
+  if (choice.value === 'repo-only') return 'repo-only';
+
+  await vscode.commands.executeCommand('qa-debug.launchInspectApp', { announce: false });
+  if (!liveSessionManager.isActive()) return undefined;
+  return (await confirmAppReadyForTestcase(liveSessionManager.activePort())) ? 'launched-live-session' : undefined;
+}
+
+async function confirmAppReadyForTestcase(port: number | undefined): Promise<boolean> {
+  const portLabel = port ? ` on port ${port}` : '';
+  const choice = await vscode.window.showQuickPick(
+    [
+      {
+        label: '$(check) Continue now',
+        detail: `The app is logged in and at the right starting state${portLabel}.`,
+        value: 'continue' as const,
+      },
+      {
+        label: '$(account) I need to log in or prepare state first',
+        detail: 'Leave the app open; click Continue in the next prompt after login/navigation is done.',
+        value: 'wait' as const,
+      },
+    ],
+    {
+      placeHolder: `Is the inspected app ready for testcase generation${portLabel}?`,
+      ignoreFocusOut: true,
+    },
+  );
+
+  if (!choice) return false;
+  if (choice.value === 'continue') return true;
+
+  const done = await vscode.window.showInformationMessage(
+    `Log in or navigate the inspected app${portLabel}, then click Continue to start QA Testcase Writer.`,
+    { modal: false },
+    'Continue',
+    'Cancel',
+  );
+  return done === 'Continue';
+}
+
+function buildTestcaseWriterPrompt(
+  command: string | undefined,
+  rawPrompt: string,
+  liveMode: TestcaseLiveMode,
+): string {
+  const userPrompt = rawPrompt.trim();
+  const mode = inferMode(userPrompt);
+  const commandLine = command ? `/${command}` : '@qa-testcase';
+  const liveLine =
+    liveMode === 'repo-only'
+      ? 'Live Inspect Session: not active. Work repo-first; ask the QA to launch inspection before any MCP/browser step.'
+      : 'Live Inspect Session: active. Use qa-debug-cdp for browser MCP when repo evidence is insufficient.';
+
+  return [
+    'Use the test-script-orchestrator skill in the qa-testcase-writer agent.',
+    '',
+    `Launcher: ${commandLine}`,
+    `User request: ${userPrompt || '(no case details provided yet)'}`,
+    `Mode: ${mode ?? 'not specified — run Step 0 and ask Auto or Manual before editing'}`,
+    liveLine,
+    '',
+    'If a TestRail case ID, case URL, BDD reference, or step list is present, read it through the TestRail tool first.',
+    'Learn the workspace pattern before writing. Reuse existing page objects, selectors, helpers, waits, and assertions.',
+    'When live-browser MCP inspection is ambiguous, pause and ask the QA one concrete question, then continue from the same step.',
+    'For WebdriverIO without a local auto-wait wrapper, add explicit waits around UI interactions and assertions.',
+  ].join('\n');
+}
+
+function inferMode(text: string): string | undefined {
+  const lower = text.toLowerCase();
+  if (/\bmanual\b/.test(lower) || lower.includes('review first') || lower.includes('ask before')) {
+    return 'Manual';
+  }
+  if (/\bauto\b/.test(lower) || lower.includes('go ahead') || lower.includes('ทำให้เลย')) {
+    return 'Auto';
+  }
+  return undefined;
+}
+
+async function openInTestcaseWriter(prompt: string): Promise<boolean> {
+  const attempts: Array<() => Thenable<unknown>> = [
+    () =>
+      vscode.commands.executeCommand(CHAT_OPEN_COMMAND, {
+        query: prompt,
+        isPartialQuery: false,
+        mode: 'qa-testcase-writer',
+      }),
+    () => vscode.commands.executeCommand(CHAT_OPEN_COMMAND, { query: prompt, isPartialQuery: false }),
+  ];
+
+  for (const run of attempts) {
+    try {
+      await run();
+      return true;
+    } catch {
+      // Try the next chat-open shape.
+    }
+  }
+  return false;
 }
