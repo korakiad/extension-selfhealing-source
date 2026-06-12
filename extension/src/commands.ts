@@ -27,7 +27,7 @@ import {
   type LiveSessionStartOptions,
   type LiveSessionManager,
 } from './live-session-manager.js';
-import { getCdpPorts } from './cdp-ports.js';
+import { promptForCdpPort } from './cdp-ports.js';
 import { probePorts } from './lm-tools/probe-ports.js';
 import { appendInfo } from './output-channel.js';
 import type { MementoPauseStore } from './pause-store.js';
@@ -114,24 +114,6 @@ async function attachInspectAppCmd(
   if (port === undefined) return;
   const attached = await deps.liveSessionManager.attachExisting(port, opts);
   if (attached) appendInfo(deps.channel, `[command] attachInspectApp attached port=${port}`);
-}
-
-async function promptForCdpPort(prompt: string): Promise<number | undefined> {
-  const defaultPort = getCdpPorts()[0] ?? 22135;
-  const raw = await vscode.window.showInputBox({
-    prompt,
-    placeHolder: String(defaultPort),
-    value: String(defaultPort),
-    ignoreFocusOut: true,
-    validateInput: (v) => {
-      const n = Number(v.trim());
-      return Number.isInteger(n) && n >= 1024 && n <= 65535
-        ? null
-        : 'Enter an integer port between 1024 and 65535.';
-    },
-  });
-  if (!raw) return undefined;
-  return Number(raw.trim());
 }
 
 /**

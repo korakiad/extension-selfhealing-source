@@ -86,6 +86,8 @@ interface ActiveLive {
   child?: ChildProcess;
   port: number;
   weSpawned: boolean;
+  /** Set once the target is established (after the CDP probe succeeds). */
+  sessionId?: string;
 }
 
 export interface LiveSessionStartOptions {
@@ -112,6 +114,11 @@ export class LiveSessionManager {
 
   activePort(): number | undefined {
     return this.active?.port;
+  }
+
+  /** Undefined while launching (before the CDP probe lands) and when idle. */
+  activeSessionId(): string | undefined {
+    return this.active?.sessionId;
   }
 
   /** Launch (or, with a configured fixed port already up, fail clearly) and
@@ -256,6 +263,7 @@ export class LiveSessionManager {
     announce: boolean,
   ): Promise<void> {
     const sessionId = `live-${randomUUID()}`;
+    if (this.active) this.active.sessionId = sessionId;
     this.deps.liveTargetStore.set({
       session_id: sessionId,
       available_chromes: [chrome],

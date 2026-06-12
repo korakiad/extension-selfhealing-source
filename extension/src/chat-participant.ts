@@ -10,7 +10,7 @@
 
 import * as vscode from 'vscode';
 
-import { getCdpPorts } from './cdp-ports.js';
+import { promptForCdpPort } from './cdp-ports.js';
 import type { LiveSessionManager } from './live-session-manager.js';
 import { appendInfo } from './output-channel.js';
 import type { MementoPauseStore } from './pause-store.js';
@@ -92,13 +92,29 @@ export function registerQaTestcaseChatParticipant(
     return;
   }
 
+  // Sessions whose "app is logged in / ready" confirmation already happened —
+  // follow-up @qa-testcase messages skip the QuickPick gate until the session
+  // changes. Keyed by sessionId, so a stop/relaunch re-asks.
+  const confirmedReadySessions = new Set<string>();
+
   const participant = vscode.chat.createChatParticipant('qa-testcase', async (request, _ctx, stream, _token) => {
-    const liveMode = await ensureLiveInspectionForTestcase(liveSessionManager);
+    const liveMode = await ensureLiveInspectionForTestcase(liveSessionManager, confirmedReadySessions);
     if (liveMode === undefined) {
-      stream.markdown(
-        `No Live Inspect Session is ready. Run \`@qa-testcase /generate <case-id> auto\` again when you're ready, or choose the repo-only path.`,
-      );
-      appendInfo(channel, `[chat-participant] @qa-testcase cancelled before route command=${request.command ?? 'default'}`);
+      // Tell the truth about session state: a launch/attach may have succeeded
+      // (announce was suppressed) even though the readiness confirm did not.
+      if (liveSessionManager.isActive()) {
+        const port = liveSessionManager.activePort();
+        stream.markdown(
+          `The Live Inspect Session is still running${port ? ` on port ${port}` : ''} — the status bar shows it, ` +
+            `and **QA Debug: Stop Live Inspect Session** stops it. ` +
+            `When the app is logged in and at the right starting state, send \`@qa-testcase /generate <case-id>\` again and I'll continue without relaunching.`,
+        );
+      } else {
+        stream.markdown(
+          `Cancelled — no Live Inspect Session was started. Run \`@qa-testcase /generate <case-id>\` again when you're ready, or choose the repo-only path.`,
+        );
+      }
+      appendInfo(channel, `[chat-participant] @qa-testcase cancelled before route command=${request.command ?? 'default'} sessionActive=${liveSessionManager.isActive()}`);
       return {};
     }
 
@@ -122,12 +138,8 @@ export function registerQaTestcaseChatParticipant(
   });
 
   participant.iconPath = new vscode.ThemeIcon('checklist');
-  participant.followupProvider = {
-    provideFollowups: () => [
-      { prompt: `/generate C12345 auto`, label: 'Generate from case' },
-      { prompt: `/generate C12345 manual`, label: 'Manual plan first' },
-    ],
-  };
+  // No followupProvider: canned followups would submit a placeholder case id
+  // (e.g. C12345) into the real flow. The response text teaches the syntax.
 
   context.subscriptions.push(participant);
   appendInfo(channel, `[chat-participant] registered @qa-testcase`);
@@ -141,9 +153,12 @@ type TestcaseLiveMode =
 
 async function ensureLiveInspectionForTestcase(
   liveSessionManager: LiveSessionManager,
+  confirmedReadySessions: Set<string>,
 ): Promise<TestcaseLiveMode | undefined> {
   if (liveSessionManager.isActive()) {
-    return (await confirmAppReadyForTestcase(liveSessionManager.activePort())) ? 'active-live-session' : undefined;
+    const sessionId = liveSessionManager.activeSessionId();
+    if (sessionId && confirmedReadySessions.has(sessionId)) return 'active-live-session';
+    return (await confirmAndRemember(liveSessionManager, confirmedReadySessions)) ? 'active-live-session' : undefined;
   }
 
   const choice = await vscode.window.showQuickPick(
@@ -177,32 +192,29 @@ async function ensureLiveInspectionForTestcase(
   if (choice.value === 'repo-only') return 'repo-only';
 
   if (choice.value === 'attach') {
-    const attached = await promptAndAttachExistingPort(liveSessionManager);
-    if (!attached) return undefined;
-    return (await confirmAppReadyForTestcase(liveSessionManager.activePort())) ? 'attached-live-session' : undefined;
+    const port = await promptForCdpPort('CDP debug port to attach');
+    if (port === undefined) return undefined;
+    if (!(await liveSessionManager.attachExisting(port, { announce: false }))) return undefined;
+    return (await confirmAndRemember(liveSessionManager, confirmedReadySessions)) ? 'attached-live-session' : undefined;
   }
 
   await vscode.commands.executeCommand('qa-debug.launchInspectApp', { announce: false });
   if (!liveSessionManager.isActive()) return undefined;
-  return (await confirmAppReadyForTestcase(liveSessionManager.activePort())) ? 'launched-live-session' : undefined;
+  return (await confirmAndRemember(liveSessionManager, confirmedReadySessions)) ? 'launched-live-session' : undefined;
 }
 
-async function promptAndAttachExistingPort(liveSessionManager: LiveSessionManager): Promise<boolean> {
-  const defaultPort = getCdpPorts()[0] ?? 22135;
-  const raw = await vscode.window.showInputBox({
-    prompt: 'CDP debug port to attach',
-    placeHolder: String(defaultPort),
-    value: String(defaultPort),
-    ignoreFocusOut: true,
-    validateInput: (v) => {
-      const n = Number(v.trim());
-      return Number.isInteger(n) && n >= 1024 && n <= 65535
-        ? null
-        : 'Enter an integer port between 1024 and 65535.';
-    },
-  });
-  if (!raw) return false;
-  return liveSessionManager.attachExisting(Number(raw.trim()), { announce: false });
+/** Run the readiness confirm; on success remember the session so follow-up
+ *  messages don't re-ask. Sessions without an id yet (mid-probe) are confirmed
+ *  but not remembered. */
+async function confirmAndRemember(
+  liveSessionManager: LiveSessionManager,
+  confirmedReadySessions: Set<string>,
+): Promise<boolean> {
+  const ready = await confirmAppReadyForTestcase(liveSessionManager.activePort());
+  if (!ready) return false;
+  const sessionId = liveSessionManager.activeSessionId();
+  if (sessionId) confirmedReadySessions.add(sessionId);
+  return true;
 }
 
 async function confirmAppReadyForTestcase(port: number | undefined): Promise<boolean> {
@@ -270,10 +282,14 @@ function buildTestcaseWriterPrompt(
 
 function inferMode(text: string): string | undefined {
   const lower = text.toLowerCase();
-  if (/\bmanual\b/.test(lower) || lower.includes('review first') || lower.includes('ask before')) {
+  // Whole-token match only, so prose like "auto-save feature" can't silently
+  // select Auto (the no-confirmation mode). A stray standalone "manual" still
+  // matches, but a false Manual only adds confirmations — the safe direction.
+  const tokens = lower.split(/\s+/).map((t) => t.replace(/[.,!?]+$/, ''));
+  if (tokens.includes('manual') || lower.includes('review first') || lower.includes('ask before')) {
     return 'Manual';
   }
-  if (/\bauto\b/.test(lower) || lower.includes('go ahead') || lower.includes('ทำให้เลย')) {
+  if (tokens.includes('auto') || lower.includes('go ahead') || lower.includes('ทำให้เลย')) {
     return 'Auto';
   }
   return undefined;

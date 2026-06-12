@@ -21,3 +21,23 @@ export function getCdpPorts(): number[] {
   const valid = raw.filter((n) => Number.isInteger(n) && n >= 1024 && n <= 65535);
   return valid.length > 0 ? valid : [...DEFAULT_CDP_PORTS];
 }
+
+/** InputBox for a single CDP port, prefilled with the pool's first port.
+ *  Shared by the attach command and the @qa-testcase attach path. */
+export async function promptForCdpPort(prompt: string): Promise<number | undefined> {
+  const defaultPort = getCdpPorts()[0];
+  const raw = await vscode.window.showInputBox({
+    prompt,
+    placeHolder: String(defaultPort),
+    value: String(defaultPort),
+    ignoreFocusOut: true,
+    validateInput: (v) => {
+      const n = Number(v.trim());
+      return Number.isInteger(n) && n >= 1024 && n <= 65535
+        ? null
+        : 'Enter an integer port between 1024 and 65535.';
+    },
+  });
+  if (!raw) return undefined;
+  return Number(raw.trim());
+}
