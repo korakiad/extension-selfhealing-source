@@ -9,6 +9,17 @@ stay quiet until `0.0.6` ships.
 
 ## Unreleased
 
+## 0.0.6-beta.5
+
+### Added
+- **Attach existing Live Inspect CDP port** — `@qa-testcase` and the new
+  **QA Debug: Attach Existing Inspect App (CDP Port)** command can bind
+  `qa-debug-cdp` to an already-running logged-in Web / Electron / OpenFin app
+  without relaunching it. Attached sessions reserve the same inspection arbiter
+  as launched sessions, wait for the QA to confirm login / starting state before
+  routing into the testcase writer, and detach without killing externally-owned
+  app processes.
+
 ## 0.0.6-beta.4
 
 ### Added

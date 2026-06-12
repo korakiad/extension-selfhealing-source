@@ -10,6 +10,7 @@
 
 import * as vscode from 'vscode';
 
+import { getCdpPorts } from './cdp-ports.js';
 import type { LiveSessionManager } from './live-session-manager.js';
 import { appendInfo } from './output-channel.js';
 import type { MementoPauseStore } from './pause-store.js';
@@ -135,6 +136,7 @@ export function registerQaTestcaseChatParticipant(
 type TestcaseLiveMode =
   | 'active-live-session'
   | 'launched-live-session'
+  | 'attached-live-session'
   | 'repo-only';
 
 async function ensureLiveInspectionForTestcase(
@@ -153,6 +155,12 @@ async function ensureLiveInspectionForTestcase(
         value: 'launch' as const,
       },
       {
+        label: '$(plug) Attach existing CDP port',
+        description: 'Reuse a logged-in app',
+        detail: 'Probe a Web / Electron / OpenFin app that is already running with a remote-debugging port, then bind qa-debug-cdp without relaunching.',
+        value: 'attach' as const,
+      },
+      {
         label: '$(file-code) Continue from repo only',
         description: 'No live browser',
         detail: 'Use TestRail plus workspace patterns. The agent will ask later if live inspection becomes necessary.',
@@ -168,9 +176,33 @@ async function ensureLiveInspectionForTestcase(
   if (!choice) return undefined;
   if (choice.value === 'repo-only') return 'repo-only';
 
+  if (choice.value === 'attach') {
+    const attached = await promptAndAttachExistingPort(liveSessionManager);
+    if (!attached) return undefined;
+    return (await confirmAppReadyForTestcase(liveSessionManager.activePort())) ? 'attached-live-session' : undefined;
+  }
+
   await vscode.commands.executeCommand('qa-debug.launchInspectApp', { announce: false });
   if (!liveSessionManager.isActive()) return undefined;
   return (await confirmAppReadyForTestcase(liveSessionManager.activePort())) ? 'launched-live-session' : undefined;
+}
+
+async function promptAndAttachExistingPort(liveSessionManager: LiveSessionManager): Promise<boolean> {
+  const defaultPort = getCdpPorts()[0] ?? 22135;
+  const raw = await vscode.window.showInputBox({
+    prompt: 'CDP debug port to attach',
+    placeHolder: String(defaultPort),
+    value: String(defaultPort),
+    ignoreFocusOut: true,
+    validateInput: (v) => {
+      const n = Number(v.trim());
+      return Number.isInteger(n) && n >= 1024 && n <= 65535
+        ? null
+        : 'Enter an integer port between 1024 and 65535.';
+    },
+  });
+  if (!raw) return false;
+  return liveSessionManager.attachExisting(Number(raw.trim()), { announce: false });
 }
 
 async function confirmAppReadyForTestcase(port: number | undefined): Promise<boolean> {
@@ -217,7 +249,9 @@ function buildTestcaseWriterPrompt(
   const liveLine =
     liveMode === 'repo-only'
       ? 'Live Inspect Session: not active. Work repo-first; ask the QA to launch inspection before any MCP/browser step.'
-      : 'Live Inspect Session: active. Use qa-debug-cdp for browser MCP when repo evidence is insufficient.';
+      : liveMode === 'attached-live-session'
+        ? 'Live Inspect Session: attached to an existing CDP port. Use qa-debug-cdp for browser MCP when repo evidence is insufficient; do not relaunch or close the app.'
+        : 'Live Inspect Session: active. Use qa-debug-cdp for browser MCP when repo evidence is insufficient.';
 
   return [
     'Use the test-script-orchestrator skill in the qa-testcase-writer agent.',

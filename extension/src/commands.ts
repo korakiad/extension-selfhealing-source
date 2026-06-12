@@ -9,7 +9,8 @@
  *  - qa-debug.openChatForPaused   — open Copilot Chat with a prefilled prompt
  *                                   describing the pause
  *  - qa-debug.selectChrome / .enterChromePorts — Mode C chrome selection
- *  - qa-debug.launchInspectApp / .stopInspectApp — Live Inspect Session lifecycle
+ *  - qa-debug.launchInspectApp / .attachInspectApp / .stopInspectApp — Live
+ *                                   Inspect Session lifecycle
  *
  * Verdict commands removed (2026-05-31): qa-debug.giveUp / qa-debug.markPassed
  * are gone. A pause is a pure inspection hold; there is no pass/fail verdict to
@@ -26,6 +27,7 @@ import {
   type LiveSessionStartOptions,
   type LiveSessionManager,
 } from './live-session-manager.js';
+import { getCdpPorts } from './cdp-ports.js';
 import { probePorts } from './lm-tools/probe-ports.js';
 import { appendInfo } from './output-channel.js';
 import type { MementoPauseStore } from './pause-store.js';
@@ -55,6 +57,9 @@ export function registerCommands(context: vscode.ExtensionContext, deps: Command
     // Live Inspect Session — launch the QA's own app for inspection (no pause).
     vscode.commands.registerCommand('qa-debug.launchInspectApp', (opts?: LiveSessionStartOptions) =>
       launchInspectAppCmd(deps, opts),
+    ),
+    vscode.commands.registerCommand('qa-debug.attachInspectApp', (opts?: LiveSessionStartOptions) =>
+      attachInspectAppCmd(deps, opts),
     ),
     vscode.commands.registerCommand('qa-debug.stopInspectApp', () => stopInspectAppCmd(deps)),
   );
@@ -99,6 +104,34 @@ async function launchInspectAppCmd(
     appendInfo(deps.channel, `[command] launchInspectApp failed: ${msg}`);
     void vscode.window.showErrorMessage(`QA Debug: failed to launch inspect app — ${msg}`);
   }
+}
+
+async function attachInspectAppCmd(
+  deps: CommandDeps,
+  opts: LiveSessionStartOptions = {},
+): Promise<void> {
+  const port = await promptForCdpPort('CDP debug port to attach');
+  if (port === undefined) return;
+  const attached = await deps.liveSessionManager.attachExisting(port, opts);
+  if (attached) appendInfo(deps.channel, `[command] attachInspectApp attached port=${port}`);
+}
+
+async function promptForCdpPort(prompt: string): Promise<number | undefined> {
+  const defaultPort = getCdpPorts()[0] ?? 22135;
+  const raw = await vscode.window.showInputBox({
+    prompt,
+    placeHolder: String(defaultPort),
+    value: String(defaultPort),
+    ignoreFocusOut: true,
+    validateInput: (v) => {
+      const n = Number(v.trim());
+      return Number.isInteger(n) && n >= 1024 && n <= 65535
+        ? null
+        : 'Enter an integer port between 1024 and 65535.';
+    },
+  });
+  if (!raw) return undefined;
+  return Number(raw.trim());
 }
 
 /**

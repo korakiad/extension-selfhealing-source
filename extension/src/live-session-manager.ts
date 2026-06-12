@@ -176,6 +176,47 @@ export class LiveSessionManager {
     await this.establishLiveTarget(chrome, port, name, 'launched', opts.announce ?? true);
   }
 
+  /** Attach to an already-running app that exposes a CDP endpoint. This is for
+   *  long-lived logged-in browsers/desktops shared across VS Code windows. The
+   *  extension only binds MCP; stop() detaches but does not kill the process. */
+  async attachExisting(port: number, opts: LiveSessionStartOptions = {}): Promise<boolean> {
+    if (!this.deps.arbiter.canStart('live')) {
+      void vscode.window.showWarningMessage(
+        `QA Debug: cannot attach inspection — ${this.deps.arbiter.blockingReason()}.`,
+      );
+      return false;
+    }
+
+    this.deps.arbiter.setLiveActive(true);
+    try {
+      appendInfo(this.deps.channel, `[live] probing existing CDP port=${port}`);
+      const found = await probePorts([port]);
+      const chrome = found[0];
+      if (!chrome) {
+        void vscode.window.showErrorMessage(
+          `QA Debug: no Chrome DevTools endpoint answered on port ${port}. ` +
+            `Launch the app with --remote-debugging-port=${port}, or choose launch instead.`,
+        );
+        await this.stop();
+        return false;
+      }
+
+      this.active = { port, weSpawned: false };
+      await this.establishLiveTarget(
+        chrome,
+        port,
+        `existing CDP port ${port}`,
+        'attached',
+        opts.announce ?? true,
+      );
+      return true;
+    } catch (err) {
+      appendInfo(this.deps.channel, `[live] attach existing port failed: ${asMessage(err)}`);
+      await this.stop();
+      return false;
+    }
+  }
+
   /** Tear down the live session: clear gate, unbind MCP, reap OUR process. */
   async stop(): Promise<void> {
     const active = this.active;
@@ -211,7 +252,7 @@ export class LiveSessionManager {
     chrome: AvailableChrome,
     port: number,
     name: string,
-    source: 'launched',
+    source: 'launched' | 'attached',
     announce: boolean,
   ): Promise<void> {
     const sessionId = `live-${randomUUID()}`;
@@ -224,7 +265,10 @@ export class LiveSessionManager {
     await this.cdpBinding.bindMcp(chrome.ws_url, ` session=${sessionId} source=${source} port=${port}`);
 
     this.statusItem.text = `$(inspect) Inspecting port ${port}`;
-    this.statusItem.tooltip = `Live Inspect Session active on CDP port ${port} — click to stop`;
+    this.statusItem.tooltip =
+      source === 'attached'
+        ? `Live Inspect Session attached to existing CDP port ${port} — click to detach`
+        : `Live Inspect Session active on CDP port ${port} — click to stop`;
     this.statusItem.show();
     appendInfo(
       this.deps.channel,

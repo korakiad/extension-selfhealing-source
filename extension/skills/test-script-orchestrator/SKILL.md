@@ -7,7 +7,7 @@ description: Orchestrates generating or updating UI automation scripts from Test
 
 Create or update test automation from a TestRail case while matching the consumer workspace. Treat TestRail as the test intent, the workspace as the implementation convention, and the live app/MCP as evidence only when the repo cannot answer a UI question.
 
-The browser MCP is the QA Debug Live Inspect Session, not a standalone browser launcher. `qa-debug-cdp` exists only after the QA has launched a Web, Electron, or OpenFin app through **QA Debug: Inspect App** (or the `@qa-testcase` launcher has done that prompt first). If no Live Inspect Session is active, work repo-first and ask the QA to launch inspection before any browser/MCP step.
+The browser MCP is the QA Debug Live Inspect Session, not a standalone browser launcher. `qa-debug-cdp` exists only after the QA has launched or attached a Web, Electron, or OpenFin app through **QA Debug: Inspect App**, **QA Debug: Attach Existing Inspect App (CDP Port)**, or `@qa-testcase`. A long-lived logged-in app may be reused by attaching to its existing CDP port; do not relaunch it unless the QA chooses launch. If no Live Inspect Session is active, work repo-first and ask the QA to launch or attach inspection before any browser/MCP step.
 
 ## Workflow checklist
 
@@ -98,7 +98,7 @@ Good questions:
 
 ### Live app access
 
-Use only the QA Debug CDP-attached MCP server, `qa-debug-cdp`, for browser inspection. It is bound to the currently active Live Inspect Session's specific CDP port. If it is unavailable, ask the QA to start **QA Debug: Inspect App** for the correct app type (Web / Electron / OpenFin) before continuing. Do not use a separate generic Playwright MCP server; that may control a different browser.
+Use only the QA Debug CDP-attached MCP server, `qa-debug-cdp`, for browser inspection. It is bound to the currently active Live Inspect Session's specific CDP port. If it is unavailable, ask the QA to start **QA Debug: Inspect App** for the correct app type (Web / Electron / OpenFin), or run **QA Debug: Attach Existing Inspect App (CDP Port)** for an already-running logged-in app before continuing. Do not use a separate generic Playwright MCP server; that may control a different browser.
 
 After launch or attach, the app may still be at a login page or an arbitrary state. Wait for the QA's explicit readiness signal before using MCP to generate locators/actions. If the user needs to log in, let them do it in the opened app, then continue from the same orchestration step after they confirm.
 

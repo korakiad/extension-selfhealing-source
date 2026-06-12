@@ -1,7 +1,7 @@
 {
   "name": "qa-debug-companion",
   "displayName": "QA Debug Companion",
-  "version": "0.0.6-beta.4",
+  "version": "0.0.6-beta.5",
   "private": true,
   "repository": {
     "type": "git",
@@ -361,6 +361,12 @@
         "title": "QA Debug: Inspect App (Launch for Element Picking)",
         "category": "QA Debug",
         "icon": "$(inspect)"
+      },
+      {
+        "command": "qa-debug.attachInspectApp",
+        "title": "QA Debug: Attach Existing Inspect App (CDP Port)",
+        "category": "QA Debug",
+        "icon": "$(plug)"
       },
       {
         "command": "qa-debug.stopInspectApp",
