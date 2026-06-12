@@ -9,6 +9,8 @@ stay quiet until `0.0.6` ships.
 
 ## Unreleased
 
+## 0.0.6-beta.3
+
 ### Added
 - **TestRail skill** — full company-TestRail access from Copilot chat
   (PLAN-testrail.md):
