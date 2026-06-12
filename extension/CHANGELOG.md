@@ -9,6 +9,26 @@ stay quiet until `0.0.6` ships.
 
 ## Unreleased
 
+## 0.0.6-beta.6
+
+### Fixed
+- **`@qa-testcase` follow-ups no longer re-ask the readiness gate** — once the
+  QA confirms the app is logged in / ready, that answer is remembered for the
+  lifetime of the Live Inspect Session (a stop/relaunch asks again).
+- **Truthful message when the testcase flow is cancelled after launch/attach** —
+  the participant now says the session is still running (with its port and how
+  to stop it) instead of claiming "No Live Inspect Session is ready" while one
+  is active, since the participant launch path suppresses the usual
+  notification.
+- **Auto/Manual inference is whole-token** — a case title like "auto-save
+  feature" can no longer silently select Auto mode; only a standalone
+  `auto`/`manual` (or an explicit phrase) counts.
+- Removed the canned `@qa-testcase` followup buttons that submitted a
+  placeholder case id (`C12345`) into the real flow.
+- The CDP-port input for attach is one shared prompt (`promptForCdpPort` in
+  `cdp-ports.ts`) instead of two copies, defaulting to the configured pool's
+  first port.
+
 ## 0.0.6-beta.5
 
 ### Added
