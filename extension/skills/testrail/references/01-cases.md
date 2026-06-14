@@ -27,7 +27,7 @@ Case Types:
 
 ## get_case
 - **Request**: `GET index.php?/api/v2/get_case/{case_id}`
-- **Path params**: case_id (integer, required) — the ID of the test case
+- **Path params**: case_id (integer, required) — the ID of the test case. Bare integer: strip the TestRail-UI `C` prefix (`C123456` → `123456`); the API 400s on `C123456`.
 - **Query/filter params**: none documented.
 - **Body fields**: n/a (GET)
 - **Response**: single test case object. System fields always included:

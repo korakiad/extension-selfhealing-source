@@ -16,12 +16,17 @@ Both take `endpoint` = the exact path after `/api/v2/` from the catalog below. T
 
 1. **Credentials**: handled by the extension (VS Code secret storage). `TESTRAIL_NOT_CONFIGURED` → tell the QA: *run **"QA Debug: Configure TestRail"** from the Command Palette*, then stop. NEVER ask for a username, password, API key, or instance URL in chat.
 2. **Endpoint syntax**: params append with `&`, never `?` (the whole API path is one query string): `get_cases/14&suite_id=8&limit=50`. Percent-encode values containing spaces: `&filter=login%20page`. IDs come from prior reads — don't guess them.
-3. **Consult the signature first**: find the endpoint in the catalog below, then read its `references/` file for params, body fields, and response shape before composing a call. Do not improvise field names from memory.
-4. **Pagination**: bulk reads return `{ offset, limit, size, _links, <plural-resource-key>: [...] }`, max 250 records/page. Pass `paginate: true` to auto-collect (caps at 8 pages / 2000 records; the result's `paginated.truncated` + `truncatedBy` tell you if there is more). `truncatedBy: "rate_limit"` means a partial result — say so.
-5. **Write etiquette**: before ANY `qa_testrail_post` call, state the exact endpoint + a payload summary in chat and get the QA's go-ahead. For `delete_*`, warn that deletes are permanent and cascade (e.g. `delete_project` removes its suites, runs, results). The VS Code dialog is the backstop, not the ask.
-6. **Rate-limit etiquette**: prefer bulk endpoints (`add_results_for_cases` over an `add_result_for_case` loop; `update_cases` over per-case updates). TestRail Cloud throttles at 180–300 req/min.
-7. **Verify-don't-retry on writes**: `PARSE_ERROR` from a `qa_testrail_post` whose detail says "the write may have been applied" → check with a `get_*` call before re-issuing. Never blind-retry a write.
-8. **Non-JSON endpoints**: `get_attachment/{id}` saves the file and returns `{ saved_to, bytes, content_type }` (mention `possiblePrefix: true` to the QA as possible corruption). `get_bdd/{case_id}` returns raw Gherkin as `{ data, nonJson: true }`. `add_bdd` is NOT supported (`UNSUPPORTED_ENDPOINT`) — edit BDD scenarios in the TestRail UI.
+3. **Normalize human inputs → API values** (your job — QAs speak in TestRail-UI terms; the API only takes raw values):
+   - **IDs — strip the UI letter prefix.** TestRail shows IDs with a leading letter (`C`=case, `T`=test, `R`=run); path params are bare integers, so `C123456` → `123456`. Passing the letter through 400s. A lone `C…` is a *case definition* → `get_case/123456`, NOT a result: a result also needs a run, `get_results_for_case/{run_id}/{case_id}`. A `T…` is a *test* (a case's instance inside a run) → `get_results/{test_id}`.
+   - **Dates → UNIX timestamps.** `created_after` / `created_before` / `due_on` / `start_on` etc. are UNIX seconds; convert human phrasing ("since June 1", "last sprint") yourself.
+   - **Status words → `status_id`.** 1 passed, 2 blocked, 3 untested, 4 retest, 5 failed; confirm any custom status via `get_statuses`.
+   - **Names → IDs.** Resolve a project / suite / run / user *name* with a prior read (`get_projects`, `get_suites`, `get_runs`, `get_user_by_email`) before using it — never guess (Rule 2).
+4. **Consult the signature first**: find the endpoint in the catalog below, then read its `references/` file for params, body fields, and response shape before composing a call. Do not improvise field names from memory.
+5. **Pagination**: bulk reads return `{ offset, limit, size, _links, <plural-resource-key>: [...] }`, max 250 records/page. Pass `paginate: true` to auto-collect (caps at 8 pages / 2000 records; the result's `paginated.truncated` + `truncatedBy` tell you if there is more). `truncatedBy: "rate_limit"` means a partial result — say so.
+6. **Write etiquette**: before ANY `qa_testrail_post` call, state the exact endpoint + a payload summary in chat and get the QA's go-ahead. For `delete_*`, warn that deletes are permanent and cascade (e.g. `delete_project` removes its suites, runs, results). The VS Code dialog is the backstop, not the ask.
+7. **Rate-limit etiquette**: prefer bulk endpoints (`add_results_for_cases` over an `add_result_for_case` loop; `update_cases` over per-case updates). TestRail Cloud throttles at 180–300 req/min.
+8. **Verify-don't-retry on writes**: `PARSE_ERROR` from a `qa_testrail_post` whose detail says "the write may have been applied" → check with a `get_*` call before re-issuing. Never blind-retry a write.
+9. **Non-JSON endpoints**: `get_attachment/{id}` saves the file and returns `{ saved_to, bytes, content_type }` (mention `possiblePrefix: true` to the QA as possible corruption). `get_bdd/{case_id}` returns raw Gherkin as `{ data, nonJson: true }`. `add_bdd` is NOT supported (`UNSUPPORTED_ENDPOINT`) — edit BDD scenarios in the TestRail UI.
 
 ## Error codes
 
@@ -38,8 +43,8 @@ Both take `endpoint` = the exact path after `/api/v2/` from the catalog below. T
 | `ENDPOINT_NOT_FOUND` (404) | Endpoint path wrong for this TestRail version. |
 | `MAINTENANCE` (409) | Cloud daily maintenance — retry later. |
 | `RATE_LIMITED` (429) | Already retried once internally. Slow down; prefer bulk endpoints. |
-| `SERVER_ERROR` (5xx) | TestRail-side problem; safe to retry reads later. For writes, verify first (Rule 7). |
-| `PARSE_ERROR` | Body wasn't parseable — detail is in the QA Debug output channel. On a write: Rule 7. |
+| `SERVER_ERROR` (5xx) | TestRail-side problem; safe to retry reads later. For writes, verify first (Rule 8). |
+| `PARSE_ERROR` | Body wasn't parseable — detail is in the QA Debug output channel. On a write: Rule 8. |
 | `NETWORK_ERROR` | Category only (dns / tls / refused / timeout) — VPN or instance reachability; detail in the output channel. |
 | `NO_WORKSPACE` / `ATTACHMENT_OUTSIDE_WORKSPACE` | Attachment paths must live inside the open workspace folder. |
 

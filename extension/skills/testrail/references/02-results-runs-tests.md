@@ -49,7 +49,7 @@ Non-endpoint doc section also covered: `quality_rating` (a result field concept 
   - status_id (integer list) — comma-separated list of status IDs to filter by
 - **Body fields**: n/a (GET)
 - **Response**: same format as get_results — paginated wrapper `{offset, limit, size, _links, results: [...]}` with the same per-result system fields.
-- **Quirks**: Difference vs get_results: expects test run + test case instead of a test. A test is an "instance" of a test case inside a run (TestRail creates a test per case in the suite when a run is created). Up to 250 entries per response.
+- **Quirks**: Difference vs get_results: expects test run + test case instead of a test. A test is an "instance" of a test case inside a run (TestRail creates a test per case in the suite when a run is created). Up to 250 entries per response. Both path params are BARE INTEGERS — strip the TestRail-UI letter prefixes first (`R…`=run, `C…`=case): a QA's "results for C123456 in run R2" → `get_results_for_case/2/123456`. A `T…` is a *test*, not a case → use `get_results/{test_id}` instead.
 - **Errors**: 200 success; 400 invalid or unknown test run or case; 403 no access to the project; 429 TestRail Cloud only — too many requests.
 
 ## get_results_for_run
