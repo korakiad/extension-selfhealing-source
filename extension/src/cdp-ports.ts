@@ -23,7 +23,7 @@ export function getCdpPorts(): number[] {
 }
 
 /** InputBox for a single CDP port, prefilled with the pool's first port.
- *  Shared by the attach command and the @qa-testcase attach path. */
+ *  Shared by the attach command and the @qa-agent attach path. */
 export async function promptForCdpPort(prompt: string): Promise<number | undefined> {
   const defaultPort = getCdpPorts()[0];
   const raw = await vscode.window.showInputBox({

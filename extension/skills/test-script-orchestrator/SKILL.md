@@ -7,7 +7,7 @@ description: Orchestrates generating or updating UI automation scripts from Test
 
 Create or update test automation from a TestRail case while matching the consumer workspace. Treat TestRail as the test intent, the workspace as the implementation convention, and the live app/MCP as evidence only when the repo cannot answer a UI question.
 
-The browser MCP is the QA Debug Live Inspect Session, not a standalone browser launcher. `qa-debug-cdp` exists only after the QA has launched or attached a Web, Electron, or OpenFin app through **QA Debug: Inspect App**, **QA Debug: Attach Existing Inspect App (CDP Port)**, or `@qa-testcase`. A long-lived logged-in app may be reused by attaching to its existing CDP port; do not relaunch it unless the QA chooses launch. If no Live Inspect Session is active, work repo-first and ask the QA to launch or attach inspection before any browser/MCP step.
+The browser MCP is the QA Debug Live Inspect Session, not a standalone browser launcher. `qa-debug-cdp` exists only after the QA has launched or attached a Web, Electron, or OpenFin app through **QA Debug: Inspect App**, **QA Debug: Attach Existing Inspect App (CDP Port)**, or `@qa-agent`. A long-lived logged-in app may be reused by attaching to its existing CDP port; do not relaunch it unless the QA chooses launch. If no Live Inspect Session is active, work repo-first and ask the QA to launch or attach inspection before any browser/MCP step.
 
 ## Workflow checklist
 

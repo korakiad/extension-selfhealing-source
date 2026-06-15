@@ -1,8 +1,12 @@
 // IPC protocol shared by the mocha-side hook (qa-hooks.cjs), the fake oracle (tools/oracle.ts),
 // the qa-debug MCP server (S3), and the VS Code extension (S4).
 //
-// Wire shape: JSON-RPC 2.0 envelopes carried by Node's built-in `ipc` channel
-// (parent spawns child with `stdio: [..., 'ipc']`; both ends use `process.send` / `process.on('message')`).
+// Wire shape: JSON-RPC 2.0 envelopes over one of two transports:
+//  - Node's built-in `ipc` channel (parent spawns child with `stdio: [..., 'ipc']`;
+//    both ends use `process.send` / `process.on('message')`) — oracle/legacy path.
+//  - NDJSON over a local socket (named pipe on win32, unix socket elsewhere) —
+//    v5.18 task-terminal path, where the extension is NOT the mocha child's
+//    parent and dials are bootstrapped via the QA_DEBUG_IPC_ENDPOINT env var.
 // See mocha-hooks/README.md for the rationale (vs. fd-3-NDJSON, vs. stdin/stdout).
 
 import { z } from 'zod';
@@ -331,6 +335,60 @@ export function nodeIpcTransport(target: unknown): IpcTransport {
     },
     close() {
       t.disconnect?.();
+    },
+  };
+}
+
+// ---------- NDJSON socket transport (v5.18 task-terminal mode) ----------
+//
+// When mocha runs inside a VS Code task terminal, the extension host is no
+// longer its parent (the pty host is), so there is no stdio[3] 'ipc' channel.
+// Both ends speak the same JSON-RPC envelopes as one JSON object per
+// `\n`-terminated line over a local duplex socket instead. Structural socket
+// shape (instead of `net.Socket`) for the same reason as ChildLikeProcess:
+// unit tests drive it with linked fakes.
+
+import { StringDecoder } from 'node:string_decoder';
+
+export interface NdjsonSocketLike {
+  write(data: string): boolean;
+  on(event: 'data', cb: (chunk: Buffer) => void): unknown;
+  end?(): void;
+}
+
+export function ndjsonSocketTransport(socket: NdjsonSocketLike): IpcTransport {
+  const listeners: ((msg: unknown) => void)[] = [];
+  // StringDecoder, not chunk.toString(): a UTF-8 sequence (e.g. a Thai test
+  // title) can be split across TCP/pipe chunks; per-chunk toString would
+  // corrupt it and the JSON.parse below would silently drop the envelope.
+  const decoder = new StringDecoder('utf8');
+  let buf = '';
+  socket.on('data', (chunk) => {
+    buf += decoder.write(chunk);
+    let nl = buf.indexOf('\n');
+    while (nl !== -1) {
+      const line = buf.slice(0, nl);
+      buf = buf.slice(nl + 1);
+      nl = buf.indexOf('\n');
+      if (!line.trim()) continue;
+      let msg: unknown;
+      try {
+        msg = JSON.parse(line);
+      } catch {
+        continue; // non-JSON noise on the wire — same policy as dispatch() for malformed envelopes
+      }
+      for (const l of listeners) l(msg);
+    }
+  });
+  return {
+    send(msg) {
+      socket.write(`${JSON.stringify(msg)}\n`);
+    },
+    onMessage(cb) {
+      listeners.push(cb);
+    },
+    close() {
+      socket.end?.();
     },
   };
 }

@@ -34,6 +34,16 @@ delivered via `process.send` / `process.on('message')`) for two reasons:
 
 ARCHITECTURE v5 §3.5 codifies this. R4#C records the alignment.
 
+**v5.18 adds a second transport for the task-terminal mode.** The extension now
+runs mocha inside a VS Code task terminal, where the pty host — not the
+extension — is the parent, so no `'ipc'` stdio entry can exist. The extension
+listens on a per-run named pipe (win32) / tmpdir unix socket (POSIX) and the
+hook dials back to the path in `QA_DEBUG_IPC_ENDPOINT`, speaking the same
+JSON-RPC envelopes as NDJSON lines (`ndjsonSocketTransport` in `protocol.ts`).
+The env var wins over `process.send` when both are present; with neither, the
+hook stays a no-op. Reason 1 above still holds (stdout stays mocha's); reason 2
+is paid for with ~30 lines of newline framing.
+
 ## Heartbeat abandonment (env-tunable)
 
 `HEARTBEAT_MS` (default 5000) is the interval the hook expects from the parent.
@@ -129,6 +139,8 @@ module.exports = {
 };
 ```
 
-The parent must spawn mocha with `stdio: ['inherit', 'inherit', 'inherit', 'ipc']`
-for the hook to find a `process.send`. Without it, the hook is a no-op (mocha
-just runs normally).
+The hook finds its channel one of two ways: a `QA_DEBUG_IPC_ENDPOINT` env var
+holding a pipe/socket path to dial (task-terminal mode — the VS Code extension
+does this), or a `process.send` from being spawned with
+`stdio: ['inherit', 'inherit', 'inherit', 'ipc']` (the oracle does this). With
+neither, the hook is a no-op (mocha just runs normally).

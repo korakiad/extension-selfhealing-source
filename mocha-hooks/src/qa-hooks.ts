@@ -1,7 +1,13 @@
 // Mocha root hook plugin. Held inside the test runner process.
-// Parent (oracle in S2 / extension in S4) spawns mocha with `stdio: [..., 'ipc']`
-// and we communicate via Node IPC carrying JSON-RPC 2.0 envelopes.
+// Two bootstrap modes for the JSON-RPC 2.0 channel to the companion:
+//  - QA_DEBUG_IPC_ENDPOINT set (v5.18 task-terminal mode): the extension runs
+//    mocha in a VS Code task terminal and listens on that named pipe / unix
+//    socket; we dial back over NDJSON.
+//  - stdio[3] 'ipc' (oracle in S2 / legacy direct-child): parent spawned us
+//    with `stdio: [..., 'ipc']`; we use Node IPC via `process.send`.
 // See ARCHITECTURE.md §3.1 / §3.5 and mocha-hooks/README.md.
+
+import net from 'node:net';
 
 import {
   DecisionAwaitParams,
@@ -14,6 +20,7 @@ import {
   PausePublishResult,
   SerializedError,
   inProcBus,
+  ndjsonSocketTransport,
   nodeIpcTransport,
 } from './protocol';
 import { probePorts } from './probe.js';
@@ -56,6 +63,10 @@ const MAX_MISSED_HEARTBEATS = 3;
 
 let conn: JsonRpcConnection | undefined;
 let connDisabledReason: string | undefined;
+// Task-terminal mode only: the dial-back socket. Kept unref'd so it never pins
+// the event loop once the suite is done (mirrors the `process.channel.unref()`
+// below); re-ref'd for the duration of a pause flow — see qaAfterEachImpl.
+let pinSocket: net.Socket | undefined;
 
 // ---------- v5.15 hook-order injection state ----------
 // Tag identifies our afterEach when it re-enters the patched
@@ -158,8 +169,33 @@ const pausedTests = new WeakSet<Mocha.Test>();
 function getConnection(): JsonRpcConnection | undefined {
   if (conn) return conn;
   if (connDisabledReason) return undefined;
+
+  // v5.18 task-terminal mode: the extension is not our parent — it listens on a
+  // per-run pipe/socket and handed us the path via env. `net.connect` returns
+  // synchronously and queues writes until the connect completes, so the
+  // connection is usable immediately; if the dial fails (extension gone,
+  // stale env), the 'error' handler closes the connection, in-flight requests
+  // reject, and the pause flow degrades to the same disabled behavior below.
+  const endpoint = process.env.QA_DEBUG_IPC_ENDPOINT?.trim();
+  if (endpoint) {
+    const socket = net.connect(endpoint);
+    // Don't pin the event loop between pauses / after the run — mocha must be
+    // able to exit naturally once suite + reporter complete.
+    socket.unref();
+    socket.on('error', (err) => {
+      process.stderr.write(`[qa-hooks] IPC socket error: ${err.message}\n`);
+      conn?.close();
+    });
+    socket.on('close', () => conn?.close());
+    pinSocket = socket;
+    conn = new JsonRpcConnection(ndjsonSocketTransport(socket));
+    return conn;
+  }
+
   if (typeof process.send !== 'function') {
-    connDisabledReason = 'no IPC channel from parent — mocha was not spawned with stdio "ipc"';
+    connDisabledReason =
+      'no IPC channel from parent — set QA_DEBUG_IPC_ENDPOINT (task-terminal mode) ' +
+      'or spawn with stdio "ipc"';
     process.stderr.write(`[qa-hooks] disabled: ${connDisabledReason}\n`);
     return undefined;
   }
@@ -291,84 +327,94 @@ async function qaAfterEachImpl(this: Mocha.Context): Promise<void> {
   // See Mocha docs: https://mochajs.org/#timeouts ("To disable timeouts ... pass 0").
   this.timeout(0);
 
-  // v5.16 — parallel probe effectiveCdpPorts() per pause (shared ./probe).
-  const ports = effectiveCdpPorts();
-  const availableChromes = await probePorts(ports);
-  const foundPorts = availableChromes.map((c) => c.port);
-  const failedPorts = ports.filter((p) => !foundPorts.includes(p));
-  process.stderr.write(
-    `[qa-hooks] CDP discovery: effective ports [${ports.join(', ')}], found [${foundPorts.join(', ')}], failed [${failedPorts.join(', ')}]\n`,
-  );
-  if (availableChromes.length === 0) {
-    process.stderr.write(
-      `[qa-hooks] CDP discovery: WARN no chromes responded — extension and agent must askUser for ports\n`,
-    );
-  }
-  // v5.8 — defensive diagnostic for unreachable-in-normal-flow cases.
-  // Post-qa-reporter-fix (v5.8 EVENT_TEST_FAIL handler), test.err should
-  // always be set when state==='failed' because Runner.fail wraps non-Error
-  // throws via thrown2Error (runner.js:442) before emitting EVENT_TEST_FAIL.
-  // Remaining cases this WARN catches: (a) third-party code emits
-  // EVENT_TEST_FAIL directly bypassing Runner.fail; (b) reporter regression
-  // removes the assignment; (c) Runner#uncaught paths that don't go through
-  // standard fail emission.
-  if (test.err == null) {
-    process.stderr.write(
-      `[qa-hooks] WARN test marked failed but test.err is ${typeof test.err}=${String(test.err)} — ` +
-        `Mocha's Runner.fail does NOT set test.err; the active reporter is expected to. ` +
-        `qa-reporter (v5.8+) replicates the Base reporter assignment. ` +
-        `If you see this WARN, either the reporter changed, OR the test was failed via a path that bypasses EVENT_TEST_FAIL.\n`,
-    );
-  }
-  const payload: PausePayload = {
-    test: test.title,
-    full_title: test.fullTitle(),
-    file: test.file ?? null,
-    line: fileLineFromStack(test.err?.stack),
-    error: serializeError(test.err),
-    available_chromes: availableChromes,
-    selected_cdp_port: null,
-    chrome_owner: 'framework',
-    started_at: Date.now(),
-    retry_count: currentRetryOf(test),
-  };
-
-  let sessionId: string;
+  // Task-terminal mode: the dial-back socket is kept unref'd so it never pins
+  // the event loop between pauses — but during the pause flow it can be the
+  // ONLY handle carrying the publish/decision round-trip (probe handles are
+  // closed, the runnable timeout is disabled above), so re-ref it here or the
+  // loop could drain — exiting the process — mid-await. Balanced in `finally`.
+  pinSocket?.ref();
   try {
-    const result = await c.request(METHOD.pausePublish, payload, PausePublishResult);
-    sessionId = result.session_id;
-  } catch (err) {
-    process.stderr.write(`[qa-hooks] pause.publish failed: ${(err as Error).message}\n`);
-    return;
+    // v5.16 — parallel probe effectiveCdpPorts() per pause (shared ./probe).
+    const ports = effectiveCdpPorts();
+    const availableChromes = await probePorts(ports);
+    const foundPorts = availableChromes.map((c) => c.port);
+    const failedPorts = ports.filter((p) => !foundPorts.includes(p));
+    process.stderr.write(
+      `[qa-hooks] CDP discovery: effective ports [${ports.join(', ')}], found [${foundPorts.join(', ')}], failed [${failedPorts.join(', ')}]\n`,
+    );
+    if (availableChromes.length === 0) {
+      process.stderr.write(
+        `[qa-hooks] CDP discovery: WARN no chromes responded — extension and agent must askUser for ports\n`,
+      );
+    }
+    // v5.8 — defensive diagnostic for unreachable-in-normal-flow cases.
+    // Post-qa-reporter-fix (v5.8 EVENT_TEST_FAIL handler), test.err should
+    // always be set when state==='failed' because Runner.fail wraps non-Error
+    // throws via thrown2Error (runner.js:442) before emitting EVENT_TEST_FAIL.
+    // Remaining cases this WARN catches: (a) third-party code emits
+    // EVENT_TEST_FAIL directly bypassing Runner.fail; (b) reporter regression
+    // removes the assignment; (c) Runner#uncaught paths that don't go through
+    // standard fail emission.
+    if (test.err == null) {
+      process.stderr.write(
+        `[qa-hooks] WARN test marked failed but test.err is ${typeof test.err}=${String(test.err)} — ` +
+          `Mocha's Runner.fail does NOT set test.err; the active reporter is expected to. ` +
+          `qa-reporter (v5.8+) replicates the Base reporter assignment. ` +
+          `If you see this WARN, either the reporter changed, OR the test was failed via a path that bypasses EVENT_TEST_FAIL.\n`,
+      );
+    }
+    const payload: PausePayload = {
+      test: test.title,
+      full_title: test.fullTitle(),
+      file: test.file ?? null,
+      line: fileLineFromStack(test.err?.stack),
+      error: serializeError(test.err),
+      available_chromes: availableChromes,
+      selected_cdp_port: null,
+      chrome_owner: 'framework',
+      started_at: Date.now(),
+      retry_count: currentRetryOf(test),
+    };
+
+    let sessionId: string;
+    try {
+      const result = await c.request(METHOD.pausePublish, payload, PausePublishResult);
+      sessionId = result.session_id;
+    } catch (err) {
+      process.stderr.write(`[qa-hooks] pause.publish failed: ${(err as Error).message}\n`);
+      return;
+    }
+
+    const decision = await awaitDecisionWithHeartbeat(c, {
+      session_id: sessionId,
+      heartbeat_ms: HEARTBEAT_MS,
+      on_abandoned: 'give_up',
+    });
+
+    // Broadcast the resolved decision on two channels:
+    //   (1) `inProcBus` — for the qa-reporter (same mocha process; cannot receive
+    //       via process.send, which only delivers to the parent).
+    //   (2) IPC `final_decision` notification — for the oracle/extension parent,
+    //       so they can also log/observe the decision outcome.
+    const finalDecision: FinalDecisionParams = {
+      session_id: sessionId,
+      kind: decision.kind,
+      reason: decision.reason,
+      by: decision.by,
+      // v5.5: renamed test_title → full_title (always was test.fullTitle()).
+      full_title: test.fullTitle(),
+      test_file: test.file ?? null,
+    };
+    inProcBus.emitFinalDecision(finalDecision);
+    c.notify(METHOD.finalDecision, finalDecision);
+
+    // mark_passed and give_up: hook does NOT mutate test.state / test.err /
+    // parent.retries / currentTest.retries (see ARCHITECTURE v5 §3.1). The reporter
+    // translates the failure event into the appropriate tri-state outcome by
+    // consulting `final_decision` above.
+  } finally {
+    pinSocket?.unref();
   }
-
-  const decision = await awaitDecisionWithHeartbeat(c, {
-    session_id: sessionId,
-    heartbeat_ms: HEARTBEAT_MS,
-    on_abandoned: 'give_up',
-  });
-
-  // Broadcast the resolved decision on two channels:
-  //   (1) `inProcBus` — for the qa-reporter (same mocha process; cannot receive
-  //       via process.send, which only delivers to the parent).
-  //   (2) IPC `final_decision` notification — for the oracle/extension parent,
-  //       so they can also log/observe the decision outcome.
-  const finalDecision: FinalDecisionParams = {
-    session_id: sessionId,
-    kind: decision.kind,
-    reason: decision.reason,
-    by: decision.by,
-    // v5.5: renamed test_title → full_title (always was test.fullTitle()).
-    full_title: test.fullTitle(),
-    test_file: test.file ?? null,
-  };
-  inProcBus.emitFinalDecision(finalDecision);
-  c.notify(METHOD.finalDecision, finalDecision);
-
-  // mark_passed and give_up: hook does NOT mutate test.state / test.err /
-  // parent.retries / currentTest.retries (see ARCHITECTURE v5 §3.1). The reporter
-  // translates the failure event into the appropriate tri-state outcome by
-  // consulting `final_decision` above.
 }
 ;(qaAfterEachImpl as unknown as Record<symbol, unknown>)[OUR_HOOK_TAG] = true;
 

@@ -9,6 +9,42 @@ stay quiet until `0.0.6` ships.
 
 ## Unreleased
 
+### Changed
+- **One QA agent instead of two.** The separate `qa-debug-inspect` (live
+  inspection) and `qa-testcase-writer` (TestRail → script) agents are merged
+  into a single agent: you type **`@qa-agent`** (participant), which redirects
+  into the **`qa-automation`** custom agent (the mode carrying the scoped
+  `tools:` allowlist). It carries the union of both tool
+  sets — the live `qa-debug-cdp` browser MCP, `qa_pick_element`, and TestRail
+  READ — so inspecting a running app and writing a testcase against it no longer
+  means switching agents mid-flow. `@qa-testcase` is replaced by `@qa-agent`
+  (the `/generate <case-id>` command is unchanged); a bare `@qa-agent` mention
+  gets a neutral inspection prompt, while `/generate` (or a `C<id>`) selects the
+  testcase flow. The Live Inspect Session's **Open Chat** now opens into the
+  **`qa-automation`** agent. The `@qa-agent` participant is now **non-sticky** so
+  the redirect into `qa-automation` actually switches modes (a sticky participant
+  kept re-capturing the query, leaving the scoped `tools:` allowlist unapplied).
+  And a bare `@qa-agent` with a live session up no longer stalls on "what do you
+  want to inspect?" — it identifies what is running on the CDP port and tells you
+  the app is ready to interact. TestRail writes stay out of scope (read-only).
+- **Mocha runs in a real terminal now.** Suite runs execute as a VS Code task
+  (`ProcessExecution`, dedicated terminal panel) instead of an invisible
+  extension-host child piped into the "QA Debug Mocha" output channel. The QA
+  watches qa-reporter output live with colors, scrollback survives the run, and
+  Ctrl-C in the terminal cancels exactly like the stop button. Because the argv
+  array goes straight to the process (no shell) and `node` resolves from the
+  user's own terminal PATH, the Windows cmd-quoting / `.cmd`-shim and
+  ext-host-env (`ELECTRON_RUN_AS_NODE`) classes of spawn bugs no longer apply
+  to suite runs.
+- **Hook IPC dial-back.** The extension is no longer the mocha process's
+  parent, so the `stdio[3]` Node-IPC channel is replaced by NDJSON JSON-RPC
+  over a per-run named pipe (Windows) / tmpdir unix socket (macOS/Linux),
+  bootstrapped via `QA_DEBUG_IPC_ENDPOINT`. `process.send` mode still works
+  when that env var is absent (oracle / direct-child setups), so existing
+  harnesses are unaffected.
+- The **"QA Debug Mocha" output channel is gone** — its job (seeing why a run
+  stalls) is the terminal's now. The audit channel is unchanged.
+
 ## 0.0.6-beta.6
 
 ### Fixed

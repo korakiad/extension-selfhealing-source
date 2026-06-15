@@ -17,6 +17,11 @@
     "onStartupFinished"
   ],
   "contributes": {
+    "taskDefinitions": [
+      {
+        "type": "qa-debug-mocha"
+      }
+    ],
     "chatSkills": [
       {
         "path": "./skills/qa-debug/SKILL.md"
@@ -40,11 +45,7 @@
         "when": "qa-debug.paused"
       },
       {
-        "path": "./agents/qa-debug-inspect.agent.md",
-        "when": "qa-debug.liveSession"
-      },
-      {
-        "path": "./agents/qa-testcase-writer.agent.md"
+        "path": "./agents/qa-automation.agent.md"
       }
     ],
     "mcpServerDefinitionProviders": [
@@ -74,24 +75,25 @@
         ]
       },
       {
-        "id": "qa-testcase",
-        "name": "qa-testcase",
-        "fullName": "QA Testcase Writer",
-        "description": "Pulls TestRail cases and routes them to the QA Testcase Writer agent to generate or update UI automation in the current workspace's patterns.",
-        "isSticky": true,
+        "id": "qa-agent",
+        "name": "qa-agent",
+        "fullName": "QA Agent",
+        "description": "The QA companion — inspect a running app (Live Inspect Session) and turn TestRail cases into UI automation matching the current workspace's patterns.",
+        "isSticky": false,
         "commands": [
           {
             "name": "generate",
-            "description": "Generate or update an automation script from a TestRail case. Example: @qa-testcase /generate C12345 auto"
+            "description": "Generate or update an automation script from a TestRail case. Example: @qa-agent /generate C12345 auto"
           }
         ],
         "disambiguation": [
           {
-            "category": "qa-testcase-generation",
-            "description": "Generating or updating test automation from TestRail cases, BDD, or manual steps.",
+            "category": "qa-inspection-and-testcase",
+            "description": "Inspecting a running app (Live Inspect Session) or generating/updating test automation from TestRail cases, BDD, or manual steps.",
             "examples": [
+              "inspect this running app and pick this element",
+              "what's the selector for this button in the live app",
               "generate automation for TestRail case C12345",
-              "create a WDIO script from this TestRail case",
               "turn this case into a UI test in our repo pattern",
               "write testcase C12345 in manual mode"
             ]
@@ -498,7 +500,7 @@
     "build": "node tools/gen-lm-tools.mjs --check && node esbuild.config.mjs",
     "build:prod": "node tools/gen-lm-tools.mjs --check && node esbuild.config.mjs --production",
     "build:check": "tsc -p tsconfig.json --noEmit",
-    "test:unit": "pnpm run test:unit:env && pnpm run test:unit:runtime && pnpm run test:unit:kill && pnpm run test:unit:browser && pnpm run test:unit:arbiter && pnpm run test:unit:mcpproxy && pnpm run test:unit:resolve && pnpm run test:unit:trparse && pnpm run test:unit:trclient",
+    "test:unit": "pnpm run test:unit:env && pnpm run test:unit:runtime && pnpm run test:unit:kill && pnpm run test:unit:browser && pnpm run test:unit:arbiter && pnpm run test:unit:mcpproxy && pnpm run test:unit:resolve && pnpm run test:unit:trparse && pnpm run test:unit:trclient && pnpm run test:unit:mochaipc",
     "test:unit:resolve": "node --import tsx test/project-resolve.test.mts",
     "test:e2e:shim": "node --import tsx test/cdp-shim-e2e.mts",
     "test:e2e:stop": "node --import tsx test/stop-kill-e2e.mts",
@@ -514,7 +516,8 @@
     "package": "pnpm run clean && pnpm --filter ../mocha-hooks run build && pnpm run build:prod && node tools/prepare-vsix.mjs && cd _vsix-staging && npx --yes @vscode/vsce package --out ../qa-debug-companion-${npm_package_version}.vsix",
     "gen:lm-tools": "node tools/gen-lm-tools.mjs",
     "test:unit:trparse": "node --import tsx test/testrail-parse.test.mts",
-    "test:unit:trclient": "node --import tsx test/testrail-client.test.mts"
+    "test:unit:trclient": "node --import tsx test/testrail-client.test.mts",
+    "test:unit:mochaipc": "node --import tsx test/mocha-ipc-server.test.mts"
   },
   "dependencies": {
     "@qa-debug/mocha-hooks": "workspace:*",

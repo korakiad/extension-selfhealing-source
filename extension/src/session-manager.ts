@@ -1,5 +1,5 @@
 /**
- * SessionManager — owns the mocha child + Chrome lifecycle and routes IPC
+ * SessionManager — owns the mocha task + Chrome lifecycle and routes IPC
  * traffic between hook (`qa-hooks.ts`) and extension state (PauseStore +
  * DecisionRouter + TestController + MCP provider).
  *
@@ -9,19 +9,22 @@
  * when invoked from TestController; falls back to
  * `<workspaceRoot>/fixture-tests` (demo) or `<workspaceRoot>` for run-all.
  *
- * Suite-run sequence:
+ * Suite-run sequence (v5.18 task-terminal mode):
  *   1. runFixtureSuite() called via qa-debug.runFixture command or
  *      TestController run handler.
- *   2. Chrome.spawn() (idempotent — reuse across tests).
- *   3. controller.beginRun() returns a TestRunHandle scoped to this invocation.
- *   4. spawn mocha child with stdio[3]='ipc' + injected --require qa-hooks +
- *      --reporter qa-reporter (both absolute paths to bundled extension files).
- *   5. Construct JsonRpcConnection on the child. Register handlers.
- *   6. Wait for child exit. On clean exit with no outstanding pause, tear down
- *      Chrome. On exit with outstanding pause, leave Chrome up.
+ *   2. controller.beginRun() returns a TestRunHandle scoped to this invocation.
+ *   3. Start a per-run IPC endpoint (named pipe / unix socket) the hook dials
+ *      back to — the task terminal's process is the pty host's child, not
+ *      ours, so the old stdio[3]='ipc' channel cannot exist.
+ *   4. Execute a VS Code task (ProcessExecution: `node <mocha.js> --require
+ *      qa-hooks --reporter qa-reporter ...`, argv array, no shell). The QA
+ *      sees live mocha output in a real terminal and can Ctrl-C it.
+ *   5. Construct JsonRpcConnection on the (queueing) endpoint transport.
+ *      Register handlers.
+ *   6. Wait for onDidEndTaskProcess. On clean exit with no outstanding pause,
+ *      tear down. On exit with outstanding pause, synthesize give_up teardown.
  */
 
-import { spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -35,16 +38,15 @@ import {
   METHOD,
   PausePayload as WirePausePayload,
   PausePublishResult,
-  nodeIpcTransport,
 } from '@qa-debug/mocha-hooks/protocol';
 import type { PausePayload } from '@qa-debug/pause-store-types';
 
 import { CdpBinding } from './cdp-binding.js';
-import { sanitizeChildEnv } from './child-env.js';
 import type { InspectionArbiter } from './inspection-arbiter.js';
 import type { DecisionRouter } from './decision-router.js';
 import type { QaDebugMcpProvider } from './mcp-provider.js';
-import { appendInfo, createChildLogPump } from './output-channel.js';
+import { startMochaIpcServer, type MochaIpcServer } from './mocha-ipc-server.js';
+import { appendInfo } from './output-channel.js';
 import { signalProcessGroup } from './process-group-kill.js';
 import type { PauseStatusBar } from './pause-status-bar.js';
 import type { MementoPauseStore } from './pause-store.js';
@@ -68,6 +70,10 @@ async function refreshPausedTestIdsContext(pauseStore: MementoPauseStore): Promi
 // Grace window between the polite group signal (SIGINT, = Ctrl-C) and the hard
 // SIGKILL escalation. Env override for tests so they don't wait the full default.
 const KILL_GRACE_MS = Number(process.env.QA_DEBUG_KILL_GRACE_MS ?? 3_000);
+
+// Task definition type for the terminal-hosted mocha run. Must match the
+// `taskDefinitions` contribution in package.json.
+const MOCHA_TASK_TYPE = 'qa-debug-mocha';
 
 // v5.2: absolute-path resolution for bundled hook + reporter. Resolved
 // once at module load from the extension's own location via createRequire.
@@ -95,13 +101,6 @@ export interface SessionManagerDeps {
   mcpProvider: QaDebugMcpProvider;
   testControllerWrapper: TestControllerWrapper;
   channel: vscode.OutputChannel;
-  /**
-   * Dedicated channel for the mocha child's raw stdout/stderr. The audit
-   * channel is kept machine-parseable; user-facing mocha output (qa-reporter
-   * lines, console.log from specs, qa-hooks stderr breadcrumbs) lands here so
-   * the QA can diagnose stalled runs.
-   */
-  mochaChannel: vscode.OutputChannel;
   /** Workspace root used to resolve mocha bin + fallback CWD. */
   workspaceRoot: string;
   /**
@@ -113,7 +112,7 @@ export interface SessionManagerDeps {
   chatOpenFallbackAvailable: boolean;
   /** v5.4 — ambient pause indicator; show on pause-publish, hide on decision commit. */
   pauseStatusBar: PauseStatusBar;
-  /** Ambient run indicator; show on spawnMochaChild, hide on onMochaExit. */
+  /** Ambient run indicator; show on startMochaTask, hide on onMochaExit. */
   runStatusBar: RunStatusBar;
   /** Shared mutual-exclusion guard vs. the Live Inspect Session (both bind the
    *  single-endpoint mcpProvider). */
@@ -122,7 +121,18 @@ export interface SessionManagerDeps {
 
 interface ActiveRun {
   testHandle: TestRunHandle;
-  child: ChildProcess;
+  /** VS Code task execution backing this run; undefined until executeTask resolves. */
+  execution?: vscode.TaskExecution;
+  /**
+   * PID of the task's root process (`node <mocha.js>`), from
+   * onDidStartTaskProcess. The pty makes it a session (and thus group) leader,
+   * so the group-signal semantics of the old `detached: true` spawn carry over.
+   */
+  pid?: number;
+  /** Per-run pipe/socket endpoint the mocha child dials back to. */
+  ipc: MochaIpcServer;
+  /** Task lifecycle subscriptions; disposed in onMochaExit. */
+  taskSubs: vscode.Disposable[];
   connection: JsonRpcConnection;
   heartbeatTimers: Map<string, NodeJS.Timeout>;
   /** session_ids whose decision.await is currently pending. */
@@ -133,6 +143,11 @@ interface ActiveRun {
   mochaEntry: string;
   /** Set by cancelActiveRun() so onMochaExit can attribute the exit to the user. */
   userCancelled: boolean;
+  /**
+   * Guards double exit handling: onDidEndTaskProcess and onDidEndTask both
+   * fire for a normal exit, and the executeTask catch path calls in directly.
+   */
+  exited: boolean;
   /**
    * Set once pause teardown (clear store + context key + MCP gate + shim +
    * finalize the Test Explorer item) has run for this run's active pause —
@@ -235,7 +250,7 @@ export class SessionManager {
     const testHandle = this.deps.testControllerWrapper.beginRun(
       opts.runLabel ?? (specFiles.length === 1 ? path.basename(specFiles[0]) : 'fixture suite'),
     );
-    await this.spawnMochaChild(testHandle, {
+    await this.startMochaTask(testHandle, {
       cwd,
       mochaEntry,
       specFiles,
@@ -253,10 +268,14 @@ export class SessionManager {
       const run = this.activeRun;
       run.userCancelled = true;
       this.terminateRun(run, 'extension deactivate');
-      if (run.child.pid != null) {
-        signalProcessGroup(run.child.pid, 'SIGKILL', (m) => appendInfo(this.deps.channel, m));
+      if (run.pid != null) {
+        signalProcessGroup(run.pid, 'SIGKILL', (m) => appendInfo(this.deps.channel, m));
       }
       clearTimeout(run.killEscalationTimer);
+      for (const sub of run.taskSubs) sub.dispose();
+      run.taskSubs.length = 0;
+      run.connection.close();
+      await run.ipc.dispose();
       this.activeRun = undefined;
       this.deps.arbiter.setRunActive(false);
       void vscode.commands.executeCommand('setContext', 'qa-debug.running', false);
@@ -272,7 +291,7 @@ export class SessionManager {
 
   // ------------------- internal -------------------
 
-  private async spawnMochaChild(
+  private async startMochaTask(
     testHandle: TestRunHandle,
     opts: {
       cwd: string;
@@ -296,24 +315,6 @@ export class SessionManager {
       '--no-timeouts',
     ];
 
-    // v5.16 — QA_DEBUG_CDP_WS_URL is gone. qa-hooks probes effectiveCdpPorts()
-    // per pause; ports override via QA_DEBUG_CDP_PORTS.
-    //
-    // Do NOT pass the ext-host env verbatim. VS Code runs the extension host
-    // with ELECTRON_RUN_AS_NODE=1; copied into the child it is inherited by the
-    // Electron/OpenFin app the test launches, which then boots in Node mode
-    // (no GUI, no CDP port). sanitizeChildEnv strips that family (mirrors VS
-    // Code's own sanitizeProcessEnvironment). PATH + the Node IPC fd are
-    // preserved, so mocha + the JSON-RPC channel are unaffected.
-    const { env, removed } = sanitizeChildEnv(process.env);
-    if (removed.length > 0) {
-      appendInfo(
-        this.deps.channel,
-        `[session-manager] scrubbed ${removed.length} leaked env var(s) from mocha child: ` +
-          `[${removed.join(', ')}]`,
-      );
-    }
-
     // v5.17 — anchored alternation `--grep`. Each entry is its own anchored
     // alternative so exact-match semantics hold (siblings under the same
     // top-level describe DON'T over-select). The first alts are the top-level
@@ -335,49 +336,71 @@ export class SessionManager {
       args.push(...opts.specFiles);
     }
 
+    // v5.18 — per-run dial-back endpoint; replaces stdio[3]='ipc', which can't
+    // exist here (the task process is the pty host's child, not ours).
+    const ipc = await startMochaIpcServer((m) => appendInfo(this.deps.channel, m));
+
     appendInfo(
       this.deps.channel,
-      `[session-manager] spawn mocha cwd=${opts.cwd} entry=${opts.mochaEntry} ` +
-        `args=${JSON.stringify(args)}`,
+      `[session-manager] start mocha task cwd=${opts.cwd} entry=${opts.mochaEntry} ` +
+        `args=${JSON.stringify(args)} ipc=${ipc.endpoint}`,
     );
-    // stdout/stderr are PIPED (not inherited) so they can be funneled into the
-    // QA Debug Mocha output channel. Before this, mocha output landed in the
-    // extension-host log — invisible to the QA debugging a stalled run.
-    this.deps.mochaChannel.appendLine(
-      `\n──── mocha spawn ${new Date().toISOString()} cwd=${opts.cwd} ────`,
-    );
-    this.deps.mochaChannel.appendLine(`args=${JSON.stringify(args)}`);
-    // `detached: true` makes the child a process-group leader (PID == PGID) so
-    // its descendants (the launched Electron / OpenFin / Chrome, any framework
-    // worker) inherit the group and a single group-signal reaches them all, the
-    // way a terminal Ctrl-C does. We deliberately do NOT unref() — exit is
-    // still tracked via child.on('exit').
-    // Run the mocha JS entry with `node` from PATH — the same resolution the
-    // POSIX .bin shim performed (`exec node .../mocha/bin/mocha.js`), but
-    // cross-platform: Windows can't exec the extensionless shim, and a direct
-    // node→node spawn is required for the stdio[3] IPC channel anyway.
-    const child = spawn('node', [opts.mochaEntry, ...args], {
-      cwd: opts.cwd,
-      stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
-      env,
-      detached: true,
-    });
-    child.stdout?.on('data', createChildLogPump(this.deps.mochaChannel, 'stdout'));
-    child.stderr?.on('data', createChildLogPump(this.deps.mochaChannel, 'stderr'));
-    // Reveal the channel without stealing focus so a stalled run is one click
-    // (or already visible) instead of a scavenger hunt through the dropdown.
-    this.deps.mochaChannel.show(/* preserveFocus */ true);
 
-    const connection = new JsonRpcConnection(nodeIpcTransport(child));
+    // v5.18 — the run lives in a VS Code task terminal instead of an invisible
+    // extension-host child:
+    //  - the QA watches mocha/qa-reporter output live (ANSI colors intact) and
+    //    can Ctrl-C the run — the real thing terminateRun's group-SIGINT
+    //    emulates;
+    //  - ProcessExecution passes the argv ARRAY straight to the process (no
+    //    shell), killing the Windows cmd-quoting / .cmd-shim class of spawn
+    //    bugs, and `node` resolves from the user's terminal PATH;
+    //  - the terminal env comes from the user's shell, already scrubbed of
+    //    ELECTRON_RUN_AS_NODE & friends by VS Code's own
+    //    sanitizeProcessEnvironment — the sanitizeChildEnv pass the old
+    //    direct-child path needed (v5.16) is moot here. Only our additive var
+    //    rides along: ProcessExecutionOptions.env is MERGED over the terminal
+    //    env per the API contract.
+    //
+    // Definition and name are deliberately CONSTANT: task identity derives
+    // from them, and a per-run identity would defeat TaskPanelKind.Dedicated —
+    // every run would open yet another terminal instead of reusing (+clearing)
+    // the previous one. Event attribution doesn't need a per-run marker:
+    // runFixtureSuite guarantees a single active run, so any event for a task
+    // of our type belongs to it.
+    const task = new vscode.Task(
+      { type: MOCHA_TASK_TYPE },
+      vscode.TaskScope.Workspace,
+      'mocha',
+      'qa-debug',
+      new vscode.ProcessExecution('node', [opts.mochaEntry, ...args], {
+        cwd: opts.cwd,
+        env: { QA_DEBUG_IPC_ENDPOINT: ipc.endpoint },
+      }),
+    );
+    task.presentationOptions = {
+      // Reveal without stealing focus so a stalled run is already visible
+      // instead of a scavenger hunt — same intent as the old channel.show().
+      reveal: vscode.TaskRevealKind.Always,
+      focus: false,
+      panel: vscode.TaskPanelKind.Dedicated,
+      clear: true,
+      echo: true,
+      showReuseMessage: false,
+    };
+    task.problemMatchers = [];
+
+    const connection = new JsonRpcConnection(ipc.transport);
     const run: ActiveRun = {
       testHandle,
-      child,
+      ipc,
+      taskSubs: [],
       connection,
       heartbeatTimers: new Map(),
       pendingSessions: new Set(),
       cwd: opts.cwd,
       mochaEntry: opts.mochaEntry,
       userCancelled: false,
+      exited: false,
       pauseToreDown: false,
     };
     this.activeRun = run;
@@ -397,27 +420,53 @@ export class SessionManager {
 
     this.wireConnection(run);
 
-    child.on('exit', (code, signal) => {
+    // Subscribed BEFORE executeTask: onDidStartTaskProcess can fire before the
+    // executeTask thenable resolves. Matched on the task type — TaskExecution
+    // object identity across the API boundary is not contractual, and the
+    // single-active-run guard makes the type sufficient.
+    run.taskSubs.push(
+      vscode.tasks.onDidStartTaskProcess((e) => {
+        if (e.execution.task.definition.type !== MOCHA_TASK_TYPE) return;
+        run.pid = e.processId;
+        appendInfo(
+          this.deps.channel,
+          `[session-manager] mocha task process started pid=${e.processId}`,
+        );
+      }),
+      vscode.tasks.onDidEndTaskProcess((e) => {
+        if (e.execution.task.definition.type !== MOCHA_TASK_TYPE) return;
+        appendInfo(
+          this.deps.channel,
+          `[session-manager] mocha exited code=${e.exitCode ?? '?'}` +
+            (run.ipc.connected()
+              ? ''
+              : ' (child never dialed the IPC endpoint — qa-hooks not loaded?)'),
+        );
+        void this.onMochaExit(run);
+      }),
+      // Fallback for a task that ends without ever producing a process (spawn
+      // refusal); onMochaExit dedupes via run.exited.
+      vscode.tasks.onDidEndTask((e) => {
+        if (e.execution.task.definition.type !== MOCHA_TASK_TYPE) return;
+        void this.onMochaExit(run);
+      }),
+    );
+
+    try {
+      run.execution = await vscode.tasks.executeTask(task);
+    } catch (err) {
+      // Per the API docs, executeTask throws when a ProcessExecution cannot
+      // start a new process at all. The terminal also shows the failure to
+      // the user — keep the toast for parity with the old spawn-error path.
       appendInfo(
         this.deps.channel,
-        `[session-manager] mocha exited code=${code} signal=${signal}`,
+        `[session-manager] mocha task failed to start: ${(err as Error).message}`,
       );
-      this.onMochaExit(run);
-    });
-    child.on('error', (err) => {
-      // `Channel closed` (ERR_IPC_CHANNEL_CLOSED) is the expected aftermath of
-      // killing the child mid-pause: onMochaExit resolves the dangling
-      // decision.await, whose JSON-RPC response can no longer reach the dead
-      // child. Log it, but don't alarm the user with an error toast for a
-      // teardown we initiated. Real spawn failures (ENOENT, etc.) still surface.
-      const benignClosedChannel =
-        (err as NodeJS.ErrnoException).code === 'ERR_IPC_CHANNEL_CLOSED' ||
-        /channel closed/i.test(err.message);
-      appendInfo(this.deps.channel, `[session-manager] mocha child error: ${err.message}`);
-      if (!benignClosedChannel) {
-        void vscode.window.showErrorMessage(`QA Debug: mocha spawn error — ${err.message}`);
-      }
-    });
+      void vscode.window.showErrorMessage(
+        `QA Debug: failed to start mocha task — ${(err as Error).message}`,
+      );
+      await this.onMochaExit(run);
+    }
   }
 
   private wireConnection(run: ActiveRun): void {
@@ -567,6 +616,10 @@ export class SessionManager {
   }
 
   private async onMochaExit(run: ActiveRun): Promise<void> {
+    // onDidEndTaskProcess + onDidEndTask both fire on a normal exit, and the
+    // executeTask catch path calls in directly — first one wins.
+    if (run.exited) return;
+    run.exited = true;
     const abandonReason = run.userCancelled
       ? 'mocha child cancelled by user (no final_decision)'
       : 'mocha child exited unexpectedly (no final_decision)';
@@ -601,6 +654,12 @@ export class SessionManager {
       await this.teardownPause(run, synthetic, orphanPause);
     }
 
+    // Release the task listeners and the per-run IPC endpoint.
+    for (const sub of run.taskSubs) sub.dispose();
+    run.taskSubs.length = 0;
+    run.connection.close();
+    await run.ipc.dispose();
+
     if (this.activeRun === run) {
       this.activeRun = undefined;
       this.deps.arbiter.setRunActive(false);
@@ -615,7 +674,7 @@ export class SessionManager {
    * User-initiated cancel: interrupt the active run's whole process group
    * (Ctrl-C-equivalent SIGINT, then SIGKILL escalation). Returns false when
    * there is no active run. Cleanup (heartbeats, decision abandonment, context
-   * keys) flows through the existing child.on('exit') → onMochaExit path.
+   * keys) flows through the existing onDidEndTaskProcess → onMochaExit path.
    */
   cancelActiveRun(reason: string): boolean {
     const run = this.activeRun;
@@ -634,10 +693,15 @@ export class SessionManager {
    * armed only logs.
    */
   private terminateRun(run: ActiveRun, reason: string): void {
-    const pid = run.child.pid;
+    const pid = run.pid;
     if (pid == null) {
-      // Spawn never produced a PID (failed before fork); child.on('error') owns
-      // that path. Nothing to signal.
+      // The task process hasn't started yet (or never will — spawn refusal).
+      // Nothing to group-signal; let VS Code tear the task down if it exists.
+      appendInfo(
+        this.deps.channel,
+        `[session-manager] terminate before process start reason="${reason}" — execution.terminate()`,
+      );
+      run.execution?.terminate();
       return;
     }
     if (run.killEscalationTimer) {

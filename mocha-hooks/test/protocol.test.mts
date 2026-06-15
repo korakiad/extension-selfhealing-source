@@ -5,6 +5,7 @@
  *   node --import tsx test/protocol.test.mts
  */
 import assert from 'node:assert/strict';
+import net from 'node:net';
 
 import {
   AvailableChrome,
@@ -14,7 +15,9 @@ import {
   METHOD,
   PausePayload,
   PausePublishResult,
+  ndjsonSocketTransport,
   type IpcTransport,
+  type NdjsonSocketLike,
 } from '../src/protocol.ts';
 
 let passed = 0;
@@ -163,6 +166,87 @@ try {
     const inflight = child.request('never.answered', {});
     child.close();
     await assert.rejects(inflight, /connection closed/);
+  });
+
+  // ---------- ndjsonSocketTransport (v5.18 task-terminal mode) ----------
+
+  // Hand-cranked socket so the test controls chunk boundaries exactly.
+  function fakeSocket(): { socket: NdjsonSocketLike; feed(b: Buffer): void; sent: string[] } {
+    const dataCbs: ((c: Buffer) => void)[] = [];
+    const sent: string[] = [];
+    const socket: NdjsonSocketLike = {
+      write(d: string) {
+        sent.push(d);
+        return true;
+      },
+      on(_ev: 'data', cb: (c: Buffer) => void) {
+        dataCbs.push(cb);
+        return socket;
+      },
+    };
+    return {
+      socket,
+      feed(b: Buffer) {
+        for (const cb of dataCbs) cb(b);
+      },
+      sent,
+    };
+  }
+
+  await check('ndjson framing survives a chunk split inside a multi-byte UTF-8 char', () => {
+    const { socket, feed } = fakeSocket();
+    const t = ndjsonSocketTransport(socket);
+    const got: unknown[] = [];
+    t.onMessage((m) => got.push(m));
+    const title = 'ทดสอบภาษาไทย';
+    const line = Buffer.from(
+      `${JSON.stringify({ jsonrpc: '2.0', method: 'x', params: { title } })}\n`,
+      'utf8',
+    );
+    // Split one byte INTO the first Thai char's 3-byte sequence — a per-chunk
+    // toString would mangle it; StringDecoder must not.
+    const splitAt = line.indexOf(Buffer.from(title, 'utf8')) + 1;
+    feed(line.subarray(0, splitAt));
+    assert.equal(got.length, 0); // no newline yet → nothing delivered
+    feed(line.subarray(splitAt));
+    assert.equal(got.length, 1);
+    assert.equal((got[0] as { params: { title: string } }).params.title, title);
+  });
+
+  await check('ndjson framing delivers multiple lines per chunk and skips non-JSON noise', () => {
+    const { socket, feed } = fakeSocket();
+    const t = ndjsonSocketTransport(socket);
+    const got: unknown[] = [];
+    t.onMessage((m) => got.push(m));
+    feed(Buffer.from('not json at all\n{"a":1}\n\n{"b":2}\n', 'utf8'));
+    assert.deepEqual(got, [{ a: 1 }, { b: 2 }]);
+  });
+
+  await check('ndjson send writes one \\n-terminated JSON line per message', () => {
+    const { socket, sent } = fakeSocket();
+    const t = ndjsonSocketTransport(socket);
+    t.send({ jsonrpc: '2.0', method: 'y' });
+    assert.deepEqual(sent, ['{"jsonrpc":"2.0","method":"y"}\n']);
+  });
+
+  await check('JSON-RPC roundtrip over a REAL local TCP socket pair', async () => {
+    const server = net.createServer((sock) => {
+      const c = new JsonRpcConnection(ndjsonSocketTransport(sock));
+      c.handle(METHOD.pausePublish, (raw) => {
+        PausePayload.parse(raw);
+        return { session_id: 'sess-tcp' };
+      });
+    });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    const { port } = server.address() as net.AddressInfo;
+    // Request issued straight after net.connect — exercises the same
+    // write-before-connected queueing qa-hooks' getConnection relies on.
+    const clientSock = net.connect(port, '127.0.0.1');
+    const clientConn = new JsonRpcConnection(ndjsonSocketTransport(clientSock));
+    const result = await clientConn.request(METHOD.pausePublish, validPause, PausePublishResult);
+    assert.equal(result.session_id, 'sess-tcp');
+    clientSock.destroy();
+    server.close();
   });
 
   console.log(`\nprotocol unit test PASSED ✅  (${passed} checks)`);

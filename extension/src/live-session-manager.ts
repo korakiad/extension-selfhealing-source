@@ -4,10 +4,10 @@
  * WITHOUT a paused test. The launch is the trigger (the analog of a test-failure
  * event in the pause flow): on launch we flip the `qa-debug.liveSession` context
  * key and register the app's CDP endpoint as the `qa-debug-cdp` MCP — so it's
- * usable by `browser_*`, `qa_pick_element`, or ANY tool/MCP. The `qa-debug-inspect`
- * custom agent is contributed `when: qa-debug.liveSession` (general inspection,
- * not picker-only) and is selectable from the chat dropdown; the notification's
- * Open Chat opens into it best-effort. We do NOT auto-send a picker prompt.
+ * usable by `browser_*`, `qa_pick_element`, or ANY tool/MCP. The `qa-automation`
+ * custom agent (general inspection + testcase authoring) is selectable from the
+ * chat dropdown; the notification's Open Chat opens into it best-effort. We do
+ * NOT auto-send a picker prompt.
  *
  * Mirrors SessionManager's browser lifecycle but for a companion-OWNED browser:
  *  - per-launch FREE port allocated from the qaDebug.cdpPorts pool (cross-window
@@ -397,14 +397,14 @@ export class LiveSessionManager {
       `Live Inspect Session on CDP port ${port} (qa-debug-cdp MCP: browser_*, qa_pick_element) — ` +
       `<Put your prompt for interacting with the MCP>`;
     const attempts: Array<() => Thenable<unknown>> = [
-      // Prefer opening INTO our qa-debug-inspect agent; if the mode switch is a
-      // no-op on this build, chat still opens and the agent stays selectable
-      // from the dropdown (it's contributed `when: qa-debug.liveSession`).
+      // Prefer opening INTO our qa-automation agent; if the mode switch is a no-op on
+      // this build, chat still opens and the agent stays selectable from the
+      // dropdown.
       () =>
         vscode.commands.executeCommand(CHAT_OPEN_COMMAND, {
           query: hint,
           isPartialQuery: true,
-          mode: 'qa-debug-inspect',
+          mode: 'qa-automation',
         }),
       () => vscode.commands.executeCommand(CHAT_OPEN_COMMAND, { query: hint, isPartialQuery: true }),
       () => vscode.commands.executeCommand(CHAT_OPEN_COMMAND, hint),

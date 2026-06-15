@@ -8,7 +8,7 @@ import * as vscode from 'vscode';
 import path from 'node:path';
 
 import { appendDeactivateAudit, appendOrphanPauseAudit } from './audit-file.js';
-import { registerQaDebugChatParticipant, registerQaTestcaseChatParticipant } from './chat-participant.js';
+import { registerQaDebugChatParticipant, registerQaAgentChatParticipant } from './chat-participant.js';
 import { registerCommands } from './commands.js';
 import { registerConfigureTestRail } from './configure-testrail.js';
 import { TestRailService } from './testrail/config.js';
@@ -18,7 +18,7 @@ import { LiveSessionManager } from './live-session-manager.js';
 import { LiveTargetStore } from './live-target-store.js';
 import { registerQaDebugLmTools } from './lm-tools/index.js';
 import { QaDebugMcpProvider } from './mcp-provider.js';
-import { appendInfo, createAuditChannel, createMochaChannel } from './output-channel.js';
+import { appendInfo, createAuditChannel } from './output-channel.js';
 import { registerPauseStatusBar } from './pause-status-bar.js';
 import { MementoPauseStore } from './pause-store.js';
 import { registerRunStatusBar } from './run-status-bar.js';
@@ -39,7 +39,6 @@ let deactivateHook: (() => Promise<void>) | undefined;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const channel = createAuditChannel(context);
-  const mochaChannel = createMochaChannel(context);
   appendInfo(
     channel,
     `[activate] qa-debug-companion ${context.extension.packageJSON.version}`,
@@ -242,7 +241,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       mcpProvider,
       testControllerWrapper,
       channel,
-      mochaChannel,
       workspaceRoot,
       chatOpenAvailable,
       chatOpenFallbackAvailable,
@@ -261,7 +259,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       channel,
     });
     liveSessionManagerSingleton = liveSessionManager;
-    registerQaTestcaseChatParticipant(context, liveSessionManager, channel);
+    registerQaAgentChatParticipant(context, liveSessionManager, channel);
 
     // Always-visible entry button (the "simple UI" that starts an inspection).
     const inspectEntry = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 98);

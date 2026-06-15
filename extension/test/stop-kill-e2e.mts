@@ -4,9 +4,11 @@
  * Run from the extension dir:
  *   node --import tsx test/stop-kill-e2e.mts
  *
- * Exercises the REAL signalProcessGroup against REAL OS processes, using the
- * exact `detached: true` spawn the extension uses for the mocha child. Proves
- * the three properties the stop button depends on:
+ * Exercises the REAL signalProcessGroup against REAL OS processes. The
+ * `detached: true` spawn gives the parent the same group-leader property the
+ * v5.18 task terminal's pty gives the mocha process (a pty child is a session
+ * — hence group — leader). Proves the three properties the stop button
+ * depends on:
  *
  *   Topology (mirrors a real run):
  *     harness (this process)
@@ -66,8 +68,9 @@ function spawnParentWithChild(trapSigint: boolean): Promise<{
     `process.stdout.write('GC='+gc.pid+'\\n');` +
     `setInterval(()=>{},1e9);`;
 
-  // Exact options from session-manager.ts spawnMochaChild (stdout piped here so
-  // the harness can read the grandchild PID; the real run pipes it to a channel).
+  // detached:true ⇒ own process group, mirroring the pty session-leader the
+  // real task-terminal run gets (stdout piped so the harness can read the
+  // grandchild PID).
   const parent = spawn(process.execPath, ['-e', program], {
     stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
     detached: true,
