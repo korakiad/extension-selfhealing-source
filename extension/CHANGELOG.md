@@ -7,9 +7,22 @@ loosely based on [Keep a Changelog](https://keepachangelog.com/).
 in-extension update checker only surfaces **stable** releases, so QAs on a beta
 stay quiet until `0.0.6` ships.
 
-## Unreleased
+## 0.0.6-beta.7
 
 ### Changed
+- **Testcase authoring rehearses each step live before writing.** The
+  `test-script-orchestrator` flow now treats the running app as ground truth
+  for what each step *does*: for every automatable step it drives the live app
+  through `qa-debug-cdp` (perform the action, watch the real result), records
+  the actual post-condition (modal closes, needs a scroll-into-view, the list
+  settles), and only then writes code — so the script reflects observed
+  behavior, not TestRail prose. A self-review pass then checks every action
+  against what was observed before validating, and any step that couldn't be
+  rehearsed (no live session, or a mutating action the QA didn't approve) is
+  marked `// UNVERIFIED` rather than shipped as if confirmed. This closes the
+  gap behind unreliable output like "clicked Apply but the popup stayed open"
+  or "couldn't scroll to the control". Non-destructive UI rehearses freely;
+  submit/delete/pay/send ask for the QA's go-ahead first.
 - **One QA agent instead of two.** The separate `qa-debug-inspect` (live
   inspection) and `qa-testcase-writer` (TestRail → script) agents are merged
   into a single agent: you type **`@qa-agent`** (participant), which redirects
